@@ -316,7 +316,7 @@ func (e *Executor) SetupStreamHandlers() (err error) {
 			return
 		}
 		e.ConsumeLines(stdoutHandlerReadPipe, e.StdoutHandler)
-		logger.DebugFLn("stop line consumer for '%s'", e.cmd.Args[0])
+		logger.DebugF("stop line consumer for '%s'", e.cmd.Args[0])
 	}()
 
 	// Start reading from stderr of a command.
@@ -357,7 +357,7 @@ func (e *Executor) SetupStreamHandlers() (err error) {
 			return
 		}
 		e.ConsumeLines(stderrHandlerReadPipe, e.StderrHandler)
-		logger.DebugFLn("stop sdterr line consumer for '%s'", e.cmd.Args[0])
+		logger.DebugF("stop sdterr line consumer for '%s'", e.cmd.Args[0])
 	}()
 
 	return nil
@@ -372,7 +372,7 @@ func (e *Executor) readFromStreams(stdoutReadPipe io.Reader, stdoutHandlerWriteP
 		return
 	}
 
-	logger.DebugFLn("Start read from streams for command: ", e.cmd.String())
+	logger.DebugF("Start read from streams for command: ", e.cmd.String())
 
 	buf := make([]byte, 16)
 	matchersDone := false
@@ -448,7 +448,7 @@ func (e *Executor) ConsumeLines(r io.Reader, fn func(l string)) {
 		}
 
 		if text != "" {
-			e.settings.Logger().DebugFLn("%s: %s", e.cmd.Args[0], text)
+			e.settings.Logger().DebugF("%s: %s", e.cmd.Args[0], text)
 		}
 	}
 }
@@ -457,7 +457,7 @@ func (e *Executor) Start() error {
 	logger := e.settings.Logger()
 
 	// setup stream handlers
-	logger.DebugFLn("executor: start '%s'", e.cmd.String())
+	logger.DebugF("executor: start '%s'", e.cmd.String())
 	err := e.SetupStreamHandlers()
 	if err != nil {
 		return err
@@ -471,7 +471,7 @@ func (e *Executor) Start() error {
 
 	e.ProcessWait()
 
-	logger.DebugFLn("Register stoppable: '%s'", e.cmd.String())
+	logger.DebugF("Register stoppable: '%s'", e.cmd.String())
 	e.Session.RegisterStoppable(e)
 
 	return nil
@@ -545,7 +545,7 @@ func (e *Executor) closePipes() {
 	if e.stdoutPipeFile != nil {
 		err := e.stdoutPipeFile.Close()
 		if err != nil {
-			logger.DebugFLn("Cannot close stdout pipe: %v", err)
+			logger.DebugF("Cannot close stdout pipe: %v", err)
 		}
 		e.stdoutPipeFile = nil
 	}
@@ -553,7 +553,7 @@ func (e *Executor) closePipes() {
 	if e.stderrPipeFile != nil {
 		err := e.stderrPipeFile.Close()
 		if err != nil {
-			logger.DebugFLn("Cannot close stderr pipe: %v", err)
+			logger.DebugF("Cannot close stderr pipe: %v", err)
 		}
 		e.stderrPipeFile = nil
 	}
@@ -563,25 +563,25 @@ func (e *Executor) Stop() {
 	logger := e.settings.Logger()
 
 	if e.stop {
-		logger.DebugFLn("Stop '%s': already stopped", e.cmd.String())
+		logger.DebugF("Stop '%s': already stopped", e.cmd.String())
 		return
 	}
 	if !e.started {
-		logger.DebugFLn("Stop '%s': not started yet", e.cmd.String())
+		logger.DebugF("Stop '%s': not started yet", e.cmd.String())
 		return
 	}
 	if e.cmd == nil {
-		logger.DebugFLn("Possible BUG: Call Executor.Stop with Cmd==nil")
+		logger.DebugF("Possible BUG: Call Executor.Stop with Cmd==nil")
 		return
 	}
 
 	e.stop = true
-	logger.DebugFLn("Stop '%s'", e.cmd.String())
+	logger.DebugF("Stop '%s'", e.cmd.String())
 	if e.stopCh != nil {
 		close(e.stopCh)
 	}
 	<-e.waitCh
-	logger.DebugFLn("Stopped '%s': %d", e.cmd.String(), e.cmd.ProcessState.ExitCode())
+	logger.DebugF("Stopped '%s': %d", e.cmd.String(), e.cmd.ProcessState.ExitCode())
 	e.closePipes()
 }
 

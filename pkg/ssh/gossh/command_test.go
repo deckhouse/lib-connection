@@ -616,10 +616,10 @@ func TestCommandStart(t *testing.T) {
 				prepareFunc: func(c *SSHCommand) error {
 					c.WithWaitHandler(func(err error) {
 						if err != nil {
-							logger.ErrorFLn("SSH-agent process exited, now stop. Wait error: %v", err)
+							logger.ErrorF("SSH-agent process exited, now stop. Wait error: %v", err)
 							return
 						}
-						logger.InfoFLn("SSH-agent process exited, now stop")
+						logger.InfoF("SSH-agent process exited, now stop")
 					})
 					return nil
 				},

@@ -60,16 +60,16 @@ func (k *KubeProxy) Start(useLocalPort int) (port string, err error) {
 
 	logger := k.sshClient.settings.Logger()
 
-	logger.DebugFLn("Kube-proxy start id=[%d]; port:%d", startID, useLocalPort)
+	logger.DebugF("Kube-proxy start id=[%d]; port:%d", startID, useLocalPort)
 
 	success := false
 	defer func() {
 		k.stop = false
 		if !success {
-			logger.DebugFLn("[%d] Kube-proxy was not started. Try to clear all", startID)
+			logger.DebugF("[%d] Kube-proxy was not started. Try to clear all", startID)
 			k.Stop(startID)
 		}
-		logger.DebugFLn("[%d] Kube-proxy starting was finished", startID)
+		logger.DebugF("[%d] Kube-proxy starting was finished", startID)
 	}()
 
 	proxyCommandErrorCh := make(chan error, 1)

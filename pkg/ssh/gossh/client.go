@@ -17,18 +17,20 @@ package gossh
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"slices"
 	"sync"
 	"time"
 
-	"github.com/deckhouse/lib-connection/pkg/settings"
+	"github.com/deckhouse/lib-dhctl/pkg/log"
 	"github.com/deckhouse/lib-dhctl/pkg/retry"
 	gossh "github.com/deckhouse/lib-gossh"
 	"github.com/deckhouse/lib-gossh/agent"
 
 	connection "github.com/deckhouse/lib-connection/pkg"
+	"github.com/deckhouse/lib-connection/pkg/settings"
 	"github.com/deckhouse/lib-connection/pkg/ssh/session"
 	"github.com/deckhouse/lib-connection/pkg/ssh/utils"
 )
@@ -196,7 +198,7 @@ func (s *Client) Start() error {
 		var err error
 		fullHost := fmt.Sprintf("bastion host '%s' with user '%s'", bastionAddr, s.SessionSettings.BastionUser)
 		connectToBastion := func() error {
-			logger.DebugFLn("Connect to %s", fullHost)
+			logger.DebugF("Connect to %s", fullHost)
 			bastionClient, err = s.DialTimeout(s.ctx, "tcp", bastionAddr, bastionConfig)
 			return err
 		}
@@ -225,17 +227,17 @@ func (s *Client) Start() error {
 		return fmt.Errorf("one of SSH keys, SSH_AUTH_SOCK environment variable or become password should be not empty")
 	}
 
-	logger.DebugFLn("Initial ssh privater keys auth to master host")
+	logger.DebugF("Initial ssh privater keys auth to master host")
 
 	AuthMethods := []gossh.AuthMethod{gossh.PublicKeys(s.signers...)}
 
 	if socket != "" {
-		logger.DebugFLn("Adding agent socket to auth methods")
+		logger.DebugF("Adding agent socket to auth methods")
 		AuthMethods = []gossh.AuthMethod{gossh.PublicKeysCallback(agentClient.Signers)}
 	}
 
 	if len(becomePass) > 0 {
-		logger.DebugFLn("Initial password auth to master host")
+		logger.DebugF("Initial password auth to master host")
 		AuthMethods = append(AuthMethods, gossh.Password(becomePass))
 	}
 
@@ -293,7 +295,7 @@ func (s *Client) Start() error {
 		return nil
 	}
 
-	logger.DebugFLn("Try to connect to through bastion host master host")
+	logger.DebugF("Try to connect to through bastion host master host")
 
 	var (
 		addr             string
@@ -313,7 +315,7 @@ func (s *Client) Start() error {
 			return err
 		}
 		if s.settings.IsDebug() {
-			targetClientConn, targetNewChan, targetReqChan, err = gossh.NewClientConnWithDebug(targetConn, addr, config, debugLogger(s.settings))
+			targetClientConn, targetNewChan, targetReqChan, err = gossh.NewClientConnWithDebug(targetConn, addr, config, getSSHLogger(s.settings))
 		} else {
 			targetClientConn, targetNewChan, targetReqChan, err = gossh.NewClientConn(targetConn, addr, config)
 		}
@@ -366,18 +368,18 @@ func (s *Client) keepAlive() {
 		default:
 			session, err := s.sshClient.NewSession()
 			if err != nil {
-				logger.DebugFLn("Keep-alive to %s failed: %v", s.SessionSettings.Host(), err)
+				logger.DebugF("Keep-alive to %s failed: %v", s.SessionSettings.Host(), err)
 				if errorsCount > 3 {
 					s.restart()
 					return
 				}
 				errorsCount++
-				logger.DebugFLn("Keep-alive to %s failed: %v. Sleep %s before next attempt", s.SessionSettings.Host(), err, sleep.String())
+				logger.DebugF("Keep-alive to %s failed: %v. Sleep %s before next attempt", s.SessionSettings.Host(), err, sleep.String())
 				time.Sleep(sleep)
 				continue
 			}
 			if _, err := session.SendRequest("keepalive@openssh.com", false, nil); err != nil {
-				logger.DebugFLn("Keep-alive failed: %v", err)
+				logger.DebugF("Keep-alive failed: %v", err)
 				if errorsCount > 3 {
 					s.restart()
 					return
@@ -385,7 +387,7 @@ func (s *Client) keepAlive() {
 				errorsCount++
 			}
 			if err := session.Close(); err != nil {
-				logger.DebugFLn("Keep-alive session close failed: %v", err)
+				logger.DebugF("Keep-alive session close failed: %v", err)
 			}
 			for _, sess := range s.sessionList {
 				if sess != nil {
@@ -397,7 +399,7 @@ func (s *Client) keepAlive() {
 				}
 
 			}
-			logger.DebugFLn("Keep-alive to %s. Sleep %s before next request", s.SessionSettings.Host(), err, sleep.String())
+			logger.DebugF("Keep-alive to %s. Sleep %s before next request", s.SessionSettings.Host(), err, sleep.String())
 			time.Sleep(sleep)
 		}
 	}
@@ -443,7 +445,7 @@ func (s *Client) DialTimeout(ctx context.Context, network, addr string, config *
 	)
 
 	if s.settings.IsDebug() {
-		c, chans, reqs, err = gossh.NewClientConnWithDebug(tcpConn, addr, config, debugLogger(s.settings))
+		c, chans, reqs, err = gossh.NewClientConnWithDebug(tcpConn, addr, config, getSSHLogger(s.settings))
 	} else {
 		c, chans, reqs, err = gossh.NewClientConn(tcpConn, addr, config)
 	}
@@ -620,4 +622,8 @@ func (s *Client) stopKubeproxy() {
 	cmd := NewSSHCommand(s, "killall kubectl")
 	cmd.Sudo(context.Background())
 	cmd.Run(context.Background())
+}
+
+func getSSHLogger(sett settings.Settings) *slog.Logger {
+	return log.NewSLogWithPrefixAndDebug(context.TODO(), sett.LoggerProvider(), "ssh", true)
 }

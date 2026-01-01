@@ -75,7 +75,7 @@ func (f *SSHFile) Upload(ctx context.Context, srcPath, remotePath string) error 
 		if rType == "DIR" {
 			remotePath = remotePath + "/" + filepath.Base(srcPath)
 		}
-		logger.DebugFLn("starting upload local %s to remote %s", srcPath, remotePath)
+		logger.DebugF("starting upload local %s to remote %s", srcPath, remotePath)
 
 		if err := CopyFile(ctx, localFile, remotePath, "0755", session); err != nil {
 			return fmt.Errorf("failed to copy file to remote host: %w", err)
@@ -109,7 +109,7 @@ func (f *SSHFile) UploadBytes(ctx context.Context, data []byte, remotePath strin
 	defer func() {
 		err := os.Remove(srcPath)
 		if err != nil {
-			f.settings.Logger().ErrorFLn("Error: cannot remove tmp file '%s': %v", srcPath, err)
+			f.settings.Logger().ErrorF("Error: cannot remove tmp file '%s': %v", srcPath, err)
 		}
 	}()
 
@@ -184,7 +184,7 @@ func (f *SSHFile) DownloadBytes(ctx context.Context, remotePath string) ([]byte,
 	defer func() {
 		err := os.Remove(dstPath)
 		if err != nil {
-			f.settings.Logger().DebugFLn("Error: cannot remove tmp file '%s': %v", dstPath, err)
+			f.settings.Logger().DebugF("Error: cannot remove tmp file '%s': %v", dstPath, err)
 		}
 	}()
 

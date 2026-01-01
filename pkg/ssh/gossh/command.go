@@ -409,7 +409,7 @@ func (c *SSHCommand) Sudo(ctx context.Context) {
 			var err error
 			_, err = c.Stdin.Write([]byte(becomePass + "\n"))
 			if err != nil {
-				logger.ErrorFLn("Got error from sending pass to stdin for '%s': %v", c.clientString(), err)
+				logger.ErrorF("Got error from sending pass to stdin for '%s': %v", c.clientString(), err)
 			}
 			if !passSent {
 				passSent = true
