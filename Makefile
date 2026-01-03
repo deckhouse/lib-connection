@@ -16,7 +16,8 @@ SHELL = /usr/bin/env bash
 
 GOLANGCI_VERSION = 2.7.2
 GOFUMPT_VERSION=0.9.2
-JQ_VERSION=1.7.1
+JQ_VERSION=1.8.1
+KIND_VERSION=0.31.0
 
 PLATFORM_NAME := $(shell uname -m)
 
@@ -33,21 +34,25 @@ endif
 ifeq ($(OS_NAME), Linux)
 	GOFUMPT_PLATFORM = linux
 	JQ_PLATFORM = linux
+	KIND_PLATFORM = linux
 else ifeq ($(OS_NAME), Darwin)
 	GOFUMPT_PLATFORM = darwin
 	JQ_PLATFORM = macos
+	KIND_PLATFORM = darwin
 endif
 
 # Set arch for deps
 ifeq ($(PLATFORM_NAME), x86_64)
 	GOFUMPT_ARCH = amd64
 	JQ_PLATFORM_ARCH = $(JQ_PLATFORM)-amd64
+	KIND_ARCH = amd64
 else ifeq ($(PLATFORM_NAME), arm64)
 	GOFUMPT_ARCH = arm64
 	JQ_PLATFORM_ARCH = $(JQ_PLATFORM)-arm64
+	KIND_ARCH = arm64
 endif
 
-.PHONY: bin/jq bin/gofumpt bin/golangci-lint clean validation/license/download
+.PHONY: bin/jq bin/gofumpt bin/golangci-lint clean validation/license/download curl-installed docker-installed go-installed clean/test clean/ssh clean/docker
 
 bin:
 	mkdir -p bin
@@ -55,26 +60,46 @@ bin:
 curl-installed:
 	command -v curl > /dev/null
 
+docker-installed:
+	command -v docker > /dev/null
+
 go-installed:
-	command -v go
+	command -v go > /dev/null
 	go version
 
 bin/jq: curl-installed bin
-	curl -sSfL https://github.com/jqlang/jq/releases/download/jq-$(JQ_VERSION)/jq-$(JQ_PLATFORM_ARCH) -o ./bin/jq
-	@chmod +x "./bin/jq"
+	if ! ./hack/check_binary.sh "jq" "--version" "$(JQ_VERSION)" ; then \
+	  echo "Install jq"; \
+	  curl -sSfL https://github.com/jqlang/jq/releases/download/jq-$(JQ_VERSION)/jq-$(JQ_PLATFORM_ARCH) -o ./bin/jq; \
+	  chmod +x "./bin/jq"; \
+	fi
 
 bin/golangci-lint: curl-installed bin
-	curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | BINARY=golangci-lint bash -s -- v${GOLANGCI_VERSION}
-	@chmod +x "./bin/golangci-lint"
+	if ! ./hack/check_binary.sh "golangci-lint" "--version" "$(GOLANGCI_VERSION)"; then \
+  	  echo "Install golangci-lint"; \
+	  curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | BINARY=golangci-lint bash -s -- v${GOLANGCI_VERSION}; \
+	  chmod +x "./bin/golangci-lint"; \
+	fi
 
 bin/gofumpt: curl-installed bin
-	curl -sSfLo "bin/gofumpt" https://github.com/mvdan/gofumpt/releases/download/v$(GOFUMPT_VERSION)/gofumpt_v$(GOFUMPT_VERSION)_$(GOFUMPT_PLATFORM)_$(GOFUMPT_ARCH)
-	@chmod +x "./bin/gofumpt"
+	if ! ./hack/check_binary.sh "gofumpt" "-version" "$(GOFUMPT_VERSION)"; then \
+  	  echo "Install gofumpt"; \
+	  curl -sSfLo "bin/gofumpt" https://github.com/mvdan/gofumpt/releases/download/v$(GOFUMPT_VERSION)/gofumpt_v$(GOFUMPT_VERSION)_$(GOFUMPT_PLATFORM)_$(GOFUMPT_ARCH); \
+	  chmod +x "./bin/gofumpt"; \
+	fi
 
-deps: bin bin/jq bin/golangci-lint bin/gofumpt
+bin/kind: curl-installed bin
+	if ! ./hack/check_binary.sh "kind" "version" "$(KIND_VERSION)"; then \
+  	  echo "Install kind"; \
+	  curl -sSfLo "bin/kind" https://github.com/kubernetes-sigs/kind/releases/download/v$(KIND_VERSION)/kind-$(KIND_PLATFORM)-$(KIND_ARCH); \
+	  chmod +x "./bin/kind"; \
+	fi
 
-test: go-installed
+deps: bin bin/jq bin/golangci-lint bin/gofumpt bin/kind
+
+test: go-installed docker-installed bin/kind
 	./hack/run_tests.sh
+	$(MAKE) clean/test
 
 lint: bin/golangci-lint
 	./bin/golangci-lint run ./... -c .golangci.yaml
@@ -104,8 +129,20 @@ validation/license: go-installed validation/license/download
 	# prevent goland ide errors
 	rm -f ./validation/go.mod ./validation/go.sum
 
+clean/ssh: clean/docker
+	echo "Remove test dir /tmp/test-lib-connection"
+	rm -rf /tmp/test-lib-connection
+
+clean/docker: docker-installed
+	./hack/clean_docker.sh
+
+clean/kind: bin/kind
+	./hack/clean_kind.sh
+
+clean/test: clean/kind clean/ssh
+
 all: bin deps validation/license fmt lint test
 
-clean:
+clean: clean/test
 	rm -rf ./bin
 	rm -rf ./validation

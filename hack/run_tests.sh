@@ -14,6 +14,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+source "$(pwd)/hack/utils.sh"
+
+check_all_deps
+check_go
+
 run_tests=""
 
 if [ -n "$RUN_TEST" ]; then
@@ -24,6 +29,13 @@ fi
 run_dir="$(pwd)"
 packages="$(go list ./... | grep -v /validation/)"
 prefix="$(grep -oP 'module .*$' go.mod | sed 's|module ||')"
+
+if [ -z "$(trim_spaces "$packages")" ]; then
+  echo -e '\033[1;33m!!!\033[0m'
+  echo -e "\033[1;33mNot found packages in $run_dir with module ${prefix}. Skip go tests\033[0m"
+  echo -e '\033[1;33m!!!\033[0m'
+  exit 0
+fi
 
 echo "Found packages: ${packages[@]} in $run_dir with module $prefix"
 

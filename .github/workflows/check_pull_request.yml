@@ -36,6 +36,10 @@ jobs:
       - name: Run tests
         run: make test
 
+      - name: Cleanup after failed
+        if: failure()
+        run: clean/test
+
   license_validation:
     needs: [run_tests]
     name: "Validate that license added to all files"
