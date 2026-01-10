@@ -24,7 +24,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/deckhouse/lib-dhctl/pkg/log"
 	"github.com/deckhouse/lib-dhctl/pkg/retry"
 	"github.com/name212/govalue"
 )
@@ -157,7 +156,7 @@ func (c *SSHContainer) Start(waitSSHDStarted bool) error {
 
 	err = c.startContainer(waitSSHDStarted)
 	if err != nil {
-		loopParams := defaultRetryParams(fmt.Sprintf("Remove network %s after fail run container", c.GetNetwork()))
+		loopParams := c.defaultRetryParams(fmt.Sprintf("Remove network %s after fail run container", c.GetNetwork()))
 		removeNetworkErr := retry.NewLoopWithParams(loopParams).Run(func() error {
 			return c.removeNetwork()
 		})
@@ -399,7 +398,7 @@ func (c *SSHContainer) startContainer(waitSSHDStarted bool) error {
 
 	addr := fmt.Sprintf("127.0.0.1:%s", c.LocalPortString())
 
-	loopParams := defaultRetryParams("Wait SSHD started after restart container")
+	loopParams := c.defaultRetryParams("Wait SSHD started after restart container")
 	err = retry.NewLoopWithParams(loopParams).Run(func() error {
 		conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
 		if err != nil {
@@ -526,7 +525,7 @@ func (c *SSHContainer) discoveryContainerIP() (string, error) {
 		return "", err
 	}
 
-	getIPLoopParams := defaultRetryParams(fmt.Sprintf("%s %s", description, c.GetContainerId()))
+	getIPLoopParams := c.defaultRetryParams(fmt.Sprintf("%s %s", description, c.GetContainerId()))
 	getIPCmd := []string{
 		"inspect",
 		"-f", "{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}",
@@ -558,11 +557,13 @@ func (c *SSHContainer) discoveryContainerIP() (string, error) {
 	return ip, nil
 }
 
-func defaultRetryParams(name string) retry.Params {
+func (c *SSHContainer) defaultRetryParams(name string) retry.Params {
+	logger := c.ContainerSettings().Test.Logger
+
 	return retry.NewEmptyParams(
 		retry.WithName(name),
 		retry.WithAttempts(5),
 		retry.WithWait(3*time.Second),
-		retry.WithLogger(log.NewSimpleLogger(log.LoggerOptions{})),
+		retry.WithLogger(logger),
 	)
 }

@@ -15,9 +15,6 @@
 package ssh_testing
 
 import (
-	"fmt"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/deckhouse/lib-connection/pkg/ssh/session"
@@ -77,9 +74,7 @@ func NewTestContainerWrapper(t *testing.T, test *Test, opts ...TestContainerWrap
 			require.NoError(t, err)
 		}
 
-		publicKeyPath := filepath.Join(testSettings.NodeTmpPath, fmt.Sprintf("id_rsa.%d.pub", getRand().Int()))
-
-		err = os.WriteFile(publicKeyPath, []byte(publicKey), 0777)
+		publicKeyPath, err := test.CreateTmpFile(publicKey, false, PrivateKeysRoot, "id_rsa.pub")
 		if err != nil {
 			testContainer.Cleanup(t)
 			require.NoError(t, err)

@@ -133,9 +133,9 @@ func (s *Test) CreateFile(content string, executable bool, pathInTestDir ...stri
 
 	fullPath := filepath.Join(fullPathSlice...)
 
-	mode := os.FileMode(0x666)
+	mode := os.FileMode(0666)
 	if executable {
-		mode = os.FileMode(0x755)
+		mode = os.FileMode(0755)
 	}
 
 	err := os.WriteFile(fullPath, []byte(content), mode)
