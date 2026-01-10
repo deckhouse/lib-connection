@@ -20,7 +20,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/deckhouse/lib-dhctl/pkg/retry"
 	"github.com/stretchr/testify/require"
 
 	sshtesting "github.com/deckhouse/lib-connection/pkg/ssh/gossh/testing"
@@ -654,13 +653,4 @@ func TestCommandSudoRun(t *testing.T) {
 			})
 		}
 	})
-}
-
-func newSessionTestLoopParams() ClientLoopsParams {
-	return ClientLoopsParams{
-		NewSession: retry.NewEmptyParams(
-			retry.WithWait(2*time.Second),
-			retry.WithAttempts(5),
-		),
-	}
 }

@@ -17,7 +17,6 @@ package gossh
 import (
 	"context"
 	"fmt"
-	"os"
 	"testing"
 	"time"
 
@@ -31,21 +30,14 @@ func TestOnlyPreparePrivateKeys(t *testing.T) {
 	test := sshtesting.ShouldNewTest(t, "TestOnlyPreparePrivateKeys")
 
 	// genetaring ssh keys
-	keyWithoutPath, _, err := sshtesting.GenerateKeys(test.LocalTmpDir, "")
+	keyWithoutPath, _, err := sshtesting.GenerateKeys(test, "")
 	require.NoError(t, err, "failed to generate keys without password")
 
-	tmpFile, _ := os.CreateTemp(test.LocalTmpDir, "wrong-key")
-	_, err = tmpFile.WriteString("Hello world")
-	require.NoError(t, err, "failed to write to temporary file wit incorrect key")
+	wrongKeyPath := test.MustCreateTmpFile(t, "Hello world", false, sshtesting.PrivateKeysRoot, "wrong-key")
 
 	validPassword := sshtesting.RandPassword(12)
-	keyWithPass, _, err := sshtesting.GenerateKeys(test.LocalTmpDir, validPassword)
+	keyWithPass, _, err := sshtesting.GenerateKeys(test, validPassword)
 	require.NoError(t, err, "failed to generate keys with password")
-
-	t.Cleanup(func() {
-		sshtesting.RemoveFiles(t, test.Logger, keyWithoutPath, tmpFile.Name(), keyWithPass)
-		test.Cleanup(t)
-	})
 
 	t.Run("OnlyPrepareKeys cases", func(t *testing.T) {
 		type testCase struct {
@@ -74,7 +66,7 @@ func TestOnlyPreparePrivateKeys(t *testing.T) {
 			},
 			{
 				title:   "Key auth, no password, wrong key",
-				keys:    []session.AgentPrivateKey{{Key: tmpFile.Name()}},
+				keys:    []session.AgentPrivateKey{{Key: wrongKeyPath}},
 				wantErr: true,
 				err:     "ssh: no key found",
 			},
@@ -324,11 +316,10 @@ func TestClientKeepalive(t *testing.T) {
 
 		runEcho(t, "Hello before restart")
 
-		err = container.Container.Restart(true)
+		err = container.Container.Restart(true, 2*time.Second)
 		require.NoError(t, err, "failed to restart container")
 
 		runEcho(t, "Hello after restart")
-
 	})
 
 	t.Run("keepalive with context test", func(t *testing.T) {

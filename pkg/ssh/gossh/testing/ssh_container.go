@@ -110,11 +110,6 @@ func NewSSHContainer(settings *ContainerSettings) (*SSHContainer, error) {
 
 // force AllowTcpForwarding yes to allow connection throufh bastion
 func (c *SSHContainer) WriteConfig() error {
-	conf, err := os.CreateTemp(c.settings.Test.LocalTmpDir, "sshd_config")
-	if err != nil {
-		return err
-	}
-
 	passwordAuthEnabled := "no"
 	if c.ContainerSettings().Password != "" {
 		passwordAuthEnabled = "yes"
@@ -132,9 +127,13 @@ PasswordAuthentication %s
 `
 	config := fmt.Sprintf(configTpl, c.RemotePortString(), passwordAuthEnabled)
 
-	_, err = conf.WriteString(config)
-	c.sshdConfigPath = conf.Name()
-	return err
+	resPath, err := c.settings.Test.CreateTmpFile(config, false, "sshd", "config")
+	if err != nil {
+		return err
+	}
+
+	c.sshdConfigPath = resPath
+	return nil
 }
 
 func (c *SSHContainer) RemoveSSHDConfig() error {
@@ -172,10 +171,12 @@ func (c *SSHContainer) Start(waitSSHDStarted bool) error {
 	return nil
 }
 
-func (c *SSHContainer) Restart(waitSSHDStarted bool) error {
+func (c *SSHContainer) Restart(waitSSHDStarted bool, sleepBeforeStart time.Duration) error {
 	if err := c.stopContainer(); err != nil {
 		return err
 	}
+
+	Sleep(sleepBeforeStart)
 
 	return c.startContainer(waitSSHDStarted)
 }
@@ -195,6 +196,16 @@ func (c *SSHContainer) Stop() error {
 	}
 
 	return nil
+}
+
+func (c *SSHContainer) FailAndUpConnection(sleepBeforeConnect time.Duration) error {
+	if err := c.Disconnect(); err != nil {
+		return err
+	}
+
+	Sleep(sleepBeforeConnect)
+
+	return c.Connect()
 }
 
 func (c *SSHContainer) Disconnect() error {
@@ -266,7 +277,11 @@ func (c *SSHContainer) ContainerSettings() *ContainerSettings {
 }
 
 func (c *SSHContainer) RemotePortString() string {
-	return "2222"
+	return fmt.Sprintf("%d", c.RemotePort())
+}
+
+func (c *SSHContainer) RemotePort() int {
+	return 2222
 }
 
 func (c *SSHContainer) LocalPortString() string {

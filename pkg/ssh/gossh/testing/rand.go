@@ -13,7 +13,13 @@ const (
 	portRangeEnd   = 29999
 )
 
-var letterRunes = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 %!@#$&^*.,/")
+var (
+	lettersRunes  = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
+	passwordRunes = append(
+		append([]rune{}, lettersRunes...),
+		[]rune(" %!@#$&^*.,/")...,
+	)
+)
 
 func RandRange(min, max int) int {
 	return randRange(getRand(), min, max)
@@ -28,8 +34,7 @@ func RandPortExclude(exclude []int) int {
 }
 
 func GenerateID(name string) string {
-	rndID := getRand().Int()
-	sumString := fmt.Sprintf("%s/%d", name, rndID)
+	sumString := fmt.Sprintf("%s/%s", name, randString(12, lettersRunes))
 	sum := sha256Encode(sumString)
 	return fmt.Sprintf("%.12s", sum)
 }
@@ -48,12 +53,22 @@ func RandRangeExclude(min, max int, exclude []int) int {
 	panic("random range exclude failed after 100 iterations")
 }
 
+func RandInvalidPortExclude(_ []int) int {
+	return 0
+}
+
 func RandPassword(n int) string {
+	return randString(n, passwordRunes)
+}
+
+func randString(n int, letters []rune) string {
 	randomizer := getRand()
+
 	b := make([]rune, n)
 	for i := range b {
-		b[i] = letterRunes[randomizer.Intn(len(letterRunes))]
+		b[i] = letters[randomizer.Intn(len(letters))]
 	}
+
 	return string(b)
 }
 

@@ -71,7 +71,7 @@ func NewTestContainerWrapper(t *testing.T, test *Test, opts ...TestContainerWrap
 	}
 
 	if !testSettings.HasPublicKeyContent() || !testSettings.HasPublicKeyPath() {
-		privateKeyPath, publicKey, err := GenerateKeys(test.LocalTmpDir, testSettings.PrivateKeyPassword)
+		privateKeyPath, publicKey, err := GenerateKeys(test, testSettings.PrivateKeyPassword)
 		if err != nil {
 			testContainer.Cleanup(t)
 			require.NoError(t, err)

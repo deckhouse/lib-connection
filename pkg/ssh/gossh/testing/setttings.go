@@ -15,7 +15,6 @@
 package ssh_testing
 
 import (
-	"fmt"
 	"strconv"
 
 	"github.com/deckhouse/lib-connection/pkg/settings"
@@ -105,10 +104,7 @@ func SessionWithBastion(wrapper *TestContainerWrapper, bastionWrapper *TestConta
 }
 
 func FakeSession() *session.Session {
-	third := RandRange(1, 254)
-	four := RandRange(1, 254)
-	host := fmt.Sprintf("192.168.%d.%d", third, four)
-
+	host := IncorrectHost()
 	return session.NewSession(session.Input{
 		AvailableHosts: []session.Host{{Host: host, Name: host}},
 		User:           "user",

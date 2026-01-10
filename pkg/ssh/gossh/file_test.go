@@ -16,59 +16,42 @@ package gossh
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"testing"
 
 	"github.com/deckhouse/lib-connection/pkg/settings"
-	"github.com/deckhouse/lib-dhctl/pkg/log"
 	"github.com/stretchr/testify/require"
 
 	sshtesting "github.com/deckhouse/lib-connection/pkg/ssh/gossh/testing"
-	"github.com/deckhouse/lib-connection/pkg/ssh/session"
 )
 
 func TestSSHFileUpload(t *testing.T) {
 	test := sshtesting.ShouldNewTest(t, "TestCommandOutput")
 
-	container := sshtesting.NewTestContainerWrapper(t, test)
-	sess := sshtesting.Session(container)
-	keys := container.AgentPrivateKeys()
+	const uploadDir = "upload_dir"
+	const testFileContent = "Hello World"
+	const notExec = false
 
-	// creating direactory to upload
-	testDir := filepath.Join(test.LocalTmpDir, "upload_dir")
+	filePath := func(subPath ...string) []string {
+		require.NotEmpty(t, subPath, "subPath is empty for filePath")
+		return append([]string{uploadDir}, subPath...)
+	}
 
-	err := os.MkdirAll(testDir, 0755)
+	testFile := test.MustCreateTmpFile(t, testFileContent, notExec, filePath("upload")...)
+	testDir := filepath.Dir(testFile)
+	test.MustCreateTmpFile(t, "second", notExec, filePath("second")...)
+	test.MustCreateTmpFile(t, "empty", notExec, filePath("second")...)
+	test.MustCreateTmpFile(t, "sub", notExec, filePath("sub", "third")...)
+
+	symlink := filepath.Join(test.LocalTmpDir, "symlink")
+	err := os.Symlink(testFile, symlink)
 	require.NoError(t, err)
 
-	testFile, err := os.CreateTemp(testDir, "upload")
-	require.NoError(t, err)
-
-	_, err = testFile.WriteString("Hello world")
-	require.NoError(t, err)
-
-	// create some files for recursive upload
-	_, err = os.CreateTemp(testDir, "second")
-	require.NoError(t, err)
-
-	_, err = os.CreateTemp(testDir, "third")
-	require.NoError(t, err)
-
-	symlink := filepath.Join(os.TempDir(), "new-test-file")
-	err = os.Symlink(testFile.Name(), symlink)
-	require.NoError(t, err)
-
-	sshSettings := sshtesting.CreateDefaultTestSettings(test)
-	sshClient := NewClient(context.Background(), sshSettings, sess, keys).WithLoopsParams(ClientLoopsParams{
-		NewSession: sshtesting.GetTestLoopParamsForFailed(),
-	})
-
-	err = sshClient.Start()
-	// expecting no error on client start
-	require.NoError(t, err)
-
-	registerStopClient(t, sshClient)
+	sshClient := startContainerAndClient(t, test)
 
 	t.Run("Upload files and directories to container via existing ssh client", func(t *testing.T) {
 		cases := []struct {
@@ -80,7 +63,7 @@ func TestSSHFileUpload(t *testing.T) {
 		}{
 			{
 				title:   "Single file",
-				srcPath: testFile.Name(),
+				srcPath: testFile,
 				dstPath: ".",
 				wantErr: false,
 			},
@@ -99,19 +82,19 @@ func TestSSHFileUpload(t *testing.T) {
 			},
 			{
 				title:   "File to root",
-				srcPath: testFile.Name(),
+				srcPath: testFile,
 				dstPath: "/any",
 				wantErr: true,
 			},
 			{
 				title:   "File to /var/lib",
-				srcPath: testFile.Name(),
+				srcPath: testFile,
 				dstPath: "/var/lib",
 				wantErr: true,
 			},
 			{
 				title:   "File to unaccessible file",
-				srcPath: testFile.Name(),
+				srcPath: testFile,
 				dstPath: "/path/what/not/exists.txt",
 				wantErr: true,
 				err:     "failed to copy file to remote host",
@@ -167,19 +150,13 @@ func TestSSHFileUpload(t *testing.T) {
 
 	t.Run("Equality of uploaded and local file content", func(t *testing.T) {
 		f := sshClient.File()
-		err := f.Upload(context.Background(), testFile.Name(), "/tmp/testfile.txt")
+		err := f.Upload(context.Background(), testFile, "/tmp/testfile.txt")
 		// testFile contains "Hello world" string
 		require.NoError(t, err)
 
-		s, err := sshClient.NewSession()
-		require.NoError(t, err)
-		defer sshClient.UnregisterSession()
-		out, err := sess.Output("cat /tmp/testfile.txt")
-		require.NoError(t, err)
-		// out contains a contant of uploaded file, should be equal to testFile contant
-		require.Equal(t, "Hello world", string(out))
-
+		assertFilesViaRemoteRun(t, sshClient, "cat /tmp/testfile.txt", testFileContent)
 	})
+
 	t.Run("Equality of uploaded and local directory", func(t *testing.T) {
 		f := sshClient.File()
 		err := f.Upload(context.Background(), testDir, "/tmp/upload")
@@ -189,46 +166,23 @@ func TestSSHFileUpload(t *testing.T) {
 		lsResult, err := cmd.Output()
 		require.NoError(t, err)
 
-		sess, err := sshClient.GetClient().NewSession()
-		require.NoError(t, err)
-		defer sess.Close()
-		out, err := sess.Output("ls /tmp/upload")
-		require.NoError(t, err)
-		// out contains a result of ls command execution, should be equal to local ls execution
-		require.Equal(t, string(lsResult), string(out))
-
+		assertFilesViaRemoteRun(t, sshClient, "ls /tmp/upload", string(lsResult))
 	})
 }
 
 func TestSSHFileUploadBytes(t *testing.T) {
 	test := sshtesting.ShouldNewTest(t, "TestSSHFileUploadBytes")
 
-	container := sshtesting.NewTestContainerWrapper(t, test)
-	sess := sshtesting.Session(container)
-	keys := container.AgentPrivateKeys()
-
-	sshSettings := sshtesting.CreateDefaultTestSettings(test)
-	sshClient := NewClient(context.Background(), sshSettings, sess, keys)
-	err := sshClient.Start()
-	// expecting no error on client start
-	require.NoError(t, err)
-
-	registerStopClient(t, sshClient)
+	sshClient := startContainerAndClient(t, test)
 
 	t.Run("Upload bytes", func(t *testing.T) {
+		const content = "Hello world"
 		f := sshClient.File()
-		err := f.UploadBytes(context.Background(), []byte("Hello world"), "/tmp/testfile.txt")
+		err := f.UploadBytes(context.Background(), []byte(content), "/tmp/testfile.txt")
 		require.NoError(t, err)
 
-		sess, err := sshClient.GetClient().NewSession()
-		require.NoError(t, err)
-		defer sess.Close()
-		out, err := sess.Output("cat /tmp/testfile.txt")
-		require.NoError(t, err)
-		// out contains a contant of uploaded file, should be equal to testFile contant
-		require.Equal(t, "Hello world", string(out))
+		assertFilesViaRemoteRun(t, sshClient, "cat /tmp/testfile.txt", content)
 	})
-
 }
 
 func TestCreateEmptyTmpFile(t *testing.T) {
@@ -277,51 +231,16 @@ func TestCreateEmptyTmpFile(t *testing.T) {
 }
 
 func TestSSHFileDownload(t *testing.T) {
-	testName := "TestSSHFileDownload"
+	test := sshtesting.ShouldNewTest(t, "TestSSHFileDownload")
 
-	sshtesting.CheckSkipSSHTest(t, testName)
+	sshClient := startContainerAndClient(t, test)
 
-	logger := log.NewSimpleLogger(log.LoggerOptions{})
-
-	// genetaring ssh keys
-	path, publicKey, err := sshtesting.GenerateKeys("")
-	if err != nil {
-		return
-	}
-
-	// starting openssh container with password auth
-	container, err := sshtesting.NewSSHContainer(sshtesting.ContainerSettings{
-		PublicKey:  publicKey,
-		Username:   "user",
-		LocalPort:  20020,
-		SudoAccess: true,
-	}, testName)
-	require.NoError(t, err)
-
-	err = container.Start()
-	require.NoError(t, err)
-
-	t.Cleanup(func() {
-		sshtesting.StopContainerAndRemoveKeys(t, container, logger, path)
-	})
-
-	os.Setenv("SSH_AUTH_SOCK", "")
-
-	settings := session.NewSession(session.Input{
-		AvailableHosts: []session.Host{{Host: "localhost", Name: "localhost"}},
-		User:           "user",
-		Port:           "20020"})
-	keys := []session.AgentPrivateKey{{Key: path}}
-	sshSettings, _ := sshtesting.CreateDefaultTestSettings()
-	sshClient := NewClient(context.Background(), sshSettings, settings, keys)
-	err = sshClient.Start()
-	// expecting no error on client start
-	require.NoError(t, err)
+	const expectedFileContent = "Some test data"
 
 	// preparing some test related data
-	err = sshClient.Command("mkdir  -p /tmp/testdata").Run(context.Background())
+	err := sshClient.Command("mkdir  -p /tmp/testdata").Run(context.Background())
 	require.NoError(t, err)
-	err = sshClient.Command("echo \"Some test data\" > /tmp/testdata/first").Run(context.Background())
+	err = sshClient.Command(fmt.Sprintf(`echo -n '%s' > /tmp/testdata/first`, expectedFileContent)).Run(context.Background())
 	require.NoError(t, err)
 	err = sshClient.Command("touch /tmp/testdata/second").Run(context.Background())
 	require.NoError(t, err)
@@ -330,19 +249,9 @@ func TestSSHFileDownload(t *testing.T) {
 	err = sshClient.Command("ln -s /tmp/testdata/first /tmp/link").Run(context.Background())
 	require.NoError(t, err)
 
-	// creating direactory to upload
-	testDir := filepath.Join(os.TempDir(), "dhctltests", "download")
-	err = os.MkdirAll(testDir, 0755)
-	if err != nil {
-		// cannot start test w/o files to download
-		return
-	}
-
-	t.Cleanup(func() {
-		sshClient.Stop()
-		os.RemoveAll(testDir)
-	})
 	t.Run("Download files and directories to container via existing ssh client", func(t *testing.T) {
+		testDir := test.MustMkSubDirs(t, "download")
+
 		cases := []struct {
 			title   string
 			srcPath string
@@ -359,7 +268,7 @@ func TestSSHFileDownload(t *testing.T) {
 			{
 				title:   "Directory",
 				srcPath: "/tmp/testdata",
-				dstPath: testDir + "/downloaded",
+				dstPath: path.Join(testDir, "downloaded"),
 				wantErr: false,
 			},
 			{
@@ -424,100 +333,65 @@ func TestSSHFileDownload(t *testing.T) {
 		for _, c := range cases {
 			t.Run(c.title, func(t *testing.T) {
 				f := sshClient.File()
-				err = f.Download(context.Background(), c.srcPath, c.dstPath)
-				if !c.wantErr {
-					require.NoError(t, err)
-				} else {
+				err := f.Download(context.Background(), c.srcPath, c.dstPath)
+				if c.wantErr {
 					require.Error(t, err)
 					require.Contains(t, err.Error(), c.err)
+					return
 				}
+
+				require.NoError(t, err)
+
+				_, err = os.Stat(c.dstPath)
+				require.NoError(t, err, "%s path should exist after download", c.dstPath)
 			})
 		}
 	})
 
 	t.Run("Equality of downloaded and remote file content", func(t *testing.T) {
+		downloadContentDir := test.MustMkSubDirs(t, "download_content")
+
 		f := sshClient.File()
-		err := f.Download(context.Background(), "/tmp/testdata/first", "/tmp/testfile.txt")
+
+		dstPath := path.Join(downloadContentDir, "testfile.txt")
+
+		err := f.Download(context.Background(), "/tmp/testdata/first", dstPath)
 		// /tmp/testdata/first contains "Some test data" string
 		require.NoError(t, err)
 
-		cmd := exec.Command("cat", "/tmp/testfile.txt")
-		out, err := cmd.Output()
+		assertFilesViaRemoteRun(t, sshClient, "cat /tmp/testdata/first", dstPath)
+
+		downloadedContent, err := os.ReadFile(dstPath)
 		require.NoError(t, err)
 		// out contains a contant of uploaded file, should be equal to testFile contant
-		require.Equal(t, "Some test data\n", string(out))
-		os.Remove("/tmp/testfile.txt")
+		require.Equal(t, expectedFileContent, string(downloadedContent))
 	})
-	t.Run("Equality of downloaded and remote direcroty", func(t *testing.T) {
+
+	t.Run("Equality of downloaded and remote directory", func(t *testing.T) {
+		downloadWholeDirDir := test.MustMkSubDirs(t, "download_dir")
+
 		f := sshClient.File()
-		err = f.Download(context.Background(), "/tmp/testdata", "/tmp")
+		err = f.Download(context.Background(), "/tmp/testdata", downloadWholeDirDir)
 		require.NoError(t, err)
 
-		cmd := exec.Command("ls", "/tmp/testdata")
+		cmd := exec.Command("ls -R", downloadWholeDirDir)
 		lsResult, err := cmd.Output()
 		require.NoError(t, err)
 
-		sess, err := sshClient.GetClient().NewSession()
-		require.NoError(t, err)
-		defer sess.Close()
-		out, err := sess.Output("ls /tmp/testdata")
-		require.NoError(t, err)
-		// out contains a result of ls command execution, should be equal to local ls execution
-		require.Equal(t, string(lsResult), string(out))
-		os.RemoveAll("/tmp/testdata")
-
+		assertFilesViaRemoteRun(t, sshClient, "ls -R /tmp/testdata", string(lsResult))
 	})
 }
 
 func TestSSHFileDownloadBytes(t *testing.T) {
-	testName := "TestSSHFileDownloadBytes"
+	test := sshtesting.ShouldNewTest(t, "TestSSHFileDownloadBytes")
 
-	sshtesting.CheckSkipSSHTest(t, testName)
+	sshClient := startContainerAndClient(t, test)
 
-	logger := log.NewSimpleLogger(log.LoggerOptions{})
-
-	// genetaring ssh keys
-	path, publicKey, err := sshtesting.GenerateKeys("")
-	if err != nil {
-		return
-	}
-
-	// starting openssh container with password auth
-	container, err := sshtesting.NewSSHContainer(sshtesting.ContainerSettings{
-		PublicKey:  publicKey,
-		Username:   "user",
-		LocalPort:  20020,
-		SudoAccess: true,
-	}, testName)
-	require.NoError(t, err)
-
-	err = container.Start()
-	require.NoError(t, err)
-
-	t.Cleanup(func() {
-		sshtesting.StopContainerAndRemoveKeys(t, container, logger, path)
-	})
-
-	os.Setenv("SSH_AUTH_SOCK", "")
-
-	settings := session.NewSession(session.Input{
-		AvailableHosts: []session.Host{{Host: "localhost", Name: "localhost"}},
-		User:           "user",
-		Port:           "20020"})
-	keys := []session.AgentPrivateKey{{Key: path}}
-	sshSettings, _ := sshtesting.CreateDefaultTestSettings()
-	sshClient := NewClient(context.Background(), sshSettings, settings, keys)
-	err = sshClient.Start()
-	// expecting no error on client start
-	require.NoError(t, err)
+	const expectedFileContent = "Some test data"
 
 	// preparing file to download
-	err = sshClient.Command("echo \"Some test data\" > /tmp/testfile").Run(context.Background())
+	err := sshClient.Command(fmt.Sprintf(`echo -n '%s' > /tmp/testfile`, expectedFileContent)).Run(context.Background())
 	require.NoError(t, err)
-
-	t.Cleanup(func() {
-		sshClient.Stop()
-	})
 
 	t.Run("Download bytes", func(t *testing.T) {
 		cases := []struct {
@@ -553,14 +427,14 @@ func TestSSHFileDownloadBytes(t *testing.T) {
 			t.Run(c.title, func(t *testing.T) {
 				f := sshClient.File()
 				bytes, err := f.DownloadBytes(context.Background(), c.remotePath)
-				if !c.wantErr {
-					require.NoError(t, err)
-					// out contains a contant of uploaded file, should be equal to testFile contant
-					require.Equal(t, "Some test data\n", string(bytes))
-				} else {
+				if c.wantErr {
 					require.Error(t, err)
 					require.Contains(t, err.Error(), c.err)
 				}
+
+				require.NoError(t, err)
+				// out contains a contant of uploaded file, should be equal to testFile contant
+				require.Equal(t, expectedFileContent, string(bytes))
 			})
 		}
 	})

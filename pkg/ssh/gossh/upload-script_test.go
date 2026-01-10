@@ -16,61 +16,31 @@ package gossh
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"testing"
+	"time"
 
-	"github.com/deckhouse/lib-dhctl/pkg/log"
+	"github.com/deckhouse/lib-dhctl/pkg/retry"
 	"github.com/stretchr/testify/require"
 
 	sshtesting "github.com/deckhouse/lib-connection/pkg/ssh/gossh/testing"
-	"github.com/deckhouse/lib-connection/pkg/ssh/session"
 )
 
 func TestUploadScriptExecute(t *testing.T) {
-	testName := "TestUploadScriptExecute"
+	test := sshtesting.ShouldNewTest(t, "TestUploadScriptExecute")
 
-	sshtesting.CheckSkipSSHTest(t, testName)
-
-	logger := log.NewSimpleLogger(log.LoggerOptions{})
-
-	// genetaring ssh keys
-	path, publicKey, err := sshtesting.GenerateKeys("")
-	if err != nil {
-		return
-	}
-
-	// starting openssh container with password auth
-	container, err := sshtesting.NewSSHContainer(sshtesting.ContainerSettings{
-		PublicKey:  publicKey,
-		Username:   "user",
-		LocalPort:  20025,
-		SudoAccess: true,
-	}, testName)
-	require.NoError(t, err)
-
-	err = container.Start()
-	require.NoError(t, err)
-
-	t.Cleanup(func() {
-		sshtesting.StopContainerAndRemoveKeys(t, container, logger, path)
+	sshClient, container := startContainerAndClientWithContainer(t, test, sshtesting.WithWriteSSHDConfig())
+	sshClient.WithLoopsParams(ClientLoopsParams{
+		NewSession: retry.NewEmptyParams(
+			retry.WithAttempts(5),
+			retry.WithWait(250*time.Millisecond),
+		),
 	})
 
-	// creating direactory to upload
-	testDir := filepath.Join(os.TempDir(), "dhctltests", "script")
-	err = os.MkdirAll(testDir, 0755)
-	if err != nil {
-		// cannot start test w/o files to upload
-		return
-	}
+	// we don't have /opt/deckhouse in the container, so we should create it before start any UploadScript with sudo
+	err := container.Container.CreateDeckhouseDirs()
+	require.NoError(t, err, "could not create deckhouse dirs")
 
-	testFile, err := os.Create(filepath.Join(testDir, "test.sh"))
-	if err != nil {
-		// cannot start test w/o script to upload
-		return
-	}
 	script := `#!/bin/bash
-
 if [[ $# -eq 0 ]]; then
   echo "Error: No arguments provided."
   exit 1
@@ -81,38 +51,12 @@ else
   echo "provided: $1"
 fi
 `
-	testFile.WriteString(script)
-	testFile.Chmod(0o755)
-
-	os.Setenv("SSH_AUTH_SOCK", "")
-	settings := session.NewSession(session.Input{
-		AvailableHosts: []session.Host{{Host: "localhost", Name: "localhost"}},
-		User:           "user",
-		Port:           "20025"})
-	keys := []session.AgentPrivateKey{{Key: path}}
-	sshSettings, _ := sshtesting.CreateDefaultTestSettings()
-	sshClient := NewClient(context.Background(), sshSettings, settings, keys)
-	err = sshClient.Start()
-	// expecting no error on client start
-	require.NoError(t, err)
-
-	t.Cleanup(func() {
-		sshClient.Stop()
-		os.RemoveAll(testDir)
-	})
-	// we don't have /opt/deckhouse in the container, so we should create it before start any UploadScript with sudo
-	cmd := sshClient.Command("mkdir", "-p", container.ContainerSettings().NodeTmpPath)
-	cmd.Sudo(context.Background())
-	err = cmd.Run(context.Background())
-	require.NoError(t, err)
-	cmd = sshClient.Command("chmod", "777", container.ContainerSettings().NodeTmpPath)
-	cmd.Sudo(context.Background())
-	err = cmd.Run(context.Background())
-	require.NoError(t, err)
+	scriptFile := test.MustCreateTmpFile(t, script, true, "execute_script", "script.sh")
 
 	// evns test
-	envs := make(map[string]string)
-	envs["TEST_ENV"] = "test"
+	envs := map[string]string{
+		"TEST_ENV": "test",
+	}
 
 	t.Run("Upload and execute script to container via existing ssh client", func(t *testing.T) {
 		cases := []struct {
@@ -127,7 +71,7 @@ fi
 		}{
 			{
 				title:      "Happy case",
-				scriptPath: testFile.Name(),
+				scriptPath: scriptFile,
 				scriptArgs: []string{"one"},
 				expected:   "provided: one\n",
 				wantSudo:   false,
@@ -135,7 +79,7 @@ fi
 			},
 			{
 				title:      "Happy case with sudo",
-				scriptPath: testFile.Name(),
+				scriptPath: scriptFile,
 				scriptArgs: []string{"one"},
 				expected:   "SUDO-SUCCESS\nprovided: one\n",
 				wantSudo:   true,
@@ -143,7 +87,7 @@ fi
 			},
 			{
 				title:      "Error by remote script execution",
-				scriptPath: testFile.Name(),
+				scriptPath: scriptFile,
 				scriptArgs: []string{"one", "two"},
 				wantSudo:   false,
 				wantErr:    true,
@@ -151,7 +95,7 @@ fi
 			},
 			{
 				title:      "With envs",
-				scriptPath: testFile.Name(),
+				scriptPath: scriptFile,
 				scriptArgs: []string{"one"},
 				expected:   "provided: one\n",
 				wantSudo:   false,
@@ -163,20 +107,24 @@ fi
 		for _, c := range cases {
 			t.Run(c.title, func(t *testing.T) {
 				s := sshClient.UploadScript(c.scriptPath, c.scriptArgs...)
+				s.WithCleanupAfterExec(true)
+
 				if c.wantSudo {
 					s.Sudo()
 				}
 				if len(c.envs) > 0 {
 					s.WithEnvs(c.envs)
 				}
+
 				out, err := s.Execute(context.Background())
 				if !c.wantErr {
-					require.NoError(t, err)
-					require.Equal(t, c.expected, string(out))
-				} else {
 					require.Error(t, err)
 					require.Contains(t, err.Error(), c.err)
+					return
 				}
+
+				require.NoError(t, err)
+				require.Equal(t, c.expected, string(out))
 			})
 		}
 	})
@@ -184,68 +132,27 @@ fi
 }
 
 func TestUploadScriptExecuteBundle(t *testing.T) {
-	testName := "TestUploadScriptExecuteBundle"
+	test := sshtesting.ShouldNewTest(t, "TestUploadScriptExecuteBundle")
 
-	sshtesting.CheckSkipSSHTest(t, testName)
-
-	logger := log.NewSimpleLogger(log.LoggerOptions{})
-
-	// genetaring ssh keys
-	path, publicKey, err := sshtesting.GenerateKeys("")
-	if err != nil {
-		return
-	}
-
-	// starting openssh container with password auth
-	container, err := sshtesting.NewSSHContainer(sshtesting.ContainerSettings{
-		PublicKey:  publicKey,
-		Username:   "user",
-		LocalPort:  20026,
-		SudoAccess: true,
-	}, testName)
-	require.NoError(t, err)
-
-	err = container.Start()
-	require.NoError(t, err)
-
-	t.Cleanup(func() {
-		sshtesting.StopContainerAndRemoveKeys(t, container, logger, path)
+	sshClient, container := startContainerAndClientWithContainer(t, test, sshtesting.WithWriteSSHDConfig())
+	sshClient.WithLoopsParams(ClientLoopsParams{
+		NewSession: retry.NewEmptyParams(
+			retry.WithAttempts(5),
+			retry.WithWait(250*time.Millisecond),
+		),
 	})
 
-	// creating direactory to upload
-	testDir := filepath.Join(os.TempDir(), "dhctltests")
-	err = os.MkdirAll(testDir, 0755)
-	if err != nil {
-		// cannot start test w/o files to upload
-		return
-	}
-	err = sshtesting.PrepareFakeBashibleBundle(testDir, "test.sh", "bashible")
-	require.NoError(t, err)
-
-	os.Setenv("SSH_AUTH_SOCK", "")
-	settings := session.NewSession(session.Input{
-		AvailableHosts: []session.Host{{Host: "localhost", Name: "localhost"}},
-		User:           "user",
-		Port:           "20026"})
-	keys := []session.AgentPrivateKey{{Key: path}}
-	sshSettings, _ := sshtesting.CreateDefaultTestSettings()
-	sshClient := NewClient(context.Background(), sshSettings, settings, keys)
-	err = sshClient.Start()
-	// expecting no error on client start
-	require.NoError(t, err)
-
-	t.Cleanup(func() {
-		sshClient.Stop()
-		os.RemoveAll(testDir)
-	})
 	// we don't have /opt/deckhouse in the container, so we should create it before start any UploadScript with sudo
-	err = container.CreateDeckhouseDirs()
-	require.NoError(t, err)
+	err := container.Container.CreateDeckhouseDirs()
+	require.NoError(t, err, "could not create deckhouse dirs")
+
+	const entrypoint = "test.sh"
+
+	testDir := prepareFakeBashibleBundle(t, test, entrypoint, "bashible")
 
 	t.Run("Upload and execute bundle to container via existing ssh client", func(t *testing.T) {
 		cases := []struct {
 			title       string
-			scriptPath  string
 			scriptArgs  []string
 			parentDir   string
 			bundleDir   string
@@ -255,7 +162,6 @@ func TestUploadScriptExecuteBundle(t *testing.T) {
 		}{
 			{
 				title:      "Happy case",
-				scriptPath: "test.sh",
 				scriptArgs: []string{},
 				parentDir:  testDir,
 				bundleDir:  "bashible",
@@ -263,7 +169,6 @@ func TestUploadScriptExecuteBundle(t *testing.T) {
 			},
 			{
 				title:      "Bundle error",
-				scriptPath: "test.sh",
 				scriptArgs: []string{"--add-failure"},
 				parentDir:  testDir,
 				bundleDir:  "bashible",
@@ -271,7 +176,6 @@ func TestUploadScriptExecuteBundle(t *testing.T) {
 			},
 			{
 				title:      "Wrong bundle directory",
-				scriptPath: "test.sh",
 				scriptArgs: []string{},
 				parentDir:  "/path/to/nonexistent/dir",
 				bundleDir:  "wrong_bundle",
@@ -280,12 +184,11 @@ func TestUploadScriptExecuteBundle(t *testing.T) {
 			},
 			{
 				title:      "Upload error",
-				scriptPath: "test.sh",
 				scriptArgs: []string{""},
 				parentDir:  testDir,
 				bundleDir:  "bashible",
 				prepareFunc: func() error {
-					cmd := sshClient.Command("chmod", "700", container.ContainerSettings().NodeTmpPath)
+					cmd := sshClient.Command("chmod", "700", container.Container.ContainerSettings().NodeTmpPath)
 					cmd.Sudo(context.Background())
 					return cmd.Run(context.Background())
 				},
@@ -295,23 +198,120 @@ func TestUploadScriptExecuteBundle(t *testing.T) {
 
 		for _, c := range cases {
 			t.Run(c.title, func(t *testing.T) {
-				s := sshClient.UploadScript(c.scriptPath, c.scriptArgs...)
+				s := sshClient.UploadScript(entrypoint, c.scriptArgs...)
 				parentDir := c.parentDir
 				bundleDir := c.bundleDir
 				if c.prepareFunc != nil {
 					err = c.prepareFunc()
 					require.NoError(t, err)
 				}
+
 				_, err := s.ExecuteBundle(context.Background(), parentDir, bundleDir)
-				if !c.wantErr {
-					require.NoError(t, err)
-					// require.Equal(t, c.expected, string(out))
-				} else {
+				if c.wantErr {
 					require.Error(t, err)
 					require.Contains(t, err.Error(), c.err)
+					return
 				}
+
+				require.NoError(t, err)
 			})
 		}
 	})
+}
 
+func prepareFakeBashibleBundle(t *testing.T, test *sshtesting.Test, entrypoint, bundleDir string) string {
+	bundleDirPath := func() []string {
+		return []string{"bundle_test", bundleDir}
+	}
+
+	parentDir := test.MustMkSubDirs(t, bundleDirPath()...)
+
+	entrypointScript := `#!/bin/bash
+
+echo "starting execute steps..."
+
+BUNDLE_STEPS_DIR=/var/lib/bashible/bundle_steps
+BOOTSTRAP_DIR=/var/lib/bashible
+MAX_RETRIES=5
+
+for arg in "$@"; do
+  if [[ "$arg" == "--add-failure" ]]
+    then
+      echo "failures included"
+      export INCLUDE_FAILURE=true
+  fi
+done
+
+# Execute bashible steps
+for step in $BUNDLE_STEPS_DIR/*; do
+  echo ===
+  echo === Step: $step
+  echo ===
+  attempt=0
+  sx=""
+  until /bin/bash --noprofile --norc -"$sx"eEo pipefail -c "export TERM=xterm-256color; unset CDPATH; cd $BOOTSTRAP_DIR; source $step" 2> >(tee /var/lib/bashible/step.log >&2)
+  do
+    attempt=$(( attempt + 1 ))
+    if [ -n "${MAX_RETRIES-}" ] && [ "$attempt" -gt "${MAX_RETRIES}" ]; then
+      >&2 echo "ERROR: Failed to execute step $step. Retry limit is over."
+      exit 1
+    fi
+    >&2 echo "Failed to execute step "$step" ... retry in 10 seconds."
+    sleep 10
+    echo ===
+    echo === Step: $step
+    echo ===
+    if [ "$attempt" -gt 2 ]; then
+      sx=x
+    fi
+  done
+done
+
+`
+
+	entrypointPath := append(bundleDirPath(), entrypoint)
+	test.MustCreateFile(t, entrypointScript, true, entrypointPath...)
+
+	scrips := []struct {
+		name    string
+		content string
+	}{
+		{
+			name: "01-step.sh",
+			content: `#!/bin/bash
+echo "just a step"
+
+for i in {0..3}
+do
+  sleep $(( $RANDOM % 2 ))
+  echo $i  
+done
+`,
+		},
+		{
+			name: "02-step.sh",
+			content: `#!/bin/bash
+
+echo "second step"
+
+for i in {0..4}
+do
+  sleep $(( $RANDOM % 2 ))
+  echo $i
+  if [[ $i -gt 2 && $INCLUDE_FAILURE == "true" ]]
+    then
+      echo "oops! failure!"
+      exit 1
+  fi
+done
+`,
+		},
+	}
+
+	for _, c := range scrips {
+		scriptPath := append(bundleDirPath(), "bundle_steps", c.name)
+		test.MustCreateFile(t, c.content, true, scriptPath...)
+	}
+
+	return parentDir
 }
