@@ -31,9 +31,9 @@ const (
 )
 
 type Test struct {
-	LocalTmpDir string
-	ID          string
-	Logger      *log.InMemoryLogger
+	tmpDir string
+	id     string
+	Logger *log.InMemoryLogger
 
 	testName    string
 	subTestName string
@@ -43,7 +43,7 @@ func ShouldNewTest(t *testing.T, testName string) *Test {
 	CheckSkipSSHTest(t, testName)
 
 	err := os.Setenv("SSH_AUTH_SOCK", "")
-	require.NoError(t, err, "Cleanup SSH_AUTH_SOCK")
+	require.NoError(t, err, "cleanup SSH_AUTH_SOCK env")
 
 	tst, err := NewTest(testName)
 	require.NoError(t, err, "failed to create Test '%s'", testName)
@@ -60,7 +60,7 @@ func NewTest(testName string) (*Test, error) {
 
 	resTest := &Test{
 		testName: testName,
-		ID:       id,
+		id:       id,
 	}
 
 	if govalue.Nil(resTest.Logger) {
@@ -74,13 +74,13 @@ func NewTest(testName string) (*Test, error) {
 		return nil, resTest.WrapError("failed to create local tmp dir %s: %v", localTmpDirStr, err)
 	}
 
-	resTest.LocalTmpDir = localTmpDirStr
+	resTest.tmpDir = localTmpDirStr
 
 	return resTest, nil
 }
 
 func (s *Test) IsZero() bool {
-	return s.LocalTmpDir == "" || s.ID == "" || s.testName == ""
+	return s.TmpDir() == "" || s.GetID() == "" || s.Name() == ""
 }
 
 var forReplace = []string{" ", ",", ".", "-"}
@@ -105,22 +105,34 @@ func (s *Test) SetSubTest(names ...string) *Test {
 }
 
 func (s *Test) WrapError(format string, args ...any) error {
-	f := s.Name() + ": " + format
+	f := s.FullName() + ": " + format
 	return fmt.Errorf(f, args...)
 }
 
 func (s *Test) WrapErrorWithAfterName(aftername, format string, args ...any) error {
-	f := fmt.Sprintf("%s (%s): ", s.Name(), aftername) + format
+	f := fmt.Sprintf("%s (%s): ", s.FullName(), aftername) + format
 	return fmt.Errorf(f, args...)
 }
 
-func (s *Test) Name() string {
-	res := s.testName
+func (s *Test) FullName() string {
+	res := s.Name()
 	if s.subTestName != "" {
 		res = fmt.Sprintf("%s/%s", res, s.subTestName)
 	}
 
 	return res
+}
+
+func (s *Test) Name() string {
+	return s.testName
+}
+
+func (s *Test) GetID() string {
+	return s.id
+}
+
+func (s *Test) TmpDir() string {
+	return s.tmpDir
 }
 
 func (s *Test) MustMkSubDirs(t *testing.T, dirs ...string) string {
@@ -150,7 +162,7 @@ func (s *Test) CreateTmpFile(content string, executable bool, pathInTestDir ...s
 
 	filePrefix, subDirs := s.fileNameAndSubDirs(pathInTestDir...)
 
-	suffix := GenerateID(fmt.Sprintf("%s/%s", s.testName, filePrefix))
+	suffix := GenerateID(s.FullName(), filePrefix)
 
 	fileName := addRandomSuffix(filePrefix, suffix)
 
@@ -174,8 +186,8 @@ func (s *Test) CreateFileWithSameSuffix(sourceFile string, content string, execu
 	}
 
 	l := len(fileNameSeparated)
-
 	sourceName := fileNameSeparated[l-2]
+	suffix := fileNameSeparated[l-1]
 
 	fileName, subDirs := s.fileNameAndSubDirs(pathInTestDir...)
 
@@ -183,7 +195,7 @@ func (s *Test) CreateFileWithSameSuffix(sourceFile string, content string, execu
 		return "", fmt.Errorf("source file name %s is same as destination for file %s", fileName, sourceFile)
 	}
 
-	resFileName := addRandomSuffix(fileName, fileNameSeparated[l-1])
+	resFileName := addRandomSuffix(fileName, suffix)
 
 	return s.CreateFile(content, executable, append(subDirs, resFileName)...)
 }
@@ -195,7 +207,7 @@ func (s *Test) CreateFile(content string, executable bool, pathInTestDir ...stri
 
 	fileName, subDirs := s.fileNameAndSubDirs(pathInTestDir...)
 
-	fullPathSlice := []string{s.LocalTmpDir}
+	fullPathSlice := []string{s.TmpDir()}
 	if len(subDirs) > 0 {
 		if _, err := s.MkSubDirs(subDirs...); err != nil {
 			return "", fmt.Errorf("failed to create sub dirs: %v", err)
@@ -226,7 +238,7 @@ func (s *Test) MkSubDirs(dirs ...string) (string, error) {
 		return "", err
 	}
 
-	fullPathSlice := append([]string{s.LocalTmpDir}, dirs...)
+	fullPathSlice := append([]string{s.TmpDir()}, dirs...)
 	testDir := filepath.Join(fullPathSlice...)
 
 	if err := os.MkdirAll(testDir, 0755); err != nil {
@@ -241,8 +253,8 @@ func (s *Test) validateCreateDirsFilesArgs(paths ...string) error {
 		return s.WrapError("paths parts is empty")
 	}
 
-	if s.LocalTmpDir == "" {
-		return s.WrapError("LocalTmpDir is empty")
+	if s.TmpDir() == "" {
+		return s.WrapError("tmpDir is empty")
 	}
 
 	return nil
@@ -255,18 +267,19 @@ func (s *Test) RegisterCleanup(t *testing.T) {
 }
 
 func (s *Test) Cleanup(t *testing.T) {
-	if s.LocalTmpDir == "" || s.LocalTmpDir == "/" {
+	tmpDir := s.TmpDir()
+	if tmpDir == "" || tmpDir == "/" {
 		return
 	}
 
-	err := os.RemoveAll(s.LocalTmpDir)
+	err := os.RemoveAll(tmpDir)
 	if err != nil && !os.IsNotExist(err) {
-		LogErrorOrAssert(t, fmt.Sprintf("Remove local tmp dir: %s", s.LocalTmpDir), err, s.Logger)
+		LogErrorOrAssert(t, fmt.Sprintf("Remove local tmp dir: %s", tmpDir), err, s.Logger)
 		return
 	}
 
 	if !govalue.Nil(s.Logger) {
-		s.Logger.InfoF("Temp dir removed for test %s: %s", s.Name(), s.LocalTmpDir)
+		s.Logger.InfoF("Temp dir '%s' removed for test %s", tmpDir, s.FullName())
 	}
 }
 

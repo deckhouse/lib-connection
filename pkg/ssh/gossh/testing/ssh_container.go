@@ -103,7 +103,7 @@ func NewSSHContainer(settings *ContainerSettings) (*SSHContainer, error) {
 		return nil, errors.New("Test must not be nil in settings")
 	}
 
-	if settings.Test.Name() == "" {
+	if settings.Test.FullName() == "" {
 		return nil, errors.New("testName is empty")
 	}
 
@@ -316,17 +316,25 @@ func (c *SSHContainer) dockerName(id string) string {
 }
 
 func (c *SSHContainer) generateDockerNetworkName() string {
-	return c.dockerName(c.settings.Test.ID)
+	id := fmt.Sprintf("%s_%s", c.settings.Test.GetID(), c.settings.Test.Name())
+	return c.dockerName(id)
 }
 
 func (c *SSHContainer) generateDockerContainerName() string {
 	id := GenerateID(
-		fmt.Sprintf("%s/%s/%s",
-			c.settings.Test.ID,
-			c.settings.ContainerName,
-			c.settings.String(),
-		),
+		c.settings.Test.Name(),
+		c.settings.ContainerName,
+		c.settings.String(),
 	)
+
+	containerName := c.settings.ContainerName
+
+	if containerName == "" {
+		containerName = "target"
+	}
+
+	id = fmt.Sprintf("%s_%s", id, containerName)
+
 	return c.dockerName(id)
 }
 

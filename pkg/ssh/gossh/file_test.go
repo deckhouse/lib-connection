@@ -47,7 +47,7 @@ func TestSSHFileUpload(t *testing.T) {
 	test.MustCreateTmpFile(t, "empty", notExec, filePath("second")...)
 	test.MustCreateTmpFile(t, "sub", notExec, filePath("sub", "third")...)
 
-	symlink := filepath.Join(test.LocalTmpDir, "symlink")
+	symlink := filepath.Join(test.TmpDir(), "symlink")
 	err := os.Symlink(testFile, symlink)
 	require.NoError(t, err)
 

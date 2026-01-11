@@ -33,55 +33,6 @@ import (
 
 const HealthzPath = "/healthz"
 
-type PrefixLogger struct {
-	log.Logger
-	prefix  string
-	address string
-}
-
-func newPrefixLoggerWithAddress(logger log.Logger, address string) *PrefixLogger {
-	l := NewPrefixLogger(logger)
-	l.address = address
-	return l.WithPrefix("")
-}
-
-func NewPrefixLogger(logger log.Logger) *PrefixLogger {
-	l := &PrefixLogger{
-		Logger: logger,
-	}
-
-	return l.WithPrefix("")
-}
-
-func (l *PrefixLogger) Log(write func(string, ...any), f string, args ...any) {
-	if l.prefix != "" {
-		f = l.prefix + ": " + f
-	}
-
-	write(f, args...)
-}
-
-func (l *PrefixLogger) LogError(f string, args ...any) {
-	l.Log(l.ErrorF, f, args...)
-}
-
-func (l *PrefixLogger) addAddressForPrefix(p string) string {
-	if p == "" {
-		return l.address
-	}
-
-	if l.address != "" {
-		return fmt.Sprintf("%s (%s)", p, l.address)
-	}
-
-	return p
-}
-
-func (l *PrefixLogger) WithPrefix(p string) *PrefixLogger {
-	l.prefix = l.addAddressForPrefix(p)
-	return l
-}
-
 type HTTPHandler struct {
 	Path   string
 	Handle func(w http.ResponseWriter, r *http.Request, logger *PrefixLogger)
@@ -94,7 +45,7 @@ func NewSimpleHTTPHandler(path string, response string) *HTTPHandler {
 			_, err := fmt.Fprintf(w, "%s", response)
 			status := http.StatusOK
 			if err != nil {
-				logger.LogError("Error writing %s response: %v", r.URL.Path, err)
+				logger.Error("Error writing %s response: %v", r.URL.Path, err)
 				status = http.StatusInternalServerError
 			}
 			w.WriteHeader(status)
@@ -127,7 +78,7 @@ type HTTPServer struct {
 }
 
 func MustStartHTTPServer(t *testing.T, test *Test, port int, handlers ...*HTTPHandler) *HTTPServer {
-	server := NewHTTPServer(port, test.Logger, handlers...).WithLogPrefix(test.Name())
+	server := NewHTTPServer(port, test.Logger, handlers...).WithLogPrefix(test.FullName())
 	err := server.Start(true)
 	require.NoError(t, err)
 	server.RegisterCleanup(t)
@@ -170,12 +121,12 @@ func (s *HTTPServer) WithLogPrefix(p string) *HTTPServer {
 
 func (s *HTTPServer) AddHandler(handler *HTTPHandler) {
 	if err := handler.IsValid(); err != nil {
-		s.logger.LogError("Handler %s is not valid: %v", handler.Path, err)
+		s.logger.Error("Handler %s is not valid: %v", handler.Path, err)
 		return
 	}
 
 	if s.stopped {
-		s.logger.LogError("AddHandler %s: server already stopped", handler.Path)
+		s.logger.Error("AddHandler %s: server already stopped", handler.Path)
 		return
 	}
 
@@ -186,9 +137,9 @@ func (s *HTTPServer) AddHandler(handler *HTTPHandler) {
 
 func (s *HTTPServer) Start(waitStart bool) error {
 	go func() {
-		s.logger.Log(s.logger.InfoF, "Starting HTTP server")
+		s.logger.Info("Starting HTTP server")
 		if err := s.server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			s.logger.LogError("Error starting HTTP server: %v", err)
+			s.logger.Error("Error starting HTTP server: %v", err)
 		}
 	}()
 
@@ -214,7 +165,7 @@ func (s *HTTPServer) Start(waitStart bool) error {
 			err = fmt.Errorf("%w and Stop error %w", err, errStop)
 		}
 
-		s.logger.LogError("%v", err)
+		s.logger.Error("%v", err)
 		return err
 	}
 
@@ -231,19 +182,19 @@ func (s *HTTPServer) Stop() error {
 
 	err := s.server.Shutdown(ctx)
 	if err != nil {
-		s.logger.LogError("Error shutting down server: %v", err)
+		s.logger.Error("Error shutting down server: %v", err)
 		return err
 	}
 
 	s.stopped = true
-	s.logger.Log(s.logger.InfoF, "Server stopped")
+	s.logger.Info("Server stopped")
 	return nil
 }
 
 func (s *HTTPServer) RegisterCleanup(t *testing.T) {
 	t.Cleanup(func() {
 		if err := s.Stop(); err != nil {
-			s.logger.LogError("Error cleanup server: %v", err)
+			s.logger.Error("Error cleanup server: %v", err)
 		}
 	})
 }
@@ -262,7 +213,7 @@ func DoGetRequest(url string, loop retry.Params, logger *PrefixLogger) (string, 
 	}
 
 	logError := func(msg string, err error) error {
-		logger.LogError("Error GET %s request. %s: %v", url, msg, err)
+		logger.Error("Error GET %s request. %s: %v", url, msg, err)
 		return err
 	}
 

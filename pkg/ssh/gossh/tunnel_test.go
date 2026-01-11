@@ -223,7 +223,7 @@ func checkLocalTunnel(t *testing.T, test *sshtesting.Test, localServerPort int, 
 	_, err := sshtesting.DoGetRequest(
 		url,
 		requestLoop,
-		sshtesting.NewPrefixLogger(test.Logger).WithPrefix(test.Name()),
+		sshtesting.NewPrefixLogger(test.Logger).WithPrefix(test.FullName()),
 	)
 
 	assert := require.NoError

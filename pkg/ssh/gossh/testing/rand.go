@@ -1,3 +1,17 @@
+// Copyright 2026 Flant JSC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package ssh_testing
 
 import (
@@ -5,6 +19,7 @@ import (
 	"fmt"
 	mathrand "math/rand"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -33,9 +48,15 @@ func RandPortExclude(exclude []int) int {
 	return RandRangeExclude(portRangeStart, portRangeEnd, exclude)
 }
 
-func GenerateID(name string) string {
-	sumString := fmt.Sprintf("%s/%s", name, randString(12, lettersRunes))
+func GenerateID(names ...string) string {
+	if len(names) == 0 {
+		names = make([]string, 0, 1)
+	}
+
+	names = append(names, randString(12, lettersRunes))
+	sumString := strings.Join(names, "/")
 	sum := sha256Encode(sumString)
+
 	return fmt.Sprintf("%.12s", sum)
 }
 

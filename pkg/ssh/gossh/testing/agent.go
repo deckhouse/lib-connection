@@ -52,7 +52,7 @@ type PrivateKey struct {
 }
 
 func StartTestAgent(t *testing.T, wrapper *TestContainerWrapper) *Agent {
-	sockDir := wrapper.Settings.Test.LocalTmpDir
+	sockDir := wrapper.Settings.Test.TmpDir()
 	var privateKey []PrivateKey
 	if wrapper.PrivateKeyPath != "" {
 		privateKey = append(privateKey, PrivateKey{
