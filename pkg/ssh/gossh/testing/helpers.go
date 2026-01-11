@@ -32,39 +32,47 @@ import (
 
 const PrivateKeysRoot = "private_keys"
 
+func marshalKey(privateKey *rsa.PrivateKey, passphrase string) (*pem.Block, error) {
+	if len(passphrase) == 0 {
+		return gossh.MarshalPrivateKey(privateKey, "")
+	}
+
+	return gossh.MarshalPrivateKeyWithPassphrase(privateKey, "", []byte(passphrase))
+}
+
 // helper func to generate SSH keys
 func GenerateKeys(test *Test, passphrase string) (string, string, error) {
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
-		return "", "", err
-	}
-
-	var privateKeyPem *pem.Block
-	if len(passphrase) == 0 {
-		privateKeyPem, err = gossh.MarshalPrivateKey(privateKey, "")
-		if err != nil {
-			return "", "", err
-		}
-	} else {
-		privateKeyPem, err = gossh.MarshalPrivateKeyWithPassphrase(privateKey, "", []byte(passphrase))
-		if err != nil {
-			return "", "", err
-		}
+		return "", "", fmt.Errorf("cannot generate key: %w", err)
 	}
 
 	publicKey, err := gossh.NewPublicKey(privateKey.Public())
 	if err != nil {
-		return "", "", err
+		return "", "", fmt.Errorf("cannot create public key from private: %w", err)
+	}
+
+	privateKeyPem, err := marshalKey(privateKey, passphrase)
+	if err != nil {
+		return "", "", fmt.Errorf("cannot marshal private key: %w", err)
 	}
 
 	pemBytes := pem.EncodeToMemory(privateKeyPem)
 
 	privateKeyPath, err := test.CreateTmpFile(string(pemBytes), false, PrivateKeysRoot, "id_rsa")
 	if err != nil {
-		return "", "", err
+		return "", "", fmt.Errorf("cannot write private key: %w", err)
+	}
+
+	if err := os.Chmod(privateKeyPath, 0600); err != nil {
+		return "", "", fmt.Errorf("cannot chmod to 600 private key file: %w", err)
 	}
 
 	return privateKeyPath, string(gossh.MarshalAuthorizedKey(publicKey)), nil
+}
+
+func WritePubKeyFileForPrivate(test *Test, privateKeyPath string, pubKey string) (string, error) {
+	return test.CreateFileWithSameSuffix(privateKeyPath, pubKey, false, PrivateKeysRoot, "id_rsa.pub")
 }
 
 func LogErrorOrAssert(t *testing.T, description string, err error, logger log.Logger) {
@@ -78,30 +86,6 @@ func LogErrorOrAssert(t *testing.T, description string, err error, logger log.Lo
 	}
 
 	logger.ErrorF("%s: %v", description, err)
-}
-
-func StopContainerAndRemoveKeys(t *testing.T, container *SSHContainer, logger log.Logger, keyPaths ...string) {
-	var containerStopError, removeSSHDConfigError error
-	if !govalue.Nil(container) {
-		containerStopError = container.Stop()
-		removeSSHDConfigError = container.RemoveSSHDConfig()
-	}
-
-	removeErrors := removeFiles(keyPaths...)
-
-	LogErrorOrAssert(t, "failed to stop container", containerStopError, logger)
-	LogErrorOrAssert(t, "remove sshd config", removeSSHDConfigError, logger)
-	for _, removeError := range removeErrors {
-		LogErrorOrAssert(t, "failed to remove private key", removeError, logger)
-	}
-}
-
-func RemoveFiles(t *testing.T, logger log.Logger, paths ...string) {
-	removeErrors := removeFiles(paths...)
-
-	for _, removeError := range removeErrors {
-		LogErrorOrAssert(t, "failed to remove private key", removeError, logger)
-	}
 }
 
 func CheckSkipSSHTest(t *testing.T, testName string) {

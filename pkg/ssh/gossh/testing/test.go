@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/deckhouse/lib-dhctl/pkg/log"
@@ -25,17 +26,25 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const (
+	randomSuffixSeparator = "."
+)
+
 type Test struct {
 	LocalTmpDir string
 	ID          string
-	TestName    string
 	Logger      *log.InMemoryLogger
 
-	noLogger bool
+	testName    string
+	subTestName string
 }
 
 func ShouldNewTest(t *testing.T, testName string) *Test {
 	CheckSkipSSHTest(t, testName)
+
+	err := os.Setenv("SSH_AUTH_SOCK", "")
+	require.NoError(t, err, "Cleanup SSH_AUTH_SOCK")
+
 	tst, err := NewTest(testName)
 	require.NoError(t, err, "failed to create Test '%s'", testName)
 	tst.RegisterCleanup(t)
@@ -50,7 +59,7 @@ func NewTest(testName string) (*Test, error) {
 	id := GenerateID(testName)
 
 	resTest := &Test{
-		TestName: testName,
+		testName: testName,
 		ID:       id,
 	}
 
@@ -71,12 +80,47 @@ func NewTest(testName string) (*Test, error) {
 }
 
 func (s *Test) IsZero() bool {
-	return s.LocalTmpDir == "" || s.ID == "" || s.TestName == ""
+	return s.LocalTmpDir == "" || s.ID == "" || s.testName == ""
+}
+
+var forReplace = []string{" ", ",", ".", "-"}
+
+func (s *Test) SetSubTest(names ...string) *Test {
+	resName := ""
+
+	l := len(names)
+	if l > 0 {
+		tests := make([]string, 0, l)
+		for _, name := range names {
+			for _, old := range forReplace {
+				name = strings.ReplaceAll(name, old, "_")
+			}
+			tests = append(tests, name)
+		}
+		resName = strings.Join(tests, "/")
+	}
+
+	s.subTestName = resName
+	return s
 }
 
 func (s *Test) WrapError(format string, args ...any) error {
-	f := s.TestName + ": " + format
+	f := s.Name() + ": " + format
 	return fmt.Errorf(f, args...)
+}
+
+func (s *Test) WrapErrorWithAfterName(aftername, format string, args ...any) error {
+	f := fmt.Sprintf("%s (%s): ", s.Name(), aftername) + format
+	return fmt.Errorf(f, args...)
+}
+
+func (s *Test) Name() string {
+	res := s.testName
+	if s.subTestName != "" {
+		res = fmt.Sprintf("%s/%s", res, s.subTestName)
+	}
+
+	return res
 }
 
 func (s *Test) MustMkSubDirs(t *testing.T, dirs ...string) string {
@@ -106,11 +150,42 @@ func (s *Test) CreateTmpFile(content string, executable bool, pathInTestDir ...s
 
 	filePrefix, subDirs := s.fileNameAndSubDirs(pathInTestDir...)
 
-	suffix := GenerateID(fmt.Sprintf("%s/%s", s.TestName, filePrefix))
+	suffix := GenerateID(fmt.Sprintf("%s/%s", s.testName, filePrefix))
 
-	fileName := fmt.Sprintf("%s.%s", filePrefix, suffix)
+	fileName := addRandomSuffix(filePrefix, suffix)
 
 	return s.CreateFile(content, executable, append(subDirs, fileName)...)
+}
+
+func (s *Test) CreateFileWithSameSuffix(sourceFile string, content string, executable bool, pathInTestDir ...string) (string, error) {
+	if err := s.validateCreateDirsFilesArgs(pathInTestDir...); err != nil {
+		return "", err
+	}
+
+	if sourceFile == "" {
+		return "", fmt.Errorf("source file is empty for file")
+	}
+
+	sourceFileBase := filepath.Base(sourceFile)
+
+	fileNameSeparated := strings.Split(sourceFileBase, randomSuffixSeparator)
+	if len(fileNameSeparated) < 2 {
+		return "", fmt.Errorf("suffix is empty for file %s", sourceFile)
+	}
+
+	l := len(fileNameSeparated)
+
+	sourceName := fileNameSeparated[l-2]
+
+	fileName, subDirs := s.fileNameAndSubDirs(pathInTestDir...)
+
+	if sourceName == fileName {
+		return "", fmt.Errorf("source file name %s is same as destination for file %s", fileName, sourceFile)
+	}
+
+	resFileName := addRandomSuffix(fileName, fileNameSeparated[l-1])
+
+	return s.CreateFile(content, executable, append(subDirs, resFileName)...)
 }
 
 func (s *Test) CreateFile(content string, executable bool, pathInTestDir ...string) (string, error) {
@@ -191,7 +266,7 @@ func (s *Test) Cleanup(t *testing.T) {
 	}
 
 	if !govalue.Nil(s.Logger) {
-		s.Logger.InfoF("Temp dir removed for test %s: %s", s.TestName, s.LocalTmpDir)
+		s.Logger.InfoF("Temp dir removed for test %s: %s", s.Name(), s.LocalTmpDir)
 	}
 }
 
@@ -203,4 +278,8 @@ func (s *Test) fileNameAndSubDirs(pathInTestDir ...string) (string, []string) {
 	}
 
 	return pathInTestDir[l-1], pathInTestDir[:l-1]
+}
+
+func addRandomSuffix(name string, suffix string) string {
+	return fmt.Sprintf("%s%s%s", name, randomSuffixSeparator, suffix)
 }

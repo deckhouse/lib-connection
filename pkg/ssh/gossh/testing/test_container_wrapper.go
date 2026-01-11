@@ -29,10 +29,10 @@ type TestContainerWrapperSettings struct {
 	PrivateKeyPassword string
 	ExternalNetwork    string
 
-	NoStartContainerDuringCreate        bool
-	WaitStartingSSHDAfterStartContainer bool
-	NoGeneratePrivateKey                bool
-	WriteSSHDConfig                     bool
+	NoStartContainerDuringCreate          bool
+	NoWaitStartingSSHDAfterStartContainer bool
+	NoGeneratePrivateKey                  bool
+	NoWriteSSHDConfig                     bool
 }
 
 type TestContainerWrapper struct {
@@ -74,11 +74,13 @@ func NewTestContainerWrapper(t *testing.T, test *Test, opts ...TestContainerWrap
 			require.NoError(t, err)
 		}
 
-		publicKeyPath, err := test.CreateTmpFile(publicKey, false, PrivateKeysRoot, "id_rsa.pub")
+		publicKeyPath, err := WritePubKeyFileForPrivate(test, privateKeyPath, publicKey)
 		if err != nil {
 			testContainer.Cleanup(t)
 			require.NoError(t, err)
 		}
+
+		test.Logger.InfoF("Private key created: path '%s' pub key path: %s", privateKeyPath, publicKeyPath)
 
 		testSettings.PublicKey = &PublicKey{
 			Path: publicKeyPath,
@@ -95,13 +97,18 @@ func NewTestContainerWrapper(t *testing.T, test *Test, opts ...TestContainerWrap
 		testContainer.Cleanup(t)
 	})
 
-	if testSettings.WriteSSHDConfig {
+	if testSettings.ExternalNetwork != "" {
+		container.WithExternalNetwork(testSettings.ExternalNetwork)
+	}
+
+	if !testSettings.NoWriteSSHDConfig {
 		err := container.WriteConfig()
 		require.NoError(t, err)
 	}
 
 	if !testSettings.NoStartContainerDuringCreate {
-		err = container.Start(testSettings.WaitStartingSSHDAfterStartContainer)
+		wait := !testSettings.NoWaitStartingSSHDAfterStartContainer
+		err = container.Start(wait)
 		require.NoError(t, err)
 	}
 
@@ -121,7 +128,7 @@ func (c *TestContainerWrapper) AgentPrivateKeys() []session.AgentPrivateKey {
 		return make([]session.AgentPrivateKey, 0, 1)
 	}
 
-	return []session.AgentPrivateKey{{Key: c.Settings.PublicKey.Path, Passphrase: c.Settings.PrivateKeyPassword}}
+	return []session.AgentPrivateKey{{Key: c.PrivateKeyPath, Passphrase: c.Settings.PrivateKeyPassword}}
 }
 
 func (c *TestContainerWrapper) PublicKeyPath() string {
@@ -133,7 +140,16 @@ func (c *TestContainerWrapper) PublicKeyPath() string {
 }
 
 func (c *TestContainerWrapper) Cleanup(t *testing.T) {
-	StopContainerAndRemoveKeys(t, c.Container, c.Settings.Test.Logger, c.PrivateKeyPath, c.PublicKeyPath())
+	containerStopError := c.Container.Stop()
+	removeErrors := removeFiles(c.PrivateKeyPath, c.PublicKeyPath(), c.Container.GetSSHDConfigPath())
+
+	logger := c.Settings.Test.Logger
+
+	LogErrorOrAssert(t, "failed to stop container", containerStopError, logger)
+	for _, removeError := range removeErrors {
+		LogErrorOrAssert(t, "failed to remove private key", removeError, logger)
+	}
+
 	c.Settings.Cleanup(t)
 }
 
@@ -143,9 +159,9 @@ func WithNoStartContainer() TestContainerWrapperSettingsOpts {
 	}
 }
 
-func WithWriteSSHDConfig() TestContainerWrapperSettingsOpts {
+func WithNoWriteSSHDConfig() TestContainerWrapperSettingsOpts {
 	return func(s *TestContainerWrapperSettings) {
-		s.WriteSSHDConfig = true
+		s.NoWriteSSHDConfig = true
 	}
 }
 
@@ -155,15 +171,9 @@ func WithUserName(name string) TestContainerWrapperSettingsOpts {
 	}
 }
 
-func WithExternalNetworkName(name string) TestContainerWrapperSettingsOpts {
-	return func(s *TestContainerWrapperSettings) {
-		s.ExternalNetwork = name
-	}
-}
-
 func WithConnectToContainerNetwork(testContainer *TestContainerWrapper) TestContainerWrapperSettingsOpts {
 	return func(s *TestContainerWrapperSettings) {
-		s.Username = testContainer.Container.GetNetwork()
+		s.ExternalNetwork = testContainer.Container.GetNetwork()
 	}
 }
 
@@ -174,9 +184,9 @@ func WithAuthSettings(testContainer *TestContainerWrapper) TestContainerWrapperS
 	}
 }
 
-func WithWaitStartingSSHDAfterStartContainer() TestContainerWrapperSettingsOpts {
+func WithNoWaitStartingSSHDAfterStartContainer() TestContainerWrapperSettingsOpts {
 	return func(s *TestContainerWrapperSettings) {
-		s.WaitStartingSSHDAfterStartContainer = true
+		s.NoWaitStartingSSHDAfterStartContainer = true
 	}
 }
 
@@ -189,6 +199,12 @@ func WithNoPassword() TestContainerWrapperSettingsOpts {
 func WithPassword(password string) TestContainerWrapperSettingsOpts {
 	return func(s *TestContainerWrapperSettings) {
 		s.ContainerSettings.Password = password
+	}
+}
+
+func WithContainerName(name string) TestContainerWrapperSettingsOpts {
+	return func(s *TestContainerWrapperSettings) {
+		s.ContainerSettings.ContainerName = name
 	}
 }
 

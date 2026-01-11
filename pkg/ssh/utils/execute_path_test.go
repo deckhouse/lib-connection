@@ -110,7 +110,7 @@ func TestExecuteRemoteScriptPath(t *testing.T) {
 
 	for _, tst := range tests {
 		t.Run(tst.name, func(t *testing.T) {
-			sshSettings, _ := sshtesting.CreateDefaultTestSettings()
+			sshSettings := sshtesting.CreateDefaultTestSettings(sshtesting.ShouldNewTest(t, ""))
 			script := &testScriptPath{
 				sudo:      tst.sudo,
 				uploadDir: tst.uploadDir,

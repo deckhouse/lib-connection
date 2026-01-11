@@ -28,7 +28,7 @@ import (
 func TestUploadScriptExecute(t *testing.T) {
 	test := sshtesting.ShouldNewTest(t, "TestUploadScriptExecute")
 
-	sshClient, container := startContainerAndClientWithContainer(t, test, sshtesting.WithWriteSSHDConfig())
+	sshClient, container := startContainerAndClientWithContainer(t, test, sshtesting.WithNoWriteSSHDConfig())
 	sshClient.WithLoopsParams(ClientLoopsParams{
 		NewSession: retry.NewEmptyParams(
 			retry.WithAttempts(5),
@@ -134,7 +134,7 @@ fi
 func TestUploadScriptExecuteBundle(t *testing.T) {
 	test := sshtesting.ShouldNewTest(t, "TestUploadScriptExecuteBundle")
 
-	sshClient, container := startContainerAndClientWithContainer(t, test, sshtesting.WithWriteSSHDConfig())
+	sshClient, container := startContainerAndClientWithContainer(t, test, sshtesting.WithNoWriteSSHDConfig())
 	sshClient.WithLoopsParams(ClientLoopsParams{
 		NewSession: retry.NewEmptyParams(
 			retry.WithAttempts(5),

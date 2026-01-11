@@ -30,7 +30,7 @@ import (
 func TestTunnel(t *testing.T) {
 	test := sshtesting.ShouldNewTest(t, "TestTunnel")
 
-	sshClient, container := startContainerAndClientWithContainer(t, test, sshtesting.WithWriteSSHDConfig())
+	sshClient, container := startContainerAndClientWithContainer(t, test, sshtesting.WithNoWriteSSHDConfig())
 	sshClient.WithLoopsParams(ClientLoopsParams{
 		NewSession: retry.NewEmptyParams(
 			retry.WithAttempts(5),
@@ -223,7 +223,7 @@ func checkLocalTunnel(t *testing.T, test *sshtesting.Test, localServerPort int, 
 	_, err := sshtesting.DoGetRequest(
 		url,
 		requestLoop,
-		sshtesting.NewPrefixLogger(test.Logger).WithPrefix(test.TestName),
+		sshtesting.NewPrefixLogger(test.Logger).WithPrefix(test.Name()),
 	)
 
 	assert := require.NoError

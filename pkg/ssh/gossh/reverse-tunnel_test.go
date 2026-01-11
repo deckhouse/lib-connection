@@ -30,7 +30,7 @@ import (
 func TestReverseTunnel(t *testing.T) {
 	test := sshtesting.ShouldNewTest(t, "TestReverseTunnel")
 
-	sshClient, container := startContainerAndClientWithContainer(t, test, sshtesting.WithWriteSSHDConfig())
+	sshClient, container := startContainerAndClientWithContainer(t, test, sshtesting.WithNoWriteSSHDConfig())
 
 	// we don't have /opt/deckhouse in the container, so we should create it before start any UploadScript with sudo
 	err := container.Container.CreateDeckhouseDirs()

@@ -297,7 +297,7 @@ func (c *Client) KubeProxy() connection.KubeProxy {
 }
 
 func errorFile(errStr string) connection.File {
-	err := fmt.Errorf(errStr)
+	err := errors.New(errStr)
 
 	upload := func(data []byte, dstPath string) error {
 		return err

@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -47,6 +47,8 @@ type ContainerSettings struct {
 	NodeTmpPath string
 	LocalPort   int
 	SudoAccess  bool
+
+	ContainerName string
 }
 
 func (s *ContainerSettings) LocalPortString() string {
@@ -69,6 +71,20 @@ func (s *ContainerSettings) HasPassword() bool {
 	return s.Password != ""
 }
 
+func (s *ContainerSettings) String() string {
+	pubKeyPath := "not provided"
+	if s.HasPublicKeyPath() {
+		pubKeyPath = filepath.Base(s.PublicKey.Path)
+	}
+	return fmt.Sprintf(
+		"Settings: User: '%s' Port: %d SudoAccess: %v PubKey: '%s'",
+		s.Username,
+		s.LocalPort,
+		s.SudoAccess,
+		pubKeyPath,
+	)
+}
+
 type SSHContainer struct {
 	settings        *ContainerSettings
 	id              string
@@ -87,7 +103,7 @@ func NewSSHContainer(settings *ContainerSettings) (*SSHContainer, error) {
 		return nil, errors.New("Test must not be nil in settings")
 	}
 
-	if settings.Test.TestName == "" {
+	if settings.Test.Name() == "" {
 		return nil, errors.New("testName is empty")
 	}
 
@@ -123,6 +139,9 @@ X11Forwarding no
 PidFile /config/sshd.pid
 Subsystem	sftp	internal-sftp
 PasswordAuthentication %s
+MaxAuthTries 1000
+MaxSessions 1000
+AllowTcpForwarding yes
 `
 	config := fmt.Sprintf(configTpl, c.RemotePortString(), passwordAuthEnabled)
 
@@ -135,20 +154,9 @@ PasswordAuthentication %s
 	return nil
 }
 
-func (c *SSHContainer) RemoveSSHDConfig() error {
-	path := c.GetSSHDConfigPath()
-	if path == "" {
-		return nil
-	}
-
-	if err := os.Remove(path); err != nil {
-		return c.wrapError("failed to remove config file: %v", err)
-	}
-
-	return nil
-}
-
 func (c *SSHContainer) Start(waitSSHDStarted bool) error {
+	c.logInfo("Starting container fully...")
+
 	err := c.createNetwork()
 	if err != nil {
 		return err
@@ -167,6 +175,8 @@ func (c *SSHContainer) Start(waitSSHDStarted bool) error {
 		return err
 	}
 
+	c.logInfo("Container fully started %s", c.ShortContainerId())
+
 	return nil
 }
 
@@ -181,6 +191,9 @@ func (c *SSHContainer) Restart(waitSSHDStarted bool, sleepBeforeStart time.Durat
 }
 
 func (c *SSHContainer) Stop() error {
+	shortId := c.ShortContainerId()
+	c.logInfo("Stopping container '%s' fully...", shortId)
+
 	resError := ""
 	if err := c.stopContainer(); err != nil {
 		resError = err.Error()
@@ -193,6 +206,8 @@ func (c *SSHContainer) Stop() error {
 	if resError != "" {
 		return c.wrapError("cannot fully stop container: %v", errors.New(resError))
 	}
+
+	c.logInfo("Container '%s' fully stopped", shortId)
 
 	return nil
 }
@@ -259,6 +274,15 @@ func (c *SSHContainer) GetContainerId() string {
 	return c.id
 }
 
+func (c *SSHContainer) ShortContainerId() string {
+	id := c.GetContainerId()
+
+	if len(id) > 12 {
+		return fmt.Sprintf("%.12s", id)
+	}
+	return id
+}
+
 func (c *SSHContainer) GetNetwork() string {
 	return c.network
 }
@@ -287,22 +311,31 @@ func (c *SSHContainer) LocalPortString() string {
 	return c.settings.LocalPortString()
 }
 
-func (c *SSHContainer) dockerName() string {
-	return fmt.Sprintf("%s_%s", dockerNamePrefix, c.settings.Test.ID)
+func (c *SSHContainer) dockerName(id string) string {
+	return fmt.Sprintf("%s_%s", dockerNamePrefix, id)
+}
+
+func (c *SSHContainer) generateDockerNetworkName() string {
+	return c.dockerName(c.settings.Test.ID)
+}
+
+func (c *SSHContainer) generateDockerContainerName() string {
+	id := GenerateID(
+		fmt.Sprintf("%s/%s/%s",
+			c.settings.Test.ID,
+			c.settings.ContainerName,
+			c.settings.String(),
+		),
+	)
+	return c.dockerName(id)
 }
 
 func (c *SSHContainer) runDockerWithOut(description string, command ...string) (string, error) {
-	if len(command) == 0 {
-		return "", c.wrapError("%s: docker command is empty", description)
-	}
-
-	cmd := exec.Command("docker", command...)
-	out, err := cmd.CombinedOutput()
+	out, err := RunDockerWithOut(command...)
 	if err != nil {
-		return "", c.wrapError("cannot run docker %s: '%v', output: %s", description, err, string(out))
+		return "", c.wrapError("%s: %v", description, err)
 	}
-
-	return string(out), nil
+	return out, nil
 }
 
 func (c *SSHContainer) runDocker(description string, command ...string) error {
@@ -311,7 +344,7 @@ func (c *SSHContainer) runDocker(description string, command ...string) error {
 }
 
 func (c *SSHContainer) wrapError(format string, args ...any) error {
-	return c.settings.Test.WrapError(format, args...)
+	return c.settings.Test.WrapErrorWithAfterName(c.settings.String(), format, args...)
 }
 
 func (c *SSHContainer) isContainerStarted(description string) error {
@@ -326,7 +359,7 @@ func (c *SSHContainer) runContainerArgs() []string {
 	settings := c.ContainerSettings()
 
 	ports := fmt.Sprintf("%d:%s", settings.LocalPort, c.RemotePortString())
-	name := c.dockerName()
+	name := c.generateDockerContainerName()
 	args := []string{
 		"-d",
 		"-e", "USER_NAME=" + settings.Username,
@@ -380,7 +413,12 @@ func (c *SSHContainer) runContainerArgs() []string {
 func (c *SSHContainer) startContainer(waitSSHDStarted bool) error {
 	cmd := append([]string{"run"}, c.runContainerArgs()...)
 
+	c.logInfo("Starting container...")
+
 	id, err := c.runDockerWithOut("start container", cmd...)
+	if err != nil {
+		return err
+	}
 
 	c.id = strings.TrimSpace(id)
 
@@ -392,13 +430,15 @@ func (c *SSHContainer) startContainer(waitSSHDStarted bool) error {
 		return err
 	}
 
+	c.logInfo("Container started: ID: %s IP: %s", c.ShortContainerId(), c.GetContainerIP())
+
 	if !waitSSHDStarted {
 		return nil
 	}
 
 	addr := fmt.Sprintf("127.0.0.1:%s", c.LocalPortString())
 
-	loopParams := c.defaultRetryParams("Wait SSHD started after restart container")
+	loopParams := c.defaultRetryParams(fmt.Sprintf("Wait SSHD started after start container %s", c.ShortContainerId()))
 	err = retry.NewLoopWithParams(loopParams).Run(func() error {
 		conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
 		if err != nil {
@@ -422,7 +462,7 @@ func (c *SSHContainer) startContainer(waitSSHDStarted bool) error {
 }
 
 func (c *SSHContainer) stopContainer() error {
-	if err := c.isContainerStarted("stop container"); err == nil {
+	if err := c.isContainerStarted("stop container"); err != nil {
 		return nil
 	}
 
@@ -430,11 +470,18 @@ func (c *SSHContainer) stopContainer() error {
 		return fmt.Sprintf("%s %s", name, c.GetContainerId())
 	}
 
-	if err := c.runDocker(description("stop container"), "stop", c.GetContainerId()); err != nil {
+	id := c.GetContainerId()
+	shortID := c.ShortContainerId()
+
+	c.logInfo("Stop container %s...", shortID)
+
+	if err := c.runDocker(description("stop container"), "stop", id); err != nil {
 		return err
 	}
 
-	return c.runDocker(description("remove container"), "rm", c.GetContainerId())
+	c.logInfo("Remove container %s...", shortID)
+
+	return c.runDocker(description("remove container"), "rm", id)
 }
 
 func (c *SSHContainer) hasNetwork(description string) error {
@@ -459,6 +506,7 @@ func (c *SSHContainer) createNetwork() error {
 
 	if hasNetwork {
 		if isExternal {
+			c.logInfo("Skip creating network '%s'. Has external network", c.GetNetwork())
 			// do not need to create network
 			return nil
 		}
@@ -466,9 +514,12 @@ func (c *SSHContainer) createNetwork() error {
 		return c.wrapError("network %s is already created", c.GetContainerId())
 	}
 
-	network := c.dockerName()
+	network := c.generateDockerNetworkName()
 
-	if err := c.runDocker(fmt.Sprintf("create network %s", network), "network", "create", network); err != nil {
+	c.logInfo("Creating network '%s'...", network)
+
+	description := fmt.Sprintf("create network '%s'", network)
+	if err := c.runDocker(description, "network", "create", network); err != nil {
 		return err
 	}
 
@@ -481,11 +532,14 @@ func (c *SSHContainer) removeNetwork() error {
 	hasNetwork := c.hasNetwork("remove network") == nil
 	isExternal := c.isExternalNetwork()
 
+	network := c.GetNetwork()
+
 	if !hasNetwork || isExternal {
+		c.logInfo("Skip deleting network '%s'. Has external network or empty", network)
 		return nil
 	}
 
-	network := c.GetNetwork()
+	c.logInfo("Deleting network %s...", network)
 
 	if err := c.runDocker(fmt.Sprintf("remove network %s", network), "network", "rm", network); err != nil {
 		return err
@@ -494,6 +548,11 @@ func (c *SSHContainer) removeNetwork() error {
 	c.network = ""
 
 	return nil
+}
+
+func (c *SSHContainer) logInfo(format string, args ...any) {
+	format += fmt.Sprintf(" (%s)", c.settings.String())
+	c.settings.Logger.InfoF(format, args...)
 }
 
 func (c *SSHContainer) runDockerNetworkConnect(isDisconnect bool) error {
@@ -512,7 +571,16 @@ func (c *SSHContainer) runDockerNetworkConnect(isDisconnect bool) error {
 		return err
 	}
 
-	return c.runDocker(cmdName, "network", cmdName, c.GetNetwork(), c.GetContainerId())
+	network := c.GetNetwork()
+
+	c.logInfo(
+		"%s network %s to container %s...",
+		strings.ToTitle(cmdName),
+		network,
+		c.ShortContainerId(),
+	)
+
+	return c.runDocker(cmdName, "network", cmdName, network, c.GetContainerId())
 }
 
 func (c *SSHContainer) discoveryContainerIP() (string, error) {
@@ -525,7 +593,7 @@ func (c *SSHContainer) discoveryContainerIP() (string, error) {
 		return "", err
 	}
 
-	getIPLoopParams := c.defaultRetryParams(fmt.Sprintf("%s %s", description, c.GetContainerId()))
+	getIPLoopParams := c.defaultRetryParams(fmt.Sprintf("%s %s", description, c.ShortContainerId()))
 	getIPCmd := []string{
 		"inspect",
 		"-f", "{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}",

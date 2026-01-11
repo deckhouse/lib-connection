@@ -45,14 +45,24 @@ func CreateDefaultTestSettingsWithAgent(test *Test, agentSockPath string) settin
 
 type SessionOverride func(input *session.Input)
 
+func generateIncorrectPort(wrappers ...*TestContainerWrapper) string {
+	exclude := make([]int, 0, len(wrappers))
+	for _, wrapper := range wrappers {
+		exclude = append(exclude, wrapper.LocalPort())
+	}
+
+	return strconv.Itoa(RandPortExclude(exclude))
+}
+
 func OverrideSessionWithIncorrectPort(wrappers ...*TestContainerWrapper) SessionOverride {
 	return func(input *session.Input) {
-		exclude := make([]int, 0, len(wrappers))
-		for _, wrapper := range wrappers {
-			exclude = append(exclude, wrapper.LocalPort())
-		}
+		input.Port = generateIncorrectPort(wrappers...)
+	}
+}
 
-		input.Port = strconv.Itoa(RandPortExclude(exclude))
+func OverrideSessionWithIncorrectBastionPort(wrappers ...*TestContainerWrapper) SessionOverride {
+	return func(input *session.Input) {
+		input.BastionPort = generateIncorrectPort(wrappers...)
 	}
 }
 
@@ -85,7 +95,7 @@ func SessionWithBastion(wrapper *TestContainerWrapper, bastionWrapper *TestConta
 
 	input := session.Input{
 		AvailableHosts: []session.Host{
-			{Host: "127.0.0.1", Name: "localhost"},
+			{Host: container.GetContainerIP(), Name: container.GetContainerIP()},
 		},
 		User:            sett.Username,
 		Port:            container.RemotePortString(),

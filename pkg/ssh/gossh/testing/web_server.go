@@ -91,7 +91,7 @@ func NewSimpleHTTPHandler(path string, response string) *HTTPHandler {
 	return &HTTPHandler{
 		Path: path,
 		Handle: func(w http.ResponseWriter, r *http.Request, logger *PrefixLogger) {
-			_, err := fmt.Fprintf(w, response)
+			_, err := fmt.Fprintf(w, "%s", response)
 			status := http.StatusOK
 			if err != nil {
 				logger.LogError("Error writing %s response: %v", r.URL.Path, err)
@@ -127,7 +127,7 @@ type HTTPServer struct {
 }
 
 func MustStartHTTPServer(t *testing.T, test *Test, port int, handlers ...*HTTPHandler) *HTTPServer {
-	server := NewHTTPServer(port, test.Logger, handlers...).WithLogPrefix(test.TestName)
+	server := NewHTTPServer(port, test.Logger, handlers...).WithLogPrefix(test.Name())
 	err := server.Start(true)
 	require.NoError(t, err)
 	server.RegisterCleanup(t)
@@ -175,7 +175,7 @@ func (s *HTTPServer) AddHandler(handler *HTTPHandler) {
 	}
 
 	if s.stopped {
-		s.logger.Log(s.logger.WarnF, "AddHandler %s: server already stopped", handler.Path)
+		s.logger.LogError("AddHandler %s: server already stopped", handler.Path)
 		return
 	}
 

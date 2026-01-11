@@ -27,6 +27,7 @@ import (
 	"github.com/deckhouse/lib-dhctl/pkg/retry"
 	gossh "github.com/deckhouse/lib-gossh"
 	"github.com/deckhouse/lib-gossh/agent"
+	"github.com/name212/govalue"
 
 	connection "github.com/deckhouse/lib-connection/pkg"
 	"github.com/deckhouse/lib-connection/pkg/settings"
@@ -162,7 +163,7 @@ func (s *Client) startWithContext(ctx context.Context) error {
 	var agentClient agent.ExtendedAgent
 	socket := s.settings.AuthSock()
 	if socket != "" {
-		logger.DebugLn("Dialing SSH agent unix socket...")
+		logger.DebugF("Dialing SSH agent unix socket %s ...", socket)
 		socketConn, err := net.Dial("unix", socket)
 		if err != nil {
 			return fmt.Errorf("Failed to open SSH_AUTH_SOCK: %v", err)
@@ -176,30 +177,14 @@ func (s *Client) startWithContext(ctx context.Context) error {
 		bastionConfig := &gossh.ClientConfig{}
 		logger.DebugLn("Initialize bastion connection...")
 
-		var bastionPass string
-
-		if s.SessionSettings.BastionPassword != "" {
-			bastionPass = s.SessionSettings.BastionPassword
-		}
-
-		if len(s.privateKeys) == 0 && len(bastionPass) == 0 {
-			return fmt.Errorf("No credentials present to connect to bastion host")
-		}
-
-		AuthMethods := []gossh.AuthMethod{gossh.PublicKeys(s.signers...)}
-
-		if len(bastionPass) > 0 {
-			logger.DebugF("Initial password auth to bastion host\n")
-			AuthMethods = append(AuthMethods, gossh.Password(bastionPass))
-		}
-
-		if socket != "" {
-			AuthMethods = append(AuthMethods, gossh.PublicKeysCallback(agentClient.Signers))
+		authMethods, err := s.authMethods(agentClient, s.SessionSettings.BastionPassword)
+		if err != nil {
+			return err
 		}
 
 		bastionConfig = &gossh.ClientConfig{
 			User:            s.SessionSettings.BastionUser,
-			Auth:            AuthMethods,
+			Auth:            authMethods,
 			HostKeyCallback: gossh.InsecureIgnoreHostKey(),
 			Timeout:         3 * time.Second,
 		}
@@ -225,33 +210,16 @@ func (s *Client) startWithContext(ctx context.Context) error {
 		logger.DebugF("Connected successfully to bastion host %s\n", bastionAddr)
 	}
 
-	var becomePass string
-
-	if s.SessionSettings.BecomePass != "" {
-		becomePass = s.SessionSettings.BecomePass
-	}
-
-	if len(s.privateKeys) == 0 && len(becomePass) == 0 && socket == "" {
-		return fmt.Errorf("one of SSH keys, SSH_AUTH_SOCK environment variable or become password should be not empty")
+	authMethods, err := s.authMethods(agentClient, s.SessionSettings.BecomePass)
+	if err != nil {
+		return err
 	}
 
 	logger.DebugF("Initial ssh privater keys auth to master host")
 
-	AuthMethods := []gossh.AuthMethod{gossh.PublicKeys(s.signers...)}
-
-	if socket != "" {
-		logger.DebugF("Adding agent socket to auth methods")
-		AuthMethods = []gossh.AuthMethod{gossh.PublicKeysCallback(agentClient.Signers)}
-	}
-
-	if len(becomePass) > 0 {
-		logger.DebugF("Initial password auth to master host")
-		AuthMethods = append(AuthMethods, gossh.Password(becomePass))
-	}
-
 	config := &gossh.ClientConfig{
 		User:            s.SessionSettings.User,
-		Auth:            AuthMethods,
+		Auth:            authMethods,
 		HostKeyCallback: gossh.InsecureIgnoreHostKey(),
 		Timeout:         5 * time.Second,
 	}
@@ -305,7 +273,6 @@ func (s *Client) startWithContext(ctx context.Context) error {
 
 	var (
 		addr             string
-		err              error
 		targetClientConn gossh.Conn
 		targetNewChan    <-chan gossh.NewChannel
 		targetReqChan    <-chan *gossh.Request
@@ -317,7 +284,11 @@ func (s *Client) startWithContext(ctx context.Context) error {
 		}
 		addr = fmt.Sprintf("%s:%s", s.SessionSettings.Host(), s.SessionSettings.Port)
 		logger.DebugF("Connect to target host '%s' with user '%s' through bastion host\n", addr, s.SessionSettings.User)
-		targetConn, err = bastionClient.DialContext(ctx, "tcp", addr)
+
+		cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+
+		targetConn, err = bastionClient.DialContext(cctx, "tcp", addr)
 		if err != nil {
 			return err
 		}
@@ -355,6 +326,32 @@ func (s *Client) startWithContext(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func (s *Client) authMethods(agentClient agent.ExtendedAgent, password string) ([]gossh.AuthMethod, error) {
+	logger := s.settings.Logger()
+
+	var authMethods []gossh.AuthMethod
+	if len(s.signers) > 0 {
+		logger.DebugF("Adding private key method")
+		authMethods = append(authMethods, gossh.PublicKeys(s.signers...))
+	}
+
+	if !govalue.Nil(agentClient) {
+		logger.DebugF("Adding agent socket to auth method")
+		authMethods = append(authMethods, gossh.PublicKeysCallback(agentClient.Signers))
+	}
+
+	if password != "" {
+		logger.DebugF("Initial password auth to master host")
+		authMethods = append(authMethods, gossh.Password(password))
+	}
+
+	if len(authMethods) == 0 {
+		return nil, fmt.Errorf("Private keys or SSH_AUTH_SOCK environment variable or become password should passed")
+	}
+
+	return authMethods, nil
 }
 
 func (s *Client) runInLoop(ctx context.Context, params retry.Params, task func() error) error {

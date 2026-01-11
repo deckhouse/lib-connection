@@ -118,172 +118,183 @@ func TestClientStart(t *testing.T) {
 		t,
 		test,
 		sshtesting.WithConnectToContainerNetwork(container),
-		sshtesting.WithWriteSSHDConfig(),
 		sshtesting.WithUserName(bastionUserName),
 		sshtesting.WithAuthSettings(container),
+		sshtesting.WithContainerName("bastion"),
 	)
 
 	agent := sshtesting.StartTestAgent(t, container)
 
-	t.Run("Start ssh client", func(t *testing.T) {
-		type testCase struct {
-			title      string
-			settings   *session.Session
-			keys       []session.AgentPrivateKey
-			wantErr    bool
-			err        string
-			authSock   string
-			loopParams ClientLoopsParams
-		}
+	type testCase struct {
+		title    string
+		settings *session.Session
+		keys     []session.AgentPrivateKey
+		wantErr  bool
+		err      string
+		authSock string
+	}
 
-		keys := []session.AgentPrivateKey{{Key: container.PublicKeyPath()}}
-		noKeys := make([]session.AgentPrivateKey, 0, 1)
-		overrideIncorrectPort := sshtesting.OverrideSessionWithIncorrectPort(container, bastion)
+	keys := container.AgentPrivateKeys()
+	noKeys := make([]session.AgentPrivateKey, 0, 1)
+	incorrectHost := sshtesting.IncorrectHost()
 
-		cases := []testCase{
-			{
-				title:    "Password auth, no keys",
-				settings: sshtesting.Session(container),
-				keys:     make([]session.AgentPrivateKey, 0, 1),
-				wantErr:  false,
-			},
-			{
-				title:    "Key auth, no password",
-				settings: sshtesting.Session(container),
-				keys:     keys,
-				wantErr:  false,
-			},
-			{
-				title:    "SSH_AUTH_SOCK auth",
-				settings: sshtesting.Session(container),
-				keys:     keys,
-				wantErr:  false,
-				authSock: agent.SockPath(),
-			},
-			{
-				title:    "SSH_AUTH_SOCK auth, wrong socket",
-				settings: sshtesting.Session(container),
-				keys:     noKeys,
-				wantErr:  true,
-				err:      "Failed to open SSH_AUTH_SOCK",
-				authSock: "/run/nonexistent",
-			},
-			{
-				title:    "Key auth, no password, wrong key",
-				settings: sshtesting.Session(container),
-				keys:     []session.AgentPrivateKey{{Key: "/tmp/noexistent-key"}},
-				wantErr:  true,
-			},
-			{
-				title:    "No session",
-				settings: nil,
-				keys:     []session.AgentPrivateKey{{Key: "/tmp/noexistent-key"}},
-				wantErr:  true,
-				err:      "possible bug in ssh client: session should be created before start",
-			},
-			{
-				title:    "No auth",
-				settings: sshtesting.Session(container),
-				keys:     noKeys,
-				wantErr:  true,
-				err:      "one of SSH keys, SSH_AUTH_SOCK environment variable or become password should be not empty",
-				authSock: "",
-			},
-			{
-				title:    "Wrong port",
-				settings: sshtesting.Session(container, overrideIncorrectPort),
-				keys:     keys,
-				wantErr:  true,
-				err:      "Failed to connect to master host",
-				authSock: "",
-				loopParams: ClientLoopsParams{
-					ConnectToHostDirectly: sshtesting.GetTestLoopParamsForFailed(),
-				},
-			},
-			{
-				title:    "With bastion, key auth",
-				settings: sshtesting.SessionWithBastion(container, bastion),
-				keys:     keys,
-				wantErr:  false,
-				authSock: "",
-			},
-			{
-				title:    "With bastion, password auth",
-				settings: sshtesting.SessionWithBastion(container, bastion),
-				keys:     noKeys,
-				wantErr:  false,
-				authSock: "",
-			},
-			{
-				title:    "With bastion, no auth",
-				settings: sshtesting.SessionWithBastion(container, bastion),
-				keys:     noKeys,
-				wantErr:  true,
-				err:      "No credentials present to connect to bastion host",
-				authSock: "",
-			},
-			{
-				title:    "With bastion, SSH_AUTH_SOCK auth",
-				settings: sshtesting.SessionWithBastion(container, bastion),
-				keys:     keys,
-				wantErr:  false,
-				authSock: agent.SockPath(),
-			},
-			{
-				title: "With bastion, key auth, wrong target host",
-				settings: sshtesting.SessionWithBastion(container, bastion, func(input *session.Input) {
-					input.AvailableHosts = []session.Host{{Host: container.ContainerIP(), Name: container.ContainerIP()}}
-				}),
-				keys:     keys,
-				wantErr:  true,
-				err:      "Failed to connect to target host through bastion host",
-				authSock: "",
-				loopParams: ClientLoopsParams{
-					ConnectToHostViaBastion: sshtesting.GetTestLoopParamsForFailed(),
-				},
-			},
-			{
-				title:    "With bastion, key auth, wrong bastion port",
-				settings: sshtesting.SessionWithBastion(container, bastion, overrideIncorrectPort),
-				keys:     keys,
-				wantErr:  true,
-				err:      "Could not connect to bastion host",
-				authSock: "",
-				loopParams: ClientLoopsParams{
-					ConnectToBastion: sshtesting.GetTestLoopParamsForFailed(),
-				},
-			},
-		}
-
-		for _, c := range cases {
-			t.Run(c.title, func(t *testing.T) {
-				sshSettings := sshtesting.CreateDefaultTestSettingsWithAgent(test, c.authSock)
-
-				sshClient := NewClient(context.Background(), sshSettings, c.settings, c.keys).
-					WithLoopsParams(c.loopParams)
-
-				err := sshClient.Start()
-				sshClient.Stop()
-
-				if !c.wantErr {
-					require.NoError(t, err)
-					test.Logger.InfoLn("client started successfully")
-					return
+	cases := []testCase{
+		{
+			title:    "Password auth, no keys",
+			settings: sshtesting.Session(container),
+			keys:     make([]session.AgentPrivateKey, 0, 1),
+			wantErr:  false,
+		},
+		{
+			title:    "Key auth, no password",
+			settings: sshtesting.Session(container),
+			keys:     keys,
+			wantErr:  false,
+		},
+		{
+			title:    "SSH_AUTH_SOCK auth",
+			settings: sshtesting.Session(container),
+			keys:     noKeys,
+			wantErr:  false,
+			authSock: agent.SockPath(),
+		},
+		{
+			title:    "SSH_AUTH_SOCK auth, wrong socket",
+			settings: sshtesting.Session(container),
+			keys:     noKeys,
+			wantErr:  true,
+			err:      "Failed to open SSH_AUTH_SOCK",
+			authSock: "/run/nonexistent",
+		},
+		{
+			title:    "Key auth, no password, wrong key",
+			settings: sshtesting.Session(container),
+			keys:     []session.AgentPrivateKey{{Key: "/tmp/noexistent-key"}},
+			wantErr:  true,
+		},
+		{
+			title:    "No session",
+			settings: nil,
+			keys:     []session.AgentPrivateKey{{Key: "/tmp/noexistent-key"}},
+			wantErr:  true,
+			err:      "possible bug in ssh client: session should be created before start",
+		},
+		{
+			title: "No auth",
+			settings: sshtesting.Session(container, func(input *session.Input) {
+				input.BecomePass = ""
+			}),
+			keys:     noKeys,
+			wantErr:  true,
+			err:      "Private keys or SSH_AUTH_SOCK environment variable or become password should passed",
+			authSock: "",
+		},
+		{
+			title: "Wrong port",
+			settings: sshtesting.Session(
+				container,
+				sshtesting.OverrideSessionWithIncorrectPort(container, bastion),
+			),
+			keys:     keys,
+			wantErr:  true,
+			err:      "Failed to connect to master host",
+			authSock: "",
+		},
+		{
+			title:    "With bastion, key auth",
+			settings: sshtesting.SessionWithBastion(container, bastion),
+			keys:     keys,
+			wantErr:  false,
+			authSock: "",
+		},
+		{
+			title:    "With bastion, password auth",
+			settings: sshtesting.SessionWithBastion(container, bastion),
+			keys:     noKeys,
+			wantErr:  false,
+			authSock: "",
+		},
+		{
+			title: "With bastion, no auth",
+			settings: sshtesting.SessionWithBastion(container, bastion, func(input *session.Input) {
+				input.BastionPassword = ""
+			}),
+			keys:     noKeys,
+			wantErr:  true,
+			err:      "Private keys or SSH_AUTH_SOCK environment variable or become password should passed",
+			authSock: "",
+		},
+		{
+			title:    "With bastion, SSH_AUTH_SOCK auth",
+			settings: sshtesting.SessionWithBastion(container, bastion),
+			keys:     keys,
+			wantErr:  false,
+			authSock: agent.SockPath(),
+		},
+		{
+			title: "With bastion, key auth, wrong target host",
+			settings: sshtesting.SessionWithBastion(container, bastion, func(input *session.Input) {
+				input.AvailableHosts = []session.Host{
+					{Host: incorrectHost, Name: incorrectHost},
 				}
+			}),
+			keys:     keys,
+			wantErr:  true,
+			err:      "Failed to connect to target host through bastion host",
+			authSock: "",
+		},
+		{
+			title: "With bastion, key auth, wrong bastion port",
+			settings: sshtesting.SessionWithBastion(
+				container,
+				bastion,
+				sshtesting.OverrideSessionWithIncorrectBastionPort(container, bastion),
+			),
+			keys:     keys,
+			wantErr:  true,
+			err:      "Could not connect to bastion host",
+			authSock: "",
+		},
+	}
 
-				require.Error(t, err)
-				require.Contains(t, err.Error(), c.err)
-			})
-		}
+	for _, c := range cases {
+		t.Run(c.title, func(t *testing.T) {
+			test.SetSubTest(c.title)
 
-	})
+			sshSettings := sshtesting.CreateDefaultTestSettingsWithAgent(test, c.authSock)
+
+			sshClient := NewClient(context.Background(), sshSettings, c.settings, c.keys).
+				WithLoopsParams(ClientLoopsParams{
+					ConnectToHostViaBastion: sshtesting.GetTestLoopParamsForFailed(),
+					ConnectToBastion:        sshtesting.GetTestLoopParamsForFailed(),
+					ConnectToHostDirectly:   sshtesting.GetTestLoopParamsForFailed(),
+				})
+
+			err := sshClient.Start()
+			sshClient.Stop()
+
+			if !c.wantErr {
+				require.NoError(t, err)
+				test.Logger.InfoLn("client started successfully")
+				return
+			}
+
+			require.Error(t, err)
+			require.Contains(t, err.Error(), c.err)
+		})
+	}
 }
 
 func TestClientKeepalive(t *testing.T) {
-	sshtesting.CheckSkipSSHTest(t, "TestClientKeepalive")
+	testName := "TestClientKeepalive"
+	sshtesting.CheckSkipSSHTest(t, testName)
+
+	waitKeepAlive := func() {
+		time.Sleep(3 * time.Second)
+	}
 
 	t.Run("keepalive test", func(t *testing.T) {
-		test := sshtesting.ShouldNewTest(t, "TestClientKeepalive")
+		test := sshtesting.ShouldNewTest(t, testName).SetSubTest(t.Name())
 
 		container := sshtesting.NewTestContainerWrapper(t, test)
 		sess := sshtesting.Session(container)
@@ -298,8 +309,6 @@ func TestClientKeepalive(t *testing.T) {
 		err := sshClient.Start()
 		// expecting no error on client start
 		require.NoError(t, err, "failed to start ssh client")
-		// test case: stopping container for a while, waiting for client recreation, creating new session, expecting no error
-		time.Sleep(2 * time.Second)
 
 		registerStopClient(t, sshClient)
 
@@ -318,12 +327,13 @@ func TestClientKeepalive(t *testing.T) {
 
 		err = container.Container.Restart(true, 2*time.Second)
 		require.NoError(t, err, "failed to restart container")
+		waitKeepAlive()
 
 		runEcho(t, "Hello after restart")
 	})
 
 	t.Run("keepalive with context test", func(t *testing.T) {
-		test := sshtesting.ShouldNewTest(t, "TestClientKeepaliveContext")
+		test := sshtesting.ShouldNewTest(t, testName).SetSubTest(t.Name())
 
 		container := sshtesting.NewTestContainerWrapper(t, test)
 		sess := sshtesting.Session(container)
@@ -339,16 +349,17 @@ func TestClientKeepalive(t *testing.T) {
 
 		registerStopClient(t, sshClient)
 
-		time.Sleep(10 * time.Second)
 		// expecting client is not live
 		sshClient.Stop()
+		waitKeepAlive()
 		err = sshClient.Start()
+
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "deadline exceeded")
 	})
 
 	t.Run("client start with context test", func(t *testing.T) {
-		test := sshtesting.ShouldNewTest(t, "TestClientKeepaliveContextStartClient")
+		test := sshtesting.ShouldNewTest(t, testName).SetSubTest(t.Name())
 
 		container := sshtesting.NewTestContainerWrapper(t, test)
 		sess := sshtesting.Session(container, sshtesting.OverrideSessionWithIncorrectPort(container))

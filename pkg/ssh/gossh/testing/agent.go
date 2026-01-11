@@ -20,23 +20,31 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
+	"sync"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/deckhouse/lib-dhctl/pkg/log"
+	"github.com/deckhouse/lib-dhctl/pkg/retry"
 	"github.com/name212/govalue"
 	"github.com/stretchr/testify/require"
 )
 
 type Agent struct {
-	logger   log.Logger
-	sockPath string
+	logger log.Logger
 
-	pid int
+	mu       sync.RWMutex
+	sockPath string
+	pid      int
 
 	stopCh chan struct{}
 }
+
+var pidRegex = regexp.MustCompile(`SSH_AGENT_PID=(\d+);`)
 
 type PrivateKey struct {
 	Path     string
@@ -93,31 +101,42 @@ func StartAgent(sockDir string, logger log.Logger, keysPath ...PrivateKey) (*Age
 }
 
 func (a *Agent) start() error {
-	cmd := exec.Command("ssh-agent", "-a", a.sockPath)
+	sock := a.SockPath()
+	cmd := exec.Command("ssh-agent", "-a", sock)
 
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("cannot start ssh-agent with sock %s: %w", a.sockPath, err)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("cannot start ssh-agent with sock %s: %w", sock, err)
 	}
 
-	a.pid = cmd.Process.Pid
+	pidSubmatches := pidRegex.FindSubmatch(out)
+	if len(pidSubmatches) < 2 {
+		return fmt.Errorf("cannot find pid in ssh-agent output: %s", string(out))
+	}
 
-	a.logInfo("started successfully")
+	pid, err := strconv.Atoi(string(pidSubmatches[1]))
+	if err != nil {
+		return fmt.Errorf("cannot parse pid in ssh-agent output: %s", string(out))
+	}
 
-	doneCh := make(chan error, 1)
+	a.pid = pid
+
+	a.logInfo("started successfully with pid: %d", a.Pid())
+
 	go func() {
-		doneCh <- cmd.Wait()
-		close(doneCh)
-	}()
-
-	go func() {
+		stopCh := a.stopCh
 		select {
-		case <-a.stopCh:
-			a.logInfo("receive stop signal")
-			err := cmd.Process.Kill()
+		case <-stopCh:
+			a.logInfo("shutting down ssh-agent")
+			// Find the process by its PID
+			process, err := os.FindProcess(a.Pid())
+			if err != nil {
+				a.cleanupAndLog("find process", err)
+				return
+			}
+
+			err = process.Signal(syscall.SIGTERM)
 			a.cleanupAndLog("kill", err)
-			return
-		case err := <-doneCh:
-			a.cleanupAndLog("stopped external", err)
 			return
 		}
 	}()
@@ -143,29 +162,63 @@ func (a *Agent) RemoveKey(key PrivateKey) error {
 }
 
 func (a *Agent) IsStopped() bool {
-	return a.pid == 0
+	pid := a.Pid()
+	return pid == 0 || a.stopCh == nil
 }
 
 func (a *Agent) Pid() int {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
 	return a.pid
 }
 
 func (a *Agent) SockPath() string {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
 	return a.sockPath
 }
 
 func (a *Agent) Stop() {
-	close(a.stopCh)
+	if a.stopCh == nil {
+		return
+	}
+
+	ch := a.stopCh
+	a.stopCh = nil
+
+	close(ch)
 }
 
 func (a *Agent) RegisterCleanup(t *testing.T) {
 	t.Cleanup(func() {
+		socket := a.SockPath()
+		if socket == "" {
+			return
+		}
+
 		a.Stop()
+		leaveSocket := retry.NewEmptyParams(
+			retry.WithName(fmt.Sprintf("Wait socket %s leave", socket)),
+			retry.WithWait(2*time.Second),
+			retry.WithAttempts(10),
+			retry.WithLogger(a.logger),
+		)
+
+		_ = retry.NewLoopWithParams(leaveSocket).Run(func() error {
+			_, err := os.Stat(socket)
+			if err != nil {
+				return nil
+			}
+
+			return fmt.Errorf("socket %s is still running", socket)
+		})
 	})
 }
 
 func (a *Agent) String() string {
-	return fmt.Sprintf("test agent (socket: '%s'; pid: %d)", a.sockPath, a.pid)
+	return fmt.Sprintf("test agent (socket: '%s'; pid: %d)", a.SockPath(), a.Pid())
 }
 
 func (a *Agent) run(stdin string, name string, args ...string) error {
@@ -173,7 +226,7 @@ func (a *Agent) run(stdin string, name string, args ...string) error {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Env = append(cmd.Env, fmt.Sprintf("SSH_AUTH_SOCK=%s", a.sockPath))
+	cmd.Env = append(cmd.Env, fmt.Sprintf("SSH_AUTH_SOCK=%s", a.SockPath()))
 
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
@@ -195,18 +248,14 @@ func (a *Agent) cleanupAndLog(msg string, err error) {
 		return
 	}
 
+	a.mu.Lock()
+
 	a.pid = 0
 	a.sockPath = ""
 
+	a.mu.Unlock()
+
 	a.logInfo("%s success", msg)
-}
-
-func (a *Agent) checkStopped() error {
-	if a.IsStopped() {
-		return a.wrapError("agent already stopped", fmt.Errorf("stopped"))
-	}
-
-	return nil
 }
 
 func (a *Agent) logInfo(f string, args ...any) {
