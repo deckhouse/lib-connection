@@ -17,6 +17,7 @@ package gossh
 import (
 	"errors"
 	"fmt"
+	"math/rand"
 	"time"
 
 	gossh "github.com/deckhouse/lib-gossh"
@@ -33,18 +34,23 @@ type keepAliveChecker struct {
 	sleep     time.Duration
 	maxErrors int
 
+	id          int
 	errorsCount int
 }
 
 func newKepAliveChecker(client *Client, sleep time.Duration, maxErrors int) *keepAliveChecker {
+	id := rand.New(rand.NewSource(time.Now().UnixNano())).Int()
 	return &keepAliveChecker{
 		client:    client,
 		sleep:     sleep,
 		maxErrors: maxErrors,
+		id:        id,
 	}
 }
 
 func (c *keepAliveChecker) Check() error {
+	c.debug("do next check...")
+
 	err := c.checkClientAlive()
 
 	if err != nil {
@@ -53,7 +59,7 @@ func (c *keepAliveChecker) Check() error {
 
 	c.sendAliveToSessions()
 
-	c.debug("success. Sleep %s before next request", c.sleep.String())
+	c.debug("success. Sleep %s before next check", c.sleep.String())
 	time.Sleep(c.sleep)
 
 	return nil
@@ -72,12 +78,12 @@ func (c *keepAliveChecker) checkClientAlive() error {
 
 	defer func() {
 		if err := sess.Close(); err != nil {
-			c.debug("self session close failed: %v", err)
+			c.debug("client self check session close failed: %v", err)
 		}
 	}()
 
 	if err := c.sendKeepAlive(sess); err != nil {
-		return fmt.Errorf("Cannot send to self session failed: %w", err)
+		return fmt.Errorf("Cannot send to client self check session failed: %w", err)
 	}
 
 	return nil
@@ -96,26 +102,24 @@ func (c *keepAliveChecker) sendAliveToSessions() {
 	}
 }
 
-func (c *keepAliveChecker) debug(format string, a ...any) {
-	debugPrefix := fmt.Sprintf("Keepalive to %s ", c.client.sessionClient.String())
-	format = debugPrefix + format
-	c.client.debug(format, a...)
-}
-
 func (c *keepAliveChecker) handleClientAliveFailed(err error) error {
-	c.debug("CheckClientAlive failed: %v", err)
+	c.errorsCount++
 
 	if c.errorsCount > c.maxErrors {
-		c.debug("Too many errors %s encountered. Restart client and and exit keepalive", c.maxErrors)
+		c.debug("too many errors %d encountered. Last err: '%v'. Exit", c.maxErrors, err)
 		return errKeepExited
 	}
 
-	c.errorsCount++
-
 	if errors.Is(err, errKeepAliveSessionCreate) {
-		c.debug("failed: %v. Sleep %s before next attempt", err, c.sleep.String())
+		c.debug("failed: '%v'. Error count %d. Sleep %s before next attempt", err, c.errorsCount, c.sleep.String())
 		time.Sleep(c.sleep)
 	}
 
 	return nil
+}
+
+func (c *keepAliveChecker) debug(format string, a ...any) {
+	debugPrefix := fmt.Sprintf("Keepalive[%d] to %s ", c.id, c.client.sessionClient.String())
+	format = debugPrefix + format
+	c.client.settings.Logger().InfoF(format, a...)
 }

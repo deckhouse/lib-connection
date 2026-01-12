@@ -16,7 +16,6 @@ package gossh
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net"
 	"slices"
@@ -615,14 +614,8 @@ func (s *Client) dialContext(ctx context.Context, network, addr string, config *
 	closeConnectionAndReturnErr := func(msg string, err error, conn net.Conn) (*gossh.Client, error) {
 		err = fmt.Errorf("Cannot Dial to '%s' %s: %w", addr, msg, err)
 
-		if govalue.Nil(conn) {
-			return nil, err
-		}
-
-		if closeErr := conn.Close(); closeErr != nil {
-			if !errors.Is(closeErr, net.ErrClosed) {
-				err = fmt.Errorf("%w and cannot close connection %w", err, closeErr)
-			}
+		if closeErr := utils.SafeClose(conn); closeErr != nil {
+			err = fmt.Errorf("%w and cannot close connection %w", err, closeErr)
 		}
 		return nil, err
 	}
@@ -710,23 +703,21 @@ func (s *Client) stopAll(cause string) []error {
 		errors = append(errors, fmt.Errorf("%s: %w", prefix, e))
 	}
 
-	if !govalue.Nil(s.agentConnection) {
-		s.debug("Agent connection is present. Try to close...")
+	closeBastionAndAgent := func() {
+		if err := utils.SafeClose(s.bastionClient, s.logPresentHandler("Bastion client")...); err != nil {
+			addError(err, "Failed to close agent connection")
+		}
 
-		if err := s.agentConnection.Close(); err != nil {
+		if err := utils.SafeClose(s.agentConnection, s.logPresentHandler("Agent")...); err != nil {
 			addError(err, "Failed to close agent connection")
 		}
 	}
 
-	if !govalue.Nil(s.bastionClient) {
-		s.debug("Bastion connect is present. Try to stop...")
-
-		if err := s.bastionClient.Close(); err != nil {
-			addError(err, "Failed to close bastion client")
-		}
-	}
-
 	if govalue.Nil(s.sshClient) {
+		// we can stop in Start
+		// client is nil but agent and bastion prepared
+		// try to close. it is safe
+		closeBastionAndAgent()
 		s.debug("No SSH client found to stop. Exiting...")
 		return errors
 	}
@@ -773,17 +764,15 @@ func (s *Client) stopAll(cause string) []error {
 		addError(err, "Failed to close ssh client")
 	}
 
-	if !govalue.Nil(s.sshConn) {
-		if err := s.sshConn.Close(); err != nil {
-			addError(err, "Failed to close ssh connection")
-		}
+	if err := utils.SafeClose(s.sshConn); err != nil {
+		addError(err, "Failed to close ssh connection")
 	}
 
-	if !govalue.Nil(s.sshNetConn) {
-		if err := s.sshNetConn.Close(); err != nil {
-			addError(err, "Failed to close net connection")
-		}
+	if err := utils.SafeClose(s.sshNetConn); err != nil {
+		addError(err, "Failed to close net ssh connection")
 	}
+
+	closeBastionAndAgent()
 
 	return errors
 }
@@ -816,4 +805,16 @@ func (s *Client) stopRemoteKubeProxies() error {
 
 func (s *Client) debug(format string, v ...any) {
 	s.settings.Logger().DebugF(format, v...)
+}
+
+func (s *Client) logPresentHandler(connectionName string) []utils.PresentCloseHandler {
+	return []utils.PresentCloseHandler{
+		func(isPresent bool) {
+			if !isPresent {
+				return
+			}
+
+			s.debug("%s connection is present. Try to close...", connectionName)
+		},
+	}
 }

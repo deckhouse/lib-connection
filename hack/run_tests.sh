@@ -23,7 +23,7 @@ run_tests=""
 
 if [ -n "$RUN_TEST" ]; then
   echo "Found RUN_TEST env. Run only $RUN_TEST test"
-  run_tests="-run $RUN_TEST"
+  run_tests="-run ^$RUN_TEST\$"
 fi
 
 run_dir="$(pwd)"
