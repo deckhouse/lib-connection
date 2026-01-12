@@ -56,7 +56,7 @@ done`, remoteServerPort)
 	err = sshClient.File().Upload(context.TODO(), localServerFile, remoteServerFile)
 	require.NoError(t, err)
 
-	runRemoteServerSession, err := sshClient.NewSession()
+	runRemoteServerSession, err := sshClient.NewSSHSession()
 	require.NoError(t, err)
 
 	t.Cleanup(func() {

@@ -100,7 +100,7 @@ func (s *Test) SetSubTest(names ...string) *Test {
 		resName = strings.Join(tests, "/")
 	}
 
-	s.subTestName = resName
+	s.subTestName = strings.TrimPrefix(resName, s.Name()+"/")
 	return s
 }
 

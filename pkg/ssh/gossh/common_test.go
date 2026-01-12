@@ -20,7 +20,7 @@ func registerStopClient(t *testing.T, sshClient *Client) {
 
 // todo mount local directory to container and assert via local exec
 func assertFilesViaRemoteRun(t *testing.T, sshClient *Client, cmd string, expectedOutput string) {
-	s, err := sshClient.NewSession()
+	s, err := sshClient.NewSSHSession()
 	require.NoError(t, err, "session should start")
 	defer sshClient.UnregisterSession(s)
 	out, err := s.Output(cmd)

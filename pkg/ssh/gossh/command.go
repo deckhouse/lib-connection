@@ -96,7 +96,7 @@ func NewSSHCommand(client *Client, name string, arg ...string) *SSHCommand {
 	}
 
 	// todo move new session to Start()
-	session, _ := client.NewSession()
+	session, _ := client.NewSSHSession()
 
 	return &SSHCommand{
 		// Executor: process.NewDefaultExecutor(sess.Run(cmd)),
@@ -292,8 +292,9 @@ func (c *SSHCommand) ProcessWait() {
 
 func (c *SSHCommand) clientString() string {
 	sessionString := "unknown"
-	if c.sshClient != nil && c.sshClient.SessionSettings != nil {
-		sessionString = c.sshClient.SessionSettings.String()
+	sess := c.sshClient.Session()
+	if c.sshClient != nil && sess != nil {
+		sessionString = sess.String()
 	}
 
 	return sessionString
@@ -390,11 +391,8 @@ func (c *SSHCommand) Sudo(ctx context.Context) {
 		logger := c.sshClient.settings.Logger()
 		if pattern == "SudoPassword" {
 			c.logDebugF("Send become pass to cmd")
-			var becomePass string
+			becomePass := c.sshClient.Session().BecomePass
 
-			if c.sshClient.SessionSettings.BecomePass != "" {
-				becomePass = c.sshClient.SessionSettings.BecomePass
-			}
 			var err error
 			_, err = c.Stdin.Write([]byte(becomePass + "\n"))
 			if err != nil {

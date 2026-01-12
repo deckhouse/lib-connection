@@ -163,7 +163,7 @@ func TestClientStart(t *testing.T) {
 			settings: sshtesting.Session(container),
 			keys:     noKeys,
 			wantErr:  true,
-			err:      "Failed to open SSH_AUTH_SOCK",
+			err:      "Failed to open agent socket",
 			authSock: "/run/nonexistent",
 		},
 		{
@@ -177,7 +177,7 @@ func TestClientStart(t *testing.T) {
 			settings: nil,
 			keys:     []session.AgentPrivateKey{{Key: "/tmp/noexistent-key"}},
 			wantErr:  true,
-			err:      "possible bug in ssh client: session should be created before start",
+			err:      "Possible bug in ssh client: client session should be passed start",
 		},
 		{
 			title: "No auth",
@@ -197,7 +197,7 @@ func TestClientStart(t *testing.T) {
 			),
 			keys:     keys,
 			wantErr:  true,
-			err:      "Failed to connect to master host",
+			err:      "Failed to connect to target directly",
 			authSock: "",
 		},
 		{
@@ -313,10 +313,17 @@ func TestClientKeepalive(t *testing.T) {
 		registerStopClient(t, sshClient)
 
 		runEcho := func(t *testing.T, msg string) {
-			s, err := sshClient.NewSession()
+			s, err := sshClient.NewSSHSession()
 			require.NoError(t, err)
 
 			cmd := fmt.Sprintf(`echo -n "%s"`, msg)
+
+			defer func() {
+				err := s.Close()
+				if err != nil {
+					test.Logger.InfoF("failed to close runEcho session: %v", err)
+				}
+			}()
 
 			out, err := s.CombinedOutput(cmd)
 			require.NoError(t, err, "failed to run command '%s'", cmd)

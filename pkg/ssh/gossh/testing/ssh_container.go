@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -72,16 +71,12 @@ func (s *ContainerSettings) HasPassword() bool {
 }
 
 func (s *ContainerSettings) String() string {
-	pubKeyPath := "not provided"
-	if s.HasPublicKeyPath() {
-		pubKeyPath = filepath.Base(s.PublicKey.Path)
-	}
 	return fmt.Sprintf(
-		"Settings: User: '%s' Port: %d SudoAccess: %v PubKey: '%s'",
+		"Settings: User: '%s' Port: %d SudoAccess: %v Name: %s",
 		s.Username,
 		s.LocalPort,
 		s.SudoAccess,
-		pubKeyPath,
+		s.ContainerName,
 	)
 }
 
@@ -114,6 +109,10 @@ func NewSSHContainer(settings *ContainerSettings) (*SSHContainer, error) {
 	// <= 1024 port require root privilege
 	if settings.LocalPort <= 1024 {
 		settings.LocalPort = RandPort()
+	}
+
+	if settings.ContainerName == "" {
+		settings.ContainerName = "target"
 	}
 
 	c := &SSHContainer{
@@ -316,8 +315,7 @@ func (c *SSHContainer) dockerName(id string) string {
 }
 
 func (c *SSHContainer) generateDockerNetworkName() string {
-	id := fmt.Sprintf("%s_%s", c.settings.Test.GetID(), c.settings.Test.Name())
-	return c.dockerName(id)
+	return c.dockerName(c.settings.Test.GetID())
 }
 
 func (c *SSHContainer) generateDockerContainerName() string {
