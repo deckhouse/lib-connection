@@ -216,7 +216,6 @@ func (c *SSHCommand) wait() error {
 		if err != nil {
 			return err
 		}
-
 	}
 	return nil
 }
@@ -563,7 +562,6 @@ func (c *SSHCommand) SetupStreamHandlers() (err error) {
 	var stdoutHandlerWritePipe *os.File
 	var stdoutHandlerReadPipe *os.File
 	if c.out != nil || c.stdoutHandler != nil || len(c.Matchers) > 0 {
-
 		if c.out == nil {
 			c.out = new(bytes.Buffer)
 		}
