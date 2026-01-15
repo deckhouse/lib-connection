@@ -98,8 +98,8 @@ bin/kind: curl-installed bin
 deps: bin bin/jq bin/golangci-lint bin/gofumpt bin/kind
 
 test: go-installed docker-installed bin/kind
-	# ./hack/run_tests.sh
-	echo "Skip go tests!!!"
+	./hack/run_tests.sh
+	echo "Run go tests!"
 	$(MAKE) clean/test
 
 lint: bin/golangci-lint

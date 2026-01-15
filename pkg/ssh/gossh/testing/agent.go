@@ -61,6 +61,12 @@ func StartTestAgent(t *testing.T, wrapper *TestContainerWrapper) *Agent {
 	}
 
 	agent, err := StartAgent(sockDir, wrapper.Settings.Test.Logger, privateKey...)
+	// fallback to /tmp if unix socket name is too long
+	if strings.Contains(fmt.Sprintf("%w", err), "too long for Unix domain socket") {
+		wrapper.Settings.Test.SetTmpDir("/tmp")
+		sockDir = wrapper.Settings.Test.TmpDir()
+		agent, err = StartAgent(sockDir, wrapper.Settings.Test.Logger, privateKey...)
+	}
 	require.NoError(t, err)
 	agent.RegisterCleanup(t)
 
@@ -106,7 +112,7 @@ func (a *Agent) start() error {
 
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("cannot start ssh-agent with sock %s: %w", sock, err)
+		return fmt.Errorf("cannot start ssh-agent with sock %s: %w: %s", sock, err, string(out))
 	}
 
 	pidSubmatches := pidRegex.FindSubmatch(out)

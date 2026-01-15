@@ -16,6 +16,7 @@ package gossh
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -117,7 +118,7 @@ fi
 				}
 
 				out, err := s.Execute(context.Background())
-				if !c.wantErr {
+				if c.wantErr {
 					require.Error(t, err)
 					require.Contains(t, err.Error(), c.err)
 					return
@@ -313,5 +314,5 @@ done
 		test.MustCreateFile(t, c.content, true, scriptPath...)
 	}
 
-	return parentDir
+	return filepath.Dir(parentDir)
 }

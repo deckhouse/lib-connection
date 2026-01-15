@@ -312,21 +312,21 @@ func TestCommandRun(t *testing.T) {
 			{
 				title:          "Just echo, success",
 				command:        "echo",
-				args:           []string{`"est output"`},
+				args:           []string{"\"test output\""},
 				expectedOutput: "test output\n",
 				wantErr:        false,
 			},
 			{
 				title:          "Just echo, with envs, success",
 				command:        "echo",
-				args:           []string{`test output"`},
+				args:           []string{"\"test output\""},
 				expectedOutput: "test output\n",
 				envs:           envs,
 				wantErr:        false,
 			},
 			{
 				title:          "With context",
-				command:        `while true; do echo "test"; sleep 5; done`,
+				command:        "while true; do echo \"test\"; sleep 5; done",
 				args:           []string{},
 				expectedOutput: "test\ntest\n",
 				timeout:        7 * time.Second,
@@ -343,7 +343,7 @@ func TestCommandRun(t *testing.T) {
 			{
 				title:   "With opened stdout pipe",
 				command: "echo",
-				args:    []string{`"test output\"`},
+				args:    []string{"\"test output\""},
 				prepareFunc: func(c *SSHCommand) error {
 					return c.Run(context.Background())
 				},
@@ -353,7 +353,7 @@ func TestCommandRun(t *testing.T) {
 			{
 				title:   "With nil session",
 				command: "echo",
-				args:    []string{`"test output"`},
+				args:    []string{"\"test output\""},
 				prepareFunc: func(c *SSHCommand) error {
 					err := c.session.Close()
 					c.session = nil
@@ -395,6 +395,7 @@ func TestCommandRun(t *testing.T) {
 
 				err = cmd.Run(ctx)
 				if !c.wantErr {
+					test.Logger.InfoF("output: %s, errorOutput: %s", string(cmd.StdoutBytes()), string(cmd.StderrBytes()))
 					require.NoError(t, err)
 				} else {
 					require.Error(t, err)
@@ -552,7 +553,9 @@ func TestCommandSudoRun(t *testing.T) {
 		t,
 		test,
 		sshtesting.WithPassword(sshtesting.RandPassword(12)),
+		sshtesting.WithConnectToContainerNetwork(container),
 	)
+	keysContainerWithPass := containerWithPass.AgentPrivateKeys()
 
 	sessionWithoutPassword := sshtesting.Session(container)
 
@@ -595,7 +598,7 @@ func TestCommandSudoRun(t *testing.T) {
 			{
 				title:       "Just echo, failure, with wrong password",
 				settings:    sessionWithInvalidPass,
-				keys:        keys,
+				keys:        keysContainerWithPass,
 				command:     "echo",
 				args:        []string{`"test output"`},
 				wantErr:     true,
