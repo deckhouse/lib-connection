@@ -51,6 +51,10 @@ func TestSSHFileUpload(t *testing.T) {
 	err := os.Symlink(testFile, symlink)
 	require.NoError(t, err)
 
+	const unaccessibleDirectoryName = "unaccessible"
+	test.MustCreateUnaccessibleDir(t, unaccessibleDirectoryName)
+	unaccessibleDirectoryPath := filepath.Join(test.TmpDir(), unaccessibleDirectoryName)
+
 	sshClient := startContainerAndClient(t, test)
 
 	t.Run("Upload files and directories to container via existing ssh client", func(t *testing.T) {
@@ -120,7 +124,7 @@ func TestSSHFileUpload(t *testing.T) {
 			},
 			{
 				title:   "Unaccessible dir",
-				srcPath: "/var/audit",
+				srcPath: unaccessibleDirectoryPath,
 				dstPath: ".",
 				wantErr: true,
 				err:     "could not read directory",
@@ -379,7 +383,6 @@ func TestSSHFileDownload(t *testing.T) {
 		cmd := exec.Command("ls", filepath.Join(downloadWholeDirDir, "testdata"))
 		lsResult, err := cmd.Output()
 		require.NoError(t, err)
-		test.Logger.InfoF("\n\nls result: %s\n\n", string(lsResult))
 
 		assertFilesViaRemoteRun(t, sshClient, "ls /tmp/testdata/", string(lsResult))
 	})
