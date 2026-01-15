@@ -160,18 +160,13 @@ done`, remoteServerPort)
 			checkLocalTunnel(t, test, localServerPort, true)
 
 			msg := ""
-			select {
-			case m, ok := <-errChan:
-				if !ok {
-					msg = "monitor channel closed"
-				} else {
-					if m != nil {
-						msg = m.Error()
-					}
+			m, ok := <-errChan
+			if !ok {
+				msg = "monitor channel closed"
+			} else {
+				if m != nil {
+					msg = m.Error()
 				}
-
-				// default:
-				// 	msg = ""
 			}
 
 			require.Contains(t, msg, fmt.Sprintf("Cannot dial to %s", remoteStr), "got: '%s'", msg)

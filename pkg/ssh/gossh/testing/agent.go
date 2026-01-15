@@ -131,20 +131,17 @@ func (a *Agent) start() error {
 
 	go func() {
 		stopCh := a.stopCh
-		select {
-		case <-stopCh:
-			a.logInfo("shutting down ssh-agent")
-			// Find the process by its PID
-			process, err := os.FindProcess(a.Pid())
-			if err != nil {
-				a.cleanupAndLog("find process", err)
-				return
-			}
-
-			err = process.Signal(syscall.SIGTERM)
-			a.cleanupAndLog("kill", err)
+		<-stopCh
+		a.logInfo("shutting down ssh-agent")
+		// Find the process by its PID
+		process, err := os.FindProcess(a.Pid())
+		if err != nil {
+			a.cleanupAndLog("find process", err)
 			return
 		}
+
+		err = process.Signal(syscall.SIGTERM)
+		a.cleanupAndLog("kill", err)
 	}()
 
 	return nil

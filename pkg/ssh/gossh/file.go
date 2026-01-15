@@ -384,7 +384,6 @@ func checkResponse(r io.Reader) error {
 	}
 
 	return nil
-
 }
 
 func wait(wg *sync.WaitGroup, ctx context.Context) error {
@@ -423,7 +422,6 @@ func CopyFromRemote(ctx context.Context, file *os.File, remotePath string, sshCl
 			errCh <- err
 			// We must unblock the go routine first as we block on reading the channel later
 			wg.Done()
-
 		}()
 
 		r, err := session.StdoutPipe()
