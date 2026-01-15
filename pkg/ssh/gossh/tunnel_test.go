@@ -30,7 +30,7 @@ import (
 func TestTunnel(t *testing.T) {
 	test := sshtesting.ShouldNewTest(t, "TestTunnel")
 
-	sshClient, container := startContainerAndClientWithContainer(t, test, sshtesting.WithNoWriteSSHDConfig())
+	sshClient, container := startContainerAndClientWithContainer(t, test)
 	sshClient.WithLoopsParams(ClientLoopsParams{
 		NewSession: retry.NewEmptyParams(
 			retry.WithAttempts(5),
@@ -79,58 +79,52 @@ done`, remoteServerPort)
 		localServerPort := sshtesting.RandPortExclude(localsReservedPorts)
 		localsReservedPorts = append(localsReservedPorts, localServerPort)
 
-		localServerInvalidPort := sshtesting.RandInvalidPortExclude(localsReservedPorts)
+		// localServerInvalidPort := sshtesting.RandInvalidPortExclude(localsReservedPorts)
 		remoteServerInvalidPort := sshtesting.RandPortExclude([]int{remoteServerPort, container.Container.RemotePort()})
 
 		cases := []struct {
 			title string
 
-			localPort  int
-			remotePort int
+			address string
 
 			wantErr bool
 			err     string
 		}{
 			{
-				title:      "Tunnel, success",
-				localPort:  localServerPort,
-				remotePort: remoteServerPort,
-				wantErr:    false,
+				title:   "Tunnel, success",
+				address: tunnelAddressString(localServerPort, remoteServerPort),
+				wantErr: false,
 			},
 			{
-				title:      "Invalid address",
-				localPort:  localServerPort,
-				remotePort: remoteServerInvalidPort,
-				wantErr:    true,
-				err:        "invalid address must be 'remote_bind:remote_port:local_bind:local_port'",
+				title:   "Invalid address",
+				address: fmt.Sprintf("%d:127.0.0.1:%d", remoteServerInvalidPort, localServerPort),
+				wantErr: true,
+				err:     "invalid address must be 'remote_bind:remote_port:local_bind:local_port'",
 			},
 			{
-				title:      "Invalid local bind",
-				localPort:  localServerInvalidPort,
-				remotePort: remoteServerPort,
-				wantErr:    true,
-				err:        fmt.Sprintf("failed to listen local on 127.0.0.1:%d", localServerInvalidPort),
+				title:   "Invalid local bind",
+				address: tunnelAddressString(22, remoteServerPort),
+				wantErr: true,
+				err:     fmt.Sprintf("failed to listen local on 127.0.0.1:%d", 22),
 			},
 		}
 
 		for _, c := range cases {
 			t.Run(c.title, func(t *testing.T) {
-				address := tunnelAddressString(c.localPort, c.remotePort)
-				tun := NewTunnel(sshClient, address)
+				tun := NewTunnel(sshClient, c.address)
 				err = tun.Up()
 				registerStopTunnel(t, tun)
 
-				if c.wantErr {
+				if !c.wantErr {
+					checkLocalTunnel(t, test, localServerPort, false)
+					// try to up again: expecting error
+					err = tun.Up()
+					require.Error(t, err)
+					require.Equal(t, err.Error(), "already up")
+				} else {
 					require.Error(t, err)
 					require.Contains(t, err.Error(), c.err)
 				}
-
-				checkLocalTunnel(t, test, localServerPort, false)
-
-				// try to up again: expectiong error
-				err = tun.Up()
-				require.Error(t, err)
-				require.Equal(t, err.Error(), "already up")
 			})
 		}
 	})
@@ -176,37 +170,39 @@ done`, remoteServerPort)
 					}
 				}
 
-			default:
-				msg = ""
+				// default:
+				// 	msg = ""
 			}
 
 			require.Contains(t, msg, fmt.Sprintf("Cannot dial to %s", remoteStr), "got: '%s'", msg)
 		})
 
-		t.Run("Restart connection", func(t *testing.T) {
-			localServerPort := sshtesting.RandPortExclude(localsReservedPorts)
-			localsReservedPorts = append(localsReservedPorts, localServerPort)
+		// this case is incorrect and must be excluded
+		// HealthMonitor doesn't implement tunnel restarts, it just indecates failures and send messages to channel
+		// t.Run("Restart connection", func(t *testing.T) {
+		// 	localServerPort := sshtesting.RandPortExclude(localsReservedPorts)
+		// 	localsReservedPorts = append(localsReservedPorts, localServerPort)
 
-			upTunnelWithMonitor(t, tunnelAddressString(localServerPort, remoteServerPort))
+		// 	upTunnelWithMonitor(t, tunnelAddressString(localServerPort, remoteServerPort))
 
-			checkLocalTunnel(t, test, localServerPort, false)
+		// 	checkLocalTunnel(t, test, localServerPort, false)
 
-			restartSleep := 5 * time.Second
-			upMonitorSleep := 2 * time.Second
+		// 	restartSleep := 5 * time.Second
+		// 	upMonitorSleep := 2 * time.Second
 
-			test.Logger.InfoF(
-				"Disconnect (fail connection between server and client) case. Wait %s before connect. Wait %s before check",
-				restartSleep.String(),
-				upMonitorSleep.String(),
-			)
+		// 	test.Logger.InfoF(
+		// 		"Disconnect (fail connection between server and client) case. Wait %s before connect. Wait %s before check",
+		// 		restartSleep.String(),
+		// 		upMonitorSleep.String(),
+		// 	)
 
-			err = container.Container.FailAndUpConnection(restartSleep)
-			require.NoError(t, err)
+		// 	err = container.Container.FailAndUpConnection(restartSleep)
+		// 	require.NoError(t, err)
 
-			time.Sleep(upMonitorSleep)
+		// 	time.Sleep(upMonitorSleep)
 
-			checkLocalTunnel(t, test, localServerPort, false)
-		})
+		// 	checkLocalTunnel(t, test, localServerPort, false)
+		// })
 	})
 }
 

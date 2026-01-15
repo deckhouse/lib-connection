@@ -296,3 +296,23 @@ func (s *Test) fileNameAndSubDirs(pathInTestDir ...string) (string, []string) {
 func addRandomSuffix(name string, suffix string) string {
 	return fmt.Sprintf("%s%s%s", name, randomSuffixSeparator, suffix)
 }
+
+func (s *Test) SetTmpDir(dir string) error {
+	stats, err := os.Stat(dir)
+	if err != nil {
+		return err
+	}
+
+	if !stats.IsDir() {
+		return fmt.Errorf("%s is not a directory", dir)
+	}
+	localTmpDirStr := filepath.Join(dir, tmpGlobalDirName, s.id)
+
+	err = os.MkdirAll(localTmpDirStr, 0777)
+	if err != nil {
+		return fmt.Errorf("failed to create local tmp dir %s: %v", localTmpDirStr, err)
+	}
+
+	s.tmpDir = localTmpDirStr
+	return nil
+}

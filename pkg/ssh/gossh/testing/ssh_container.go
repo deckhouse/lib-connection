@@ -222,11 +222,11 @@ func (c *SSHContainer) FailAndUpConnection(sleepBeforeConnect time.Duration) err
 }
 
 func (c *SSHContainer) Disconnect() error {
-	return c.runDockerNetworkConnect(false)
+	return c.runDockerNetworkConnect(true)
 }
 
 func (c *SSHContainer) Connect() error {
-	return c.runDockerNetworkConnect(true)
+	return c.runDockerNetworkConnect(false)
 }
 
 func (c *SSHContainer) ExecToContainer(description string, command ...string) error {
