@@ -18,6 +18,7 @@ source "$(pwd)/hack/utils.sh"
 
 check_all_deps
 check_go
+pull_image
 
 run_tests=""
 
