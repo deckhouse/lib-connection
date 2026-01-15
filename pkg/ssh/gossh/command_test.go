@@ -395,7 +395,6 @@ func TestCommandRun(t *testing.T) {
 
 				err = cmd.Run(ctx)
 				if !c.wantErr {
-					test.Logger.InfoF("output: %s, errorOutput: %s", string(cmd.StdoutBytes()), string(cmd.StderrBytes()))
 					require.NoError(t, err)
 				} else {
 					require.Error(t, err)

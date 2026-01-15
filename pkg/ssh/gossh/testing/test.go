@@ -316,3 +316,11 @@ func (s *Test) SetTmpDir(dir string) error {
 	s.tmpDir = localTmpDirStr
 	return nil
 }
+
+func (s *Test) MustCreateUnaccessibleDir(t *testing.T, name string) {
+	fullName := filepath.Join(s.tmpDir, name)
+	require.NoDirExists(t, fullName)
+
+	err := os.MkdirAll(fullName, 0o100)
+	require.NoError(t, err)
+}
