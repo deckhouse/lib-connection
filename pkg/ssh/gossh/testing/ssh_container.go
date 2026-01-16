@@ -154,7 +154,7 @@ AllowTcpForwarding yes
 }
 
 func (c *SSHContainer) Start(waitSSHDStarted bool) error {
-	c.logInfo("Starting container fully...")
+	c.logDebug("Starting container fully...")
 
 	err := c.createNetwork()
 	if err != nil {
@@ -174,7 +174,7 @@ func (c *SSHContainer) Start(waitSSHDStarted bool) error {
 		return err
 	}
 
-	c.logInfo("Container fully started %s", c.ShortContainerId())
+	c.logDebug("Container fully started %s", c.ShortContainerId())
 
 	return nil
 }
@@ -191,7 +191,7 @@ func (c *SSHContainer) Restart(waitSSHDStarted bool, sleepBeforeStart time.Durat
 
 func (c *SSHContainer) Stop() error {
 	shortId := c.ShortContainerId()
-	c.logInfo("Stopping container '%s' fully...", shortId)
+	c.logDebug("Stopping container '%s' fully...", shortId)
 
 	resError := ""
 	if err := c.stopContainer(); err != nil {
@@ -206,7 +206,7 @@ func (c *SSHContainer) Stop() error {
 		return c.wrapError("cannot fully stop container: %v", errors.New(resError))
 	}
 
-	c.logInfo("Container '%s' fully stopped", shortId)
+	c.logDebug("Container '%s' fully stopped", shortId)
 
 	return nil
 }
@@ -419,7 +419,7 @@ func (c *SSHContainer) runContainerArgs() []string {
 func (c *SSHContainer) startContainer(waitSSHDStarted bool) error {
 	cmd := append([]string{"run"}, c.runContainerArgs()...)
 
-	c.logInfo("Starting container...")
+	c.logDebug("Starting container...")
 
 	id, err := c.runDockerWithOut("start container", cmd...)
 	if err != nil {
@@ -436,7 +436,7 @@ func (c *SSHContainer) startContainer(waitSSHDStarted bool) error {
 		return err
 	}
 
-	c.logInfo("Container started: ID: %s IP: %s", c.ShortContainerId(), c.GetContainerIP())
+	c.logDebug("Container started: ID: %s IP: %s", c.ShortContainerId(), c.GetContainerIP())
 
 	if !waitSSHDStarted {
 		return nil
@@ -451,7 +451,7 @@ func (c *SSHContainer) startContainer(waitSSHDStarted bool) error {
 			return err
 		}
 		if err := conn.Close(); err != nil {
-			c.ContainerSettings().Logger.InfoF("Failed to close SSHD connection after restart container: %v", err)
+			c.ContainerSettings().Logger.DebugF("Failed to close SSHD connection after restart container: %v", err)
 		}
 
 		return nil
@@ -479,13 +479,13 @@ func (c *SSHContainer) stopContainer() error {
 	id := c.GetContainerId()
 	shortID := c.ShortContainerId()
 
-	c.logInfo("Stop container %s...", shortID)
+	c.logDebug("Stop container %s...", shortID)
 
 	if err := c.runDocker(description("stop container"), "stop", id); err != nil {
 		return err
 	}
 
-	c.logInfo("Remove container %s...", shortID)
+	c.logDebug("Remove container %s...", shortID)
 
 	return c.runDocker(description("remove container"), "rm", id)
 }
@@ -512,7 +512,7 @@ func (c *SSHContainer) createNetwork() error {
 
 	if hasNetwork {
 		if isExternal {
-			c.logInfo("Skip creating network '%s'. Has external network", c.GetNetwork())
+			c.logDebug("Skip creating network '%s'. Has external network", c.GetNetwork())
 			// do not need to create network
 			return nil
 		}
@@ -522,7 +522,7 @@ func (c *SSHContainer) createNetwork() error {
 
 	network := c.generateDockerNetworkName()
 
-	c.logInfo("Creating network '%s'...", network)
+	c.logDebug("Creating network '%s'...", network)
 
 	description := fmt.Sprintf("create network '%s'", network)
 	if err := c.runDocker(description, "network", "create", network); err != nil {
@@ -541,11 +541,11 @@ func (c *SSHContainer) removeNetwork() error {
 	network := c.GetNetwork()
 
 	if !hasNetwork || isExternal {
-		c.logInfo("Skip deleting network '%s'. Has external network or empty", network)
+		c.logDebug("Skip deleting network '%s'. Has external network or empty", network)
 		return nil
 	}
 
-	c.logInfo("Deleting network %s...", network)
+	c.logDebug("Deleting network %s...", network)
 
 	if err := c.runDocker(fmt.Sprintf("remove network %s", network), "network", "rm", network); err != nil {
 		return err
@@ -556,9 +556,9 @@ func (c *SSHContainer) removeNetwork() error {
 	return nil
 }
 
-func (c *SSHContainer) logInfo(format string, args ...any) {
+func (c *SSHContainer) logDebug(format string, args ...any) {
 	format += fmt.Sprintf(" (%s)", c.settings.String())
-	c.settings.Logger.InfoF(format, args...)
+	c.settings.Logger.DebugF(format, args...)
 }
 
 func (c *SSHContainer) runDockerNetworkConnect(isDisconnect bool) error {
@@ -579,7 +579,7 @@ func (c *SSHContainer) runDockerNetworkConnect(isDisconnect bool) error {
 
 	network := c.GetNetwork()
 
-	c.logInfo(
+	c.logDebug(
 		"%s network %s to container %s...",
 		strings.ToTitle(cmdName),
 		network,

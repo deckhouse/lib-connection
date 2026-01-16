@@ -130,12 +130,12 @@ func (a *Agent) start() error {
 
 	a.pid = pid
 
-	a.logInfo("started successfully with pid: %d", a.Pid())
+	a.logDebug("started successfully with pid: %d", a.Pid())
 
 	go func() {
 		stopCh := a.stopCh
 		<-stopCh
-		a.logInfo("shutting down ssh-agent")
+		a.logDebug("shutting down ssh-agent")
 		// Find the process by its PID
 		process, err := os.FindProcess(a.Pid())
 		if err != nil {
@@ -238,7 +238,7 @@ func (a *Agent) run(stdin string, name string, args ...string) error {
 		cmd.Stdin = strings.NewReader(stdin)
 	}
 
-	a.logInfo("run %s with envs: %s", cmd.String(), strings.Join(cmd.Env, " "))
+	a.logDebug("run %s with envs: %s", cmd.String(), strings.Join(cmd.Env, " "))
 
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -261,11 +261,11 @@ func (a *Agent) cleanupAndLog(msg string, err error) {
 
 	a.mu.Unlock()
 
-	a.logInfo("%s success", msg)
+	a.logDebug("%s success", msg)
 }
 
-func (a *Agent) logInfo(f string, args ...any) {
-	a.log(a.logger.InfoF, f, args...)
+func (a *Agent) logDebug(f string, args ...any) {
+	a.log(a.logger.DebugF, f, args...)
 }
 
 func (a *Agent) logError(f string, args ...any) {

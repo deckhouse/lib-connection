@@ -111,7 +111,6 @@ func TestReverseTunnel(t *testing.T) {
 					if len(c.errFromChan) == 0 {
 						require.Equal(t, response, string(out))
 					} else {
-						test.Logger.InfoLn(string(out))
 						errMsg := <-tun.errorCh
 						require.Contains(t, errMsg.err.Error(), c.errFromChan)
 					}
@@ -163,7 +162,7 @@ exit $?
 		checkTunnelAction := func() error {
 			out, err := checker.CheckTunnel(context.Background())
 			if err != nil {
-				test.Logger.InfoF("Failed to check tunnel: %s %v", out, err)
+				test.Logger.DebugF("Failed to check tunnel: %s %v", out, err)
 				return err
 			}
 			return nil
@@ -183,7 +182,7 @@ exit $?
 		restartSleep := 5 * time.Second
 
 		tun.StartHealthMonitor(context.Background(), checker, killer)
-		test.Logger.InfoF(
+		test.Logger.DebugF(
 			"Waiting %s for tunnel monitor to start. And restart container. Wait %s before start container for fail check",
 			upMonitorSleep.String(),
 			restartSleep.String(),
@@ -195,7 +194,7 @@ exit $?
 		err = container.Container.CreateDeckhouseDirs()
 		require.NoError(t, err, "create deckhouse dirs")
 
-		test.Logger.InfoF(
+		test.Logger.DebugF(
 			"Waiting %s for tunnel monitor to restart",
 			upMonitorSleep.String(),
 		)
@@ -208,7 +207,7 @@ exit $?
 		err = retry.NewLoopWithParams(checkLoopAfterRestart).Run(checkTunnelAction)
 		require.NoError(t, err, "tunnel check after restart")
 
-		test.Logger.InfoF(
+		test.Logger.DebugF(
 			"Disconnect (fail connection between server and client) case. Wait %s before connect. Wait %s before check",
 			restartSleep.String(),
 			upMonitorSleep.String(),
