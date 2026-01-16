@@ -279,7 +279,7 @@ func (s *Test) Cleanup(t *testing.T) {
 	}
 
 	if !govalue.Nil(s.Logger) {
-		s.Logger.InfoF("Temp dir '%s' removed for test %s", tmpDir, s.FullName())
+		s.Logger.DebugF("Temp dir '%s' removed for test %s", tmpDir, s.FullName())
 	}
 }
 
@@ -295,4 +295,32 @@ func (s *Test) fileNameAndSubDirs(pathInTestDir ...string) (string, []string) {
 
 func addRandomSuffix(name string, suffix string) string {
 	return fmt.Sprintf("%s%s%s", name, randomSuffixSeparator, suffix)
+}
+
+func (s *Test) SetTmpDir(dir string) error {
+	stats, err := os.Stat(dir)
+	if err != nil {
+		return err
+	}
+
+	if !stats.IsDir() {
+		return fmt.Errorf("%s is not a directory", dir)
+	}
+	localTmpDirStr := filepath.Join(dir, tmpGlobalDirName, s.id)
+
+	err = os.MkdirAll(localTmpDirStr, 0777)
+	if err != nil {
+		return fmt.Errorf("failed to create local tmp dir %s: %v", localTmpDirStr, err)
+	}
+
+	s.tmpDir = localTmpDirStr
+	return nil
+}
+
+func (s *Test) MustCreateUnaccessibleDir(t *testing.T, name string) {
+	fullName := filepath.Join(s.tmpDir, name)
+	require.NoDirExists(t, fullName)
+
+	err := os.MkdirAll(fullName, 0o100)
+	require.NoError(t, err)
 }

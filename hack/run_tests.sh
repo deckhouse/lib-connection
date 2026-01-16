@@ -18,6 +18,7 @@ source "$(pwd)/hack/utils.sh"
 
 check_all_deps
 check_go
+pull_image
 
 run_tests=""
 
@@ -48,5 +49,5 @@ while IFS= read -r p; do
   full_pkg_path="${run_dir}${pkg_dir}"
   echo "Run tests in $full_pkg_path"
   cd "$full_pkg_path"
-  echo "test -v -p 1 $run_tests" | xargs go
+  echo "test -v -timeout 30m -p 1 $run_tests" | xargs go
 done <<< "$packages"

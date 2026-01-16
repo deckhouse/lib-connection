@@ -61,6 +61,15 @@ func StartTestAgent(t *testing.T, wrapper *TestContainerWrapper) *Agent {
 	}
 
 	agent, err := StartAgent(sockDir, wrapper.Settings.Test.Logger, privateKey...)
+	// fallback to /tmp if unix socket name is too long
+	if err != nil {
+		if strings.Contains(err.Error(), "too long for Unix domain socket") {
+			wrapper.Settings.Test.SetTmpDir("/tmp")
+			sockDir = wrapper.Settings.Test.TmpDir()
+			agent, err = StartAgent(sockDir, wrapper.Settings.Test.Logger, privateKey...)
+		}
+	}
+
 	require.NoError(t, err)
 	agent.RegisterCleanup(t)
 
@@ -106,7 +115,7 @@ func (a *Agent) start() error {
 
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("cannot start ssh-agent with sock %s: %w", sock, err)
+		return fmt.Errorf("cannot start ssh-agent with sock %s: %w: %s", sock, err, string(out))
 	}
 
 	pidSubmatches := pidRegex.FindSubmatch(out)
@@ -121,24 +130,21 @@ func (a *Agent) start() error {
 
 	a.pid = pid
 
-	a.logInfo("started successfully with pid: %d", a.Pid())
+	a.logDebug("started successfully with pid: %d", a.Pid())
 
 	go func() {
 		stopCh := a.stopCh
-		select {
-		case <-stopCh:
-			a.logInfo("shutting down ssh-agent")
-			// Find the process by its PID
-			process, err := os.FindProcess(a.Pid())
-			if err != nil {
-				a.cleanupAndLog("find process", err)
-				return
-			}
-
-			err = process.Signal(syscall.SIGTERM)
-			a.cleanupAndLog("kill", err)
+		<-stopCh
+		a.logDebug("shutting down ssh-agent")
+		// Find the process by its PID
+		process, err := os.FindProcess(a.Pid())
+		if err != nil {
+			a.cleanupAndLog("find process", err)
 			return
 		}
+
+		err = process.Signal(syscall.SIGTERM)
+		a.cleanupAndLog("kill", err)
 	}()
 
 	return nil
@@ -232,7 +238,7 @@ func (a *Agent) run(stdin string, name string, args ...string) error {
 		cmd.Stdin = strings.NewReader(stdin)
 	}
 
-	a.logInfo("run %s with envs: %s", cmd.String(), strings.Join(cmd.Env, " "))
+	a.logDebug("run %s with envs: %s", cmd.String(), strings.Join(cmd.Env, " "))
 
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -255,11 +261,11 @@ func (a *Agent) cleanupAndLog(msg string, err error) {
 
 	a.mu.Unlock()
 
-	a.logInfo("%s success", msg)
+	a.logDebug("%s success", msg)
 }
 
-func (a *Agent) logInfo(f string, args ...any) {
-	a.log(a.logger.InfoF, f, args...)
+func (a *Agent) logDebug(f string, args ...any) {
+	a.log(a.logger.DebugF, f, args...)
 }
 
 func (a *Agent) logError(f string, args ...any) {

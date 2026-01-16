@@ -99,3 +99,7 @@ function check_kind() {
 function check_all_deps() {
     check_docker && check_kind
 }
+
+function pull_image() {
+  docker pull lscr.io/linuxserver/openssh-server:10.0_p1-r9-ls209
+}

@@ -275,7 +275,7 @@ func TestClientStart(t *testing.T) {
 
 			if !c.wantErr {
 				require.NoError(t, err)
-				test.Logger.InfoLn("client started successfully")
+				test.Logger.DebugLn("client started successfully")
 				return
 			}
 
@@ -321,7 +321,7 @@ func TestClientKeepalive(t *testing.T) {
 			defer func() {
 				err := s.Close()
 				if err != nil {
-					test.Logger.InfoF("failed to close runEcho session: %v", err)
+					test.Logger.DebugF("failed to close runEcho session: %v", err)
 				}
 			}()
 
@@ -333,6 +333,8 @@ func TestClientKeepalive(t *testing.T) {
 		runEcho(t, "Hello before restart")
 
 		err = container.Container.Restart(true, 2*time.Second)
+		// we must wait for keepalive will restart the client. By default, it takes at least 15s, so we doulbe it to be sure it's restarted
+		time.Sleep(30 * time.Second)
 		require.NoError(t, err, "failed to restart container")
 		waitKeepAlive()
 

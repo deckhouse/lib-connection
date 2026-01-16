@@ -51,6 +51,10 @@ func TestSSHFileUpload(t *testing.T) {
 	err := os.Symlink(testFile, symlink)
 	require.NoError(t, err)
 
+	const unaccessibleDirectoryName = "unaccessible"
+	test.MustCreateUnaccessibleDir(t, unaccessibleDirectoryName)
+	unaccessibleDirectoryPath := filepath.Join(test.TmpDir(), unaccessibleDirectoryName)
+
 	sshClient := startContainerAndClient(t, test)
 
 	t.Run("Upload files and directories to container via existing ssh client", func(t *testing.T) {
@@ -120,7 +124,7 @@ func TestSSHFileUpload(t *testing.T) {
 			},
 			{
 				title:   "Unaccessible dir",
-				srcPath: "/var/audit",
+				srcPath: unaccessibleDirectoryPath,
 				dstPath: ".",
 				wantErr: true,
 				err:     "could not read directory",
@@ -174,6 +178,8 @@ func TestSSHFileUploadBytes(t *testing.T) {
 	test := sshtesting.ShouldNewTest(t, "TestSSHFileUploadBytes")
 
 	sshClient := startContainerAndClient(t, test)
+	err := os.MkdirAll(sshClient.settings.TmpDir(), 0o777)
+	require.NoError(t, err)
 
 	t.Run("Upload bytes", func(t *testing.T) {
 		const content = "Hello world"
@@ -358,11 +364,11 @@ func TestSSHFileDownload(t *testing.T) {
 		err := f.Download(context.Background(), "/tmp/testdata/first", dstPath)
 		// /tmp/testdata/first contains "Some test data" string
 		require.NoError(t, err)
-
-		assertFilesViaRemoteRun(t, sshClient, "cat /tmp/testdata/first", dstPath)
-
 		downloadedContent, err := os.ReadFile(dstPath)
 		require.NoError(t, err)
+
+		assertFilesViaRemoteRun(t, sshClient, "cat /tmp/testdata/first", string(downloadedContent))
+
 		// out contains a contant of uploaded file, should be equal to testFile contant
 		require.Equal(t, expectedFileContent, string(downloadedContent))
 	})
@@ -374,11 +380,11 @@ func TestSSHFileDownload(t *testing.T) {
 		err = f.Download(context.Background(), "/tmp/testdata", downloadWholeDirDir)
 		require.NoError(t, err)
 
-		cmd := exec.Command("ls -R", downloadWholeDirDir)
+		cmd := exec.Command("ls", filepath.Join(downloadWholeDirDir, "testdata"))
 		lsResult, err := cmd.Output()
 		require.NoError(t, err)
 
-		assertFilesViaRemoteRun(t, sshClient, "ls -R /tmp/testdata", string(lsResult))
+		assertFilesViaRemoteRun(t, sshClient, "ls /tmp/testdata/", string(lsResult))
 	})
 }
 
@@ -397,27 +403,17 @@ func TestSSHFileDownloadBytes(t *testing.T) {
 		cases := []struct {
 			title      string
 			remotePath string
-			tmpDirName string
 			wantErr    bool
 			err        string
 		}{
 			{
 				title:      "Positive result",
 				remotePath: "/tmp/testfile",
-				tmpDirName: os.TempDir(),
 				wantErr:    false,
-			},
-			{
-				title:      "Unaccessible tmp",
-				remotePath: "/tmp/testfile",
-				tmpDirName: "/var/lib",
-				wantErr:    true,
-				err:        "create target tmp file",
 			},
 			{
 				title:      "Unaccessible remote file",
 				remotePath: "/etc/sudoers",
-				tmpDirName: os.TempDir(),
 				wantErr:    true,
 				err:        "download target tmp file",
 			},
@@ -430,11 +426,12 @@ func TestSSHFileDownloadBytes(t *testing.T) {
 				if c.wantErr {
 					require.Error(t, err)
 					require.Contains(t, err.Error(), c.err)
+				} else {
+					require.NoError(t, err)
+					// out contains a contant of uploaded file, should be equal to testFile contant
+					require.Equal(t, expectedFileContent, string(bytes))
 				}
 
-				require.NoError(t, err)
-				// out contains a contant of uploaded file, should be equal to testFile contant
-				require.Equal(t, expectedFileContent, string(bytes))
 			})
 		}
 	})

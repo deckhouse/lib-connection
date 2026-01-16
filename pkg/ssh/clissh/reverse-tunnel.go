@@ -180,7 +180,6 @@ func (t *ReverseTunnel) StartHealthMonitor(ctx context.Context, checker connecti
 			logger.DebugF("[%d] Signal was sent. Chan len: %d\n", id, len(restartCh))
 		}
 		for {
-
 			if !checkReverseTunnel(id) {
 				go restart(id)
 			}
