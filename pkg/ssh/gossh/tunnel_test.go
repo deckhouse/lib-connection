@@ -185,7 +185,7 @@ done`, remoteServerPort)
 		// 	restartSleep := 5 * time.Second
 		// 	upMonitorSleep := 2 * time.Second
 
-		// 	test.Logger.InfoF(
+		// 	test.Logger.DebugF(
 		// 		"Disconnect (fail connection between server and client) case. Wait %s before connect. Wait %s before check",
 		// 		restartSleep.String(),
 		// 		upMonitorSleep.String(),

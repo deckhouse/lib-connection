@@ -507,7 +507,7 @@ func TestCommandStart(t *testing.T) {
 							test.Logger.ErrorF("SSH-agent process exited, now stop. Wait error: %v", err)
 							return
 						}
-						test.Logger.InfoF("SSH-agent process exited, now stop")
+						test.Logger.DebugF("SSH-agent process exited, now stop")
 					})
 					return nil
 				},

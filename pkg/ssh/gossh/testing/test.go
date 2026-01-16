@@ -279,7 +279,7 @@ func (s *Test) Cleanup(t *testing.T) {
 	}
 
 	if !govalue.Nil(s.Logger) {
-		s.Logger.InfoF("Temp dir '%s' removed for test %s", tmpDir, s.FullName())
+		s.Logger.DebugF("Temp dir '%s' removed for test %s", tmpDir, s.FullName())
 	}
 }
 

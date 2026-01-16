@@ -80,7 +80,7 @@ func NewTestContainerWrapper(t *testing.T, test *Test, opts ...TestContainerWrap
 			require.NoError(t, err)
 		}
 
-		test.Logger.InfoF("Private key created: path '%s' pub key path: %s", privateKeyPath, publicKeyPath)
+		test.Logger.DebugF("Private key created: path '%s' pub key path: %s", privateKeyPath, publicKeyPath)
 
 		testSettings.PublicKey = &PublicKey{
 			Path: publicKeyPath,
