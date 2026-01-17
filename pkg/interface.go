@@ -1,4 +1,4 @@
-// Copyright 2024 Flant JSC
+// Copyright 2026 Flant JSC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -22,6 +22,17 @@ import (
 
 	"github.com/deckhouse/lib-connection/pkg/ssh/session"
 )
+
+type SSHProvider interface {
+	NewClient(ctx context.Context) (SSHClient, error)
+	Client(ctx context.Context) (SSHClient, error)
+	SwitchClient(ctx context.Context, sess *session.Session, privateKeys []session.AgentPrivateKey, oldSSHClient SSHClient) (SSHClient, error)
+}
+
+type Provider interface {
+	Client() (SSHClient, error)
+	SwitchClient(ctx context.Context, sess *session.Session, privateKeys []session.AgentPrivateKey, oldSSHClient SSHClient) (SSHClient, error)
+}
 
 type Interface interface {
 	Command(name string, args ...string) Command
