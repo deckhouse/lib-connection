@@ -34,5 +34,6 @@ apiVersions:
         type: string
         enum: [SSHHost]
       host:
+        minLength: 1
         type: string
         description: Host.

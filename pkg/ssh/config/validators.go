@@ -30,6 +30,7 @@ var (
 func addXRules(validator *validation.Validator) *validation.Validator {
 	extsValidator := validation.NewXRulesExtensionsValidator(map[string]validation.ExtensionsValidatorHandler{
 		"sshPrivateKey": validateSSHPrivateKey,
+		"sshMode":       validateSSHMode,
 	})
 
 	validator.AddExtensionsValidators(extsValidator)
@@ -64,4 +65,19 @@ func validateSSHPrivateKey(value json.RawMessage) error {
 
 func validateSSHPrivateKeyErr(err error) error {
 	return fmt.Errorf("%w: invalid ssh key: %w", ErrValidationRuleFailed, err)
+}
+
+func validateSSHMode(value json.RawMessage) error {
+	var mode Mode
+
+	err := yaml.Unmarshal(value, &mode)
+	if err != nil {
+		return err
+	}
+
+	if mode.LegacyMode && mode.ModernMode {
+		return fmt.Errorf("%w: invalid ssh mode: legacyMode and modernMode both true", ErrValidationRuleFailed)
+	}
+
+	return nil
 }

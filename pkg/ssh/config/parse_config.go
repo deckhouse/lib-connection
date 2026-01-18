@@ -15,6 +15,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -22,6 +23,7 @@ import (
 	"github.com/deckhouse/lib-dhctl/pkg/log"
 	"github.com/deckhouse/lib-dhctl/pkg/yaml"
 	"github.com/deckhouse/lib-dhctl/pkg/yaml/validation"
+	yamlk8s "sigs.k8s.io/yaml"
 
 	"github.com/deckhouse/lib-connection/pkg/settings"
 )
@@ -78,7 +80,7 @@ func ParseConnectionConfig(reader io.Reader, sett settings.Settings, opts ...Val
 		return nil, err
 	}
 
-	docs := yaml.SplitYAML(string(configData))
+	docs := yaml.SplitYAMLBytes(configData)
 
 	errs := newParseErrors()
 
@@ -112,14 +114,15 @@ func ParseConnectionConfig(reader io.Reader, sett settings.Settings, opts ...Val
 		err = validator.ValidateWithIndex(index, &docData, validatorOpts...)
 		if err != nil {
 			// no message error, err contains all information
-			errs.appendError(err, i, "")
+			errs.appendValidation(err, index, i)
 			continue
 		}
 
 		switch index.Kind {
 		case sshConfigKind:
 			connectionConfigDocsCount++
-			sshConfig, err := yaml.Unmarshal[Config](docData)
+			sshConfig := Config{}
+			err := yamlk8s.Unmarshal(docData, &sshConfig)
 			if err != nil {
 				errs.appendUnmarshalError(err, index, i)
 				continue
@@ -128,7 +131,8 @@ func ParseConnectionConfig(reader io.Reader, sett settings.Settings, opts ...Val
 			logger.DebugF("SSHConfig added in result config")
 		case sshHostKind:
 			sshHostConfigDocsCount++
-			sshHost, err := yaml.Unmarshal[Host](docData)
+			sshHost := Host{}
+			err := yamlk8s.Unmarshal(docData, &sshHost)
 			if err != nil {
 				errs.appendUnmarshalError(err, index, i)
 				continue
@@ -137,11 +141,7 @@ func ParseConnectionConfig(reader io.Reader, sett settings.Settings, opts ...Val
 			config.Hosts = append(config.Hosts, sshHost)
 			logger.DebugF("SSHHost '%s' added in result config, host in result config %d", sshHost.Host, len(config.Hosts))
 		default:
-			errs.appendError(
-				validation.ErrKindValidationFailed,
-				i,
-				"Unknown kind, expected one of (%q, %q)", sshConfigKind, sshHostKind,
-			)
+			errs.appendUnknownKind(index, i)
 			continue
 		}
 	}
@@ -166,7 +166,31 @@ func ParseConnectionConfig(reader io.Reader, sett settings.Settings, opts ...Val
 		)
 	}
 
+	validateOnlyUniqueHosts(config, errs)
+
+	if err := errs.ErrorOrNil(); err != nil {
+		return nil, err
+	}
+
 	return config, nil
+}
+
+func validateOnlyUniqueHosts(cfg *ConnectionConfig, errs *parseErrors) {
+	if len(cfg.Hosts) == 0 {
+		return
+	}
+
+	hostsCounts := make(map[string]int)
+
+	for _, host := range cfg.Hosts {
+		hostsCounts[host.Host]++
+	}
+
+	for host, count := range hostsCounts {
+		if count > 1 {
+			errs.appendMultipleHost(host, count)
+		}
+	}
 }
 
 func getValidator(logger log.LoggerProvider) *validation.Validator {
@@ -210,6 +234,31 @@ func (e *parseErrors) appendError(err error, index int, msgFormat string, args .
 
 	validationError := validation.ExtractValidationError(err)
 	e.Append(validationError, toAppend)
+}
+
+func (e *parseErrors) appendMultipleHost(host string, count int) {
+	e.Append(validation.ErrDocumentValidationFailed, validation.Error{
+		Messages: []string{
+			fmt.Sprintf("host '%s' present multiple times %d", host, count),
+		},
+	})
+}
+
+func (e *parseErrors) appendValidation(err error, index *validation.SchemaIndex, i int) {
+	if errors.Is(err, validation.ErrSchemaNotFound) {
+		e.appendUnknownKind(index, i)
+		return
+	}
+
+	e.appendError(err, i, "")
+}
+
+func (e *parseErrors) appendUnknownKind(index *validation.SchemaIndex, i int) {
+	e.appendError(
+		validation.ErrKindValidationFailed,
+		i,
+		"Unknown kind: %s, expected one of (%q, %q)", index.String(), sshConfigKind, sshHostKind,
+	)
 }
 
 func (e *parseErrors) appendUnmarshalError(err error, schemaIndex *validation.SchemaIndex, docIndex int) {

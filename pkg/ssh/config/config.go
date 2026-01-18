@@ -23,18 +23,23 @@ type Host struct {
 	Host string `json:"host"`
 }
 
+type Mode struct {
+	LegacyMode bool `json:"legacyMode,omitempty"`
+	ModernMode bool `json:"modernMode,omitempty"`
+}
+
 type Config struct {
-	User            string            `json:"user"`
-	Port            *int32            `json:"port,omitempty"`
-	PrivateKeys     []AgentPrivateKey `json:"privateKeys,omitempty"`
-	ExtraArgs       string            `json:"extraArgs,omitempty"`
-	BastionHost     string            `json:"bastionHost,omitempty"`
-	BastionPort     *int32            `json:"bastionPort,omitempty"`
-	BastionUser     string            `json:"bastionUser,omitempty"`
-	BastionPassword string            `json:"bastionPassword,omitempty"`
+	Mode
+
+	User            string            `json:"sshUser"`
+	Port            *int              `json:"sshPort,omitempty"`
+	PrivateKeys     []AgentPrivateKey `json:"sshAgentPrivateKeys,omitempty"`
+	ExtraArgs       string            `json:"sshExtraArgs,omitempty"`
+	BastionHost     string            `json:"sshBastionHost,omitempty"`
+	BastionPort     *int              `json:"sshBastionPort,omitempty"`
+	BastionUser     string            `json:"sshBastionUser,omitempty"`
+	BastionPassword string            `json:"sshBastionPassword,omitempty"`
 	SudoPassword    string            `json:"sudoPassword,omitempty"`
-	LegacyMode      bool              `json:"legacyMode,omitempty"`
-	ModernMode      bool              `json:"modernMode,omitempty"`
 }
 
 type ConnectionConfig struct {
