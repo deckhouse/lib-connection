@@ -202,8 +202,10 @@ func (t *ReverseTunnel) StartHealthMonitor(ctx context.Context, checker connecti
 
 		checkLoopParams := t.sshClient.loopsParams.CheckReverseTunnel
 		checkLoopParams = retry.SafeCloneOrNewParams(checkLoopParams, defaultReverseTunnelParamsOps...).
-			WithName("Check reverse tunnel").
-			WithLogger(logger)
+			Clone(
+				retry.WithName("Check reverse tunnel"),
+				retry.WithLogger(logger),
+			)
 
 		err := retry.NewSilentLoopWithParams(checkLoopParams).RunContext(ctx, func() error {
 			out, err := checker.CheckTunnel(ctx)

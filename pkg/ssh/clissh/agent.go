@@ -19,6 +19,7 @@ import (
 	"net"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/deckhouse/lib-gossh/agent"
 
@@ -119,7 +120,7 @@ func (a *Agent) Start() error {
 
 // TODO replace with x/crypto/ssh/agent ?
 func (a *Agent) AddKeys(keys []session.AgentPrivateKey) error {
-	err := addKeys(a.agentSettings.AuthSock, keys)
+	err := a.addKeys(a.agentSettings.AuthSock, keys)
 	if err != nil {
 		return fmt.Errorf("Add keys: %w", err)
 	}
@@ -148,17 +149,25 @@ func (a *Agent) Stop() {
 	a.agent.Stop()
 }
 
-func addKeys(authSock string, keys []session.AgentPrivateKey) error {
-	conn, err := net.Dial("unix", authSock)
+func (a *Agent) addKeys(authSock string, keys []session.AgentPrivateKey) error {
+	conn, err := net.DialTimeout("unix", authSock, 5*time.Second)
 	if err != nil {
 		return fmt.Errorf("Error dialing with ssh agent %s: %w", authSock, err)
 	}
-	defer conn.Close()
+
+	defer func() {
+		if err := conn.Close(); err != nil {
+			a.sshSettings.Logger().DebugF("Error closing connection to ssh-agent %s: %v", authSock, err)
+		}
+	}()
 
 	agentClient := agent.NewClient(conn)
 
-	for _, key := range keys {
-		privateKey, err := utils.GetSSHPrivateKey(key.Key, key.Passphrase)
+	for i, key := range keys {
+		privateKey, _, err := utils.ParseSSHPrivateKey(
+			[]byte(key.Key),
+			fmt.Sprintf("index %d", i),
+			utils.NewDefaultPassphraseOnlyConsumer(key.Passphrase))
 		if err != nil {
 			return err
 		}

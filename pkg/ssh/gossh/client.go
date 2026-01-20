@@ -198,9 +198,10 @@ func (s *Client) NewSSHSession() (*gossh.Session, error) {
 	var sess *gossh.Session
 
 	newSessionLoopParams := retry.SafeCloneOrNewParams(s.loopsParams.NewSession, defaultSessionLoopParamsOps...).
-		WithName("Establish new session").
-		WithLogger(s.settings.Logger())
-
+		Clone(
+			retry.WithName("Establish new session"),
+			retry.WithLogger(s.settings.Logger()),
+		)
 	err := retry.NewSilentLoopWithParams(newSessionLoopParams).RunContext(s.ctx, func() error {
 		var err error
 		sess, err = s.sshClient.NewSession()
@@ -379,7 +380,9 @@ func (s *Client) connectToTargetViaBastion(ctx context.Context, bastionClient *g
 	}
 
 	viaBastionLoopParams := retry.SafeCloneOrNewParams(s.loopsParams.ConnectToHostViaBastion, defaultClientViaBastionLoopParamsOps...).
-		WithName("Get SSH client and connect to target host via bastion")
+		Clone(
+			retry.WithName("Get SSH client and connect to target host via bastion"),
+		)
 
 	if err := s.runInLoop(ctx, viaBastionLoopParams, connectToTarget); err != nil {
 		lastHost := fmt.Sprintf("'%s:%s' with user '%s'", s.sessionClient.Host(), s.sessionClient.Port, s.sessionClient.User)
@@ -447,7 +450,7 @@ func (s *Client) directConnectToTarget(ctx context.Context) (*gossh.Client, erro
 	}
 
 	hostLoopParams := retry.SafeCloneOrNewParams(s.loopsParams.ConnectToHostDirectly, defaultClientDirectlyLoopParamsOps...).
-		WithName("Get SSH client")
+		Clone(retry.WithName("Get SSH client"))
 
 	if err := s.runInLoop(ctx, hostLoopParams, connectToHost); err != nil {
 		lastHost := fmt.Sprintf("'%s:%s' with user '%s'", s.sessionClient.Host(), s.sessionClient.Port, s.sessionClient.User)
@@ -490,7 +493,7 @@ func (s *Client) connectToBastion(ctx context.Context) (*gossh.Client, error) {
 	}
 
 	bastionLoopParams := retry.SafeCloneOrNewParams(s.loopsParams.ConnectToBastion, defaultClientViaBastionLoopParamsOps...).
-		WithName("Get bastion SSH client")
+		Clone(retry.WithName("Get bastion SSH client"))
 
 	if err := s.runInLoop(ctx, bastionLoopParams, connectToBastion); err != nil {
 		return nil, fmt.Errorf("Could not connect to %s: %w", fullHost, err)
@@ -531,7 +534,7 @@ func (s *Client) runInLoop(ctx context.Context, params retry.Params, task func()
 		createLoop = retry.NewSilentLoopWithParams
 	}
 
-	paramsWithLogger := params.Clone().WithLogger(s.settings.Logger())
+	paramsWithLogger := params.Clone(retry.WithLogger(s.settings.Logger()))
 
 	return createLoop(paramsWithLogger).RunContext(ctx, task)
 }
@@ -667,8 +670,12 @@ func (s *Client) initSigners() error {
 	}
 
 	signers := make([]gossh.Signer, 0, len(s.privateKeys))
-	for _, keypath := range s.privateKeys {
-		key, err := utils.GetSSHPrivateKey(keypath.Key, keypath.Passphrase)
+	for i, keypath := range s.privateKeys {
+		key, _, err := utils.ParseSSHPrivateKey(
+			[]byte(keypath.Key),
+			fmt.Sprintf("index %d", i),
+			utils.NewDefaultPassphraseOnlyConsumer(keypath.Passphrase),
+		)
 		if err != nil {
 			return err
 		}

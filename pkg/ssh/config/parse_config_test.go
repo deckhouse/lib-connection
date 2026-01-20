@@ -27,7 +27,7 @@ import (
 )
 
 func TestParseConfig(t *testing.T) {
-	configTemplate := `
+	testConfigTemplate := `
 apiVersion: dhctl.deckhouse.io/v1
 kind: SSHConfig
 
@@ -54,12 +54,12 @@ host: "{{ . }}"
 {{- end }}
 {{- end }}
 `
-	configTemplateEngine, err := template.New("test_key").Funcs(template.FuncMap{
+	testConfigTemplateEngine, err := template.New("test_key").Funcs(template.FuncMap{
 		"indent": func(spaces int, v string) string {
 			pad := strings.Repeat(" ", spaces)
 			return pad + strings.Replace(v, "\n", "\n"+pad, -1)
 		},
-	}).Parse(configTemplate)
+	}).Parse(testConfigTemplate)
 	require.NoError(t, err, "error parsing template")
 
 	generateConfigWithKeys := func(t *testing.T, keys []AgentPrivateKey, additionalFields string, hosts ...string) string {
@@ -81,7 +81,7 @@ sshUser: ubuntu
 		}
 
 		var tpl bytes.Buffer
-		err = configTemplateEngine.Execute(&tpl, map[string]any{
+		err = testConfigTemplateEngine.Execute(&tpl, map[string]any{
 			"keys":   keysMap,
 			"fields": additionalFields,
 			"hosts":  hosts,

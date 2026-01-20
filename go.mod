@@ -9,10 +9,12 @@ require (
 	github.com/deckhouse/lib-gossh v0.3.0
 	github.com/go-openapi/spec v0.19.8
 	github.com/google/uuid v1.6.0
+	github.com/hashicorp/go-multierror v1.1.1
 	github.com/name212/govalue v1.1.0
 	github.com/pkg/errors v0.9.1
+	github.com/spf13/pflag v1.0.10
 	github.com/stretchr/testify v1.11.1
-	golang.org/x/crypto v0.47.0
+	golang.org/x/term v0.39.0
 	sigs.k8s.io/yaml v1.6.0
 )
 
@@ -37,7 +39,6 @@ require (
 	github.com/go-stack/stack v1.8.0 // indirect
 	github.com/gookit/color v1.5.2 // indirect
 	github.com/hashicorp/errwrap v1.0.0 // indirect
-	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/mailru/easyjson v0.7.1 // indirect
 	github.com/mitchellh/mapstructure v1.3.2 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
@@ -45,9 +46,9 @@ require (
 	github.com/xo/terminfo v0.0.0-20210125001918-ca9a967f8778 // indirect
 	go.mongodb.org/mongo-driver v1.5.1 // indirect
 	go.yaml.in/yaml/v2 v2.4.2 // indirect
+	golang.org/x/crypto v0.47.0 // indirect
 	golang.org/x/net v0.48.0 // indirect
 	golang.org/x/sys v0.40.0 // indirect
-	golang.org/x/term v0.39.0 // indirect
 	golang.org/x/text v0.33.0 // indirect
 	gopkg.in/yaml.v2 v2.3.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect

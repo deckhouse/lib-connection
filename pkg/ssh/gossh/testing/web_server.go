@@ -220,7 +220,7 @@ func DoGetRequest(url string, loop retry.Params, logger *PrefixLogger) (string, 
 	response := ""
 
 	if loop.Name() == retry.NotSetName {
-		loop.Clone().WithName(fmt.Sprintf("Do GET request %s", url))
+		loop.Clone(retry.WithName("Do GET request %s", url))
 	}
 
 	err := retry.NewLoopWithParams(loop).Run(func() error {

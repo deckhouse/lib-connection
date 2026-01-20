@@ -75,7 +75,7 @@ func validateSSHMode(value json.RawMessage) error {
 		return err
 	}
 
-	if mode.LegacyMode && mode.ModernMode {
+	if mode.ForceLegacy && mode.ForceModernMode {
 		return fmt.Errorf("%w: invalid ssh mode: legacyMode and modernMode both true", ErrValidationRuleFailed)
 	}
 

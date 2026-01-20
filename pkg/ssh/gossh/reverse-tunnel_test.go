@@ -197,7 +197,7 @@ exit $?
 		time.Sleep(upMonitorSleep)
 
 		checkLoopAfterRestart := retry.SafeCloneOrNewParams(checkLoop).
-			WithName("Check tunnel after restart")
+			Clone(retry.WithName("Check tunnel after restart"))
 
 		err = retry.NewLoopWithParams(checkLoopAfterRestart).Run(checkTunnelAction)
 		require.NoError(t, err, "tunnel check after restart")
@@ -215,7 +215,7 @@ exit $?
 		time.Sleep(upMonitorSleep)
 
 		checkLoopAfterDisconnect := retry.SafeCloneOrNewParams(checkLoop).
-			WithName("Check tunnel after disconnect")
+			Clone(retry.WithName("Check tunnel after disconnect"))
 
 		err = retry.NewLoopWithParams(checkLoopAfterDisconnect).Run(checkTunnelAction)
 		require.NoError(t, err, "tunnel check after disconnect")

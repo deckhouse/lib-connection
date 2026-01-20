@@ -69,8 +69,10 @@ func (c *Check) AwaitAvailability(ctx context.Context, loopParams retry.Params) 
 
 	logger := c.settings.Logger()
 	retryParams := retry.SafeCloneOrNewParams(loopParams, defaultAvailabilityOpts...).
-		WithLogger(logger).
-		WithName("Waiting for SSH connection")
+		Clone(
+			retry.WithName("Waiting for SSH connection"),
+			retry.WithLogger(logger),
+		)
 
 	return retry.NewLoopWithParams(retryParams).RunContext(ctx, func() error {
 		host := c.Session.Host()
