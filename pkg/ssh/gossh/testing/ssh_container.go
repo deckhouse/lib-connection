@@ -189,6 +189,31 @@ func (c *SSHContainer) Restart(waitSSHDStarted bool, sleepBeforeStart time.Durat
 	return c.startContainer(waitSSHDStarted)
 }
 
+func (c *SSHContainer) SoftRestart(waitSSHDStarted bool, sleepBeforeStart time.Duration) error {
+	if err := c.isContainerStarted("stop container"); err != nil {
+		return nil
+	}
+
+	description := func(name string) string {
+		return fmt.Sprintf("%s %s", name, c.GetContainerId())
+	}
+
+	id := c.GetContainerId()
+	shortID := c.ShortContainerId()
+
+	c.logDebug("Stop container %s...", shortID)
+
+	if err := c.runDocker(description("stop container"), "stop", id); err != nil {
+		return err
+	}
+
+	Sleep(sleepBeforeStart)
+
+	c.logDebug("Start container %s...", shortID)
+
+	return c.runDocker(description("start container"), "start", id)
+}
+
 func (c *SSHContainer) Stop() error {
 	shortId := c.ShortContainerId()
 	c.logDebug("Stopping container '%s' fully...", shortId)
@@ -260,6 +285,23 @@ func (c *SSHContainer) CreateDeckhouseDirs() error {
 	}
 
 	return c.ExecToContainer(description("set mode"), "chmod", "-R", "777", nodeTmpPath)
+}
+
+func (c *SSHContainer) CreateDirectory(path string) error {
+	description := func(name string) string {
+		d := "any directory inside a container"
+		if name == "" {
+			return d
+		}
+
+		return fmt.Sprintf("%s %s", d, name)
+	}
+
+	if err := c.ExecToContainer(description("create"), "mkdir", "-p", path); err != nil {
+		return err
+	}
+
+	return c.ExecToContainer(description("chown"), "chown", "-R", c.settings.Username+":"+c.settings.Username, path)
 }
 
 func (c *SSHContainer) WithExternalNetwork(network string) *SSHContainer {
@@ -589,6 +631,32 @@ func (c *SSHContainer) runDockerNetworkConnect(isDisconnect bool) error {
 	return c.runDocker(cmdName, "network", cmdName, network, c.GetContainerId())
 }
 
+func (c *SSHContainer) DockerNetworkConnect(isDisconnect bool, name string) error {
+	cmdName := "connect"
+	if isDisconnect {
+		cmdName = "disconnect"
+	}
+
+	description := fmt.Sprintf("network %s", cmdName)
+
+	if err := c.isContainerStarted(description); err != nil {
+		return err
+	}
+
+	if err := c.hasNetwork(description); err != nil {
+		return err
+	}
+
+	c.logDebug(
+		"%s network %s to container %s...",
+		strings.ToTitle(cmdName),
+		name,
+		c.ShortContainerId(),
+	)
+
+	return c.runDocker(cmdName, "network", cmdName, name, c.GetContainerId())
+}
+
 func (c *SSHContainer) discoveryContainerIP() (string, error) {
 	description := "Getting IP address of container"
 	if err := c.hasNetwork(description); err != nil {
@@ -640,4 +708,18 @@ func (c *SSHContainer) defaultRetryParams(name string) retry.Params {
 		retry.WithWait(3*time.Second),
 		retry.WithLogger(logger),
 	)
+}
+
+func (c *SSHContainer) DownloadKubectl(version string) error {
+	args := []string{"curl", "-LO", "https://dl.k8s.io/release/" + version + "/bin/linux/amd64/kubectl"}
+
+	if err := c.ExecToContainer("kubectl", args...); err != nil {
+		return err
+	}
+
+	if err := c.ExecToContainer("move kubectl to /usr/local/bin", "mv", "kubectl", "/usr/local/bin/"); err != nil {
+		return err
+	}
+
+	return c.ExecToContainer("set execute permission on kubectl", "chmod", "+x", "/usr/local/bin/kubectl")
 }
