@@ -210,6 +210,7 @@ func TestParseFlags(t *testing.T) {
 		privateKeys         []*testPrivateKey
 		before              func(*testing.T, *test, log.Logger)
 		privateKeyExtractor PrivateKeyExtractorFunc
+		tmpDir              *testTmpDir
 	}
 
 	beforeAddPrivateKeys := func(t *testing.T, tst *test, logger log.Logger) {
@@ -434,11 +435,12 @@ func TestParseFlags(t *testing.T) {
 			sett := testSettings()
 			logger := sett.Logger()
 
-			keys := newTestPrivateKeys(tst.name, logger, tst.privateKeys)
+			tmpDir := newTestTmpDir(t, tst.name, logger)
+
+			tst.tmpDir = tmpDir
+
+			keys := newTestPrivateKeys(tmpDir, tst.privateKeys)
 			keys.create(t)
-			t.Cleanup(func() {
-				keys.cleanup()
-			})
 
 			if tst.before != nil {
 				tst.before(t, &tst, logger)
@@ -506,23 +508,83 @@ type testPrivateKey struct {
 	content          string
 }
 
-type testPrivateKeys struct {
-	keys   []*testPrivateKey
-	logger log.Logger
-
+type testTmpDir struct {
 	id     string
 	tmpDir string
+	logger log.Logger
+	name   string
+
+	alreadyCleanup bool
 }
 
-func newTestPrivateKeys(name string, logger log.Logger, keys []*testPrivateKey) *testPrivateKeys {
+func newTestTmpDir(t *testing.T, name string, logger log.Logger) *testTmpDir {
 	id := GenerateID(name)
 	localTmpDirStr := filepath.Join(os.TempDir(), tmpGlobalDirName, "test-flags", id)
 
-	return &testPrivateKeys{
-		keys:   keys,
-		logger: logger,
+	d := &testTmpDir{
 		id:     id,
 		tmpDir: localTmpDirStr,
+		logger: logger,
+		name:   name,
+	}
+
+	d.createDir(t)
+
+	return d
+}
+
+func (d *testTmpDir) createDir(t *testing.T) {
+	require.NotEmpty(t, d.tmpDir, "tmp dir does not set")
+
+	err := os.MkdirAll(d.tmpDir, 0777)
+	require.NoError(t, err, "create tmp dir")
+	t.Cleanup(func() {
+		d.cleanup()
+	})
+}
+
+func (d *testTmpDir) writeFile(t *testing.T, content string, name string) string {
+	require.NotEmpty(t, d.tmpDir, "tmp dir does not set")
+	if name == "" {
+		name = GenerateID()
+	}
+
+	path := filepath.Join(d.tmpDir, fmt.Sprintf("%s.%s", name, d.id))
+	err := os.WriteFile(path, []byte(content), 0600)
+	require.NoError(t, err, "write file %s", path)
+
+	return path
+}
+
+func (d *testTmpDir) cleanup() {
+	if d.alreadyCleanup {
+		return
+	}
+
+	tmpDir := d.tmpDir
+	if tmpDir == "" || tmpDir == "." || tmpDir == "/" {
+		return
+	}
+
+	if err := os.RemoveAll(tmpDir); err != nil && !errors.Is(err, os.ErrNotExist) {
+		d.logger.ErrorF("Cannot remove test dir '%s': %v", tmpDir, err)
+		return
+	}
+
+	d.logger.InfoF("Test dir '%s' removed", tmpDir)
+	d.alreadyCleanup = true
+}
+
+type testPrivateKeys struct {
+	*testTmpDir
+
+	keys []*testPrivateKey
+}
+
+func newTestPrivateKeys(tmpDir *testTmpDir, keys []*testPrivateKey) *testPrivateKeys {
+	return &testPrivateKeys{
+		testTmpDir: tmpDir,
+		keys:       keys,
 	}
 }
 
@@ -531,8 +593,7 @@ func (k *testPrivateKeys) create(t *testing.T) {
 		return
 	}
 
-	err := os.MkdirAll(k.tmpDir, 0777)
-	require.NoError(t, err, "create tmp dir")
+	k.createDir(t)
 
 	for i, key := range k.keys {
 		if key.path != "" {
@@ -546,22 +607,14 @@ func (k *testPrivateKeys) create(t *testing.T) {
 			password = &pass
 		}
 
-		path := filepath.Join(k.tmpDir, fmt.Sprintf("id_rsa.%d.%s", i, k.id))
 		keyContent := key.content
 		if keyContent == "" {
 			keyContent = generateKey(t, *password)
 		} else {
-			k.logger.InfoF("Private key content present for %s Skip generating", path)
+			k.logger.InfoF("Private key content present for %d Skip generating", i)
 		}
 
-		err = os.WriteFile(path, []byte(keyContent), 0600)
-		if err != nil {
-			k.logger.ErrorF("Cannot write key %s: %v", path, err)
-			k.cleanup()
-			require.Error(t, err, "write key")
-		}
-		require.NoError(t, err, "write key %s", path)
-
+		path := k.writeFile(t, keyContent, fmt.Sprintf("id_rsa.%d", i))
 		k.logger.InfoF("Private key %s written", path)
 
 		key.path = path
@@ -571,20 +624,6 @@ func (k *testPrivateKeys) create(t *testing.T) {
 			key.expectedPassword = *password
 		}
 	}
-}
-
-func (k *testPrivateKeys) cleanup() {
-	tmpDir := k.tmpDir
-	if tmpDir == "" || tmpDir == "." || tmpDir == "/" {
-		return
-	}
-
-	if err := os.RemoveAll(tmpDir); err != nil && !errors.Is(err, os.ErrNotExist) {
-		k.logger.ErrorF("Cannot remove test dir '%s': %v", tmpDir, err)
-		return
-	}
-
-	k.logger.InfoF("Test dir '%s' removed", tmpDir)
 }
 
 func stringPtr(s string) *string {
