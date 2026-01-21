@@ -276,6 +276,49 @@ func TestParseFlags(t *testing.T) {
 		},
 
 		{
+			name:             "empty rewrite HOME env",
+			passwords:        nil,
+			arguments:        []string{},
+			hasErrorContains: "",
+
+			before: func(t *testing.T, tst *test, logger log.Logger) {
+				homePath := tst.tmpDir.createSubDir(t, "testhome")
+				setEnvs(t, map[string]string{
+					"HOME": homePath,
+				})
+
+				tst.privateKeyExtractor = func(path string, logger log.Logger) (content string, password string, err error) {
+					expected := filepath.Join(homePath, ".ssh", "id_rsa")
+					if path != expected {
+						return "", "", fmt.Errorf("expected %s, got %s", homePath, path)
+					}
+
+					return "content", "not secure", nil
+				}
+			},
+
+			expected: &ConnectionConfig{
+				Config: &Config{
+					Mode: Mode{
+						ForceLegacy:     false,
+						ForceModernMode: false,
+					},
+					User: currentUserName,
+					Port: intPtr(22),
+					PrivateKeys: []AgentPrivateKey{
+						{
+							Key:        "content",
+							Passphrase: "not secure",
+						},
+					},
+					BastionUser: currentUserName,
+					BastionPort: intPtr(22),
+				},
+				Hosts: make([]Host, 0),
+			},
+		},
+
+		{
 			name:      "pass private keys with all connected settings",
 			passwords: nil,
 			arguments: []string{
@@ -416,6 +459,53 @@ func TestParseFlags(t *testing.T) {
 		},
 
 		{
+			name: "rewrite from envs use default os lookup",
+
+			arguments: []string{
+				"--ssh-host=192.168.0.1",
+				"--ssh-user=user",
+				"--ssh-port=2201",
+			},
+
+			envsPrefix: "MY",
+			privateKeys: []*testPrivateKey{
+				{password: stringPtr("")},
+			},
+
+			before: func(t *testing.T, test *test, logger log.Logger) {
+				beforeAddPrivateKeys(t, test, logger)
+				setEnvs(t, map[string]string{
+					"MY_SSH_HOSTS":        "192.168.1.2,192.168.1.3",
+					"MY_SSH_LEGACY_MODE":  "true",
+					"MY_SSH_BASTION_PORT": "2300",
+				})
+			},
+
+			hasErrorContains: "",
+
+			expected: &ConnectionConfig{
+				Config: &Config{
+					Mode: Mode{
+						ForceLegacy:     true,
+						ForceModernMode: false,
+					},
+					User: "user",
+					Port: intPtr(2201),
+
+					BastionUser: currentUserName,
+					BastionPort: intPtr(2300),
+
+					// PrivateKeys added in before
+					// Passwords added in before
+				},
+				Hosts: []Host{
+					{Host: "192.168.1.2"},
+					{Host: "192.168.1.3"},
+				},
+			},
+		},
+
+		{
 			name: "connection config",
 
 			arguments: []string{},
@@ -519,18 +609,16 @@ sshBastionPassword: "not_secure_password_bastion"
 				}
 			}
 
-			envsLookup := func(name string) (string, bool) {
-				if len(tst.envs) == 0 {
-					return "", false
-				}
-				val, ok := tst.envs[name]
-				return val, ok
-			}
-
 			parser := NewFlagsParser(sett).
 				WithAsk(ask).
-				WithEnvsLookup(envsLookup).
 				WithEnvsPrefix(tst.envsPrefix)
+
+			if len(tst.envs) > 0 {
+				parser.WithEnvsLookup(func(name string) (string, bool) {
+					val, ok := tst.envs[name]
+					return val, ok
+				})
+			}
 
 			if tst.privateKeyExtractor != nil {
 				parser.WithPrivateKeyPasswordExtractor(tst.privateKeyExtractor)
@@ -586,19 +674,38 @@ func newTestTmpDir(t *testing.T, name string, logger log.Logger) *testTmpDir {
 		name:   name,
 	}
 
-	d.createDir(t)
+	d.createRootDir(t)
 
 	return d
 }
 
-func (d *testTmpDir) createDir(t *testing.T) {
-	require.NotEmpty(t, d.tmpDir, "tmp dir does not set")
+func (d *testTmpDir) createRootDir(t *testing.T) {
+	tmpDir := d.tmpDir
 
-	err := os.MkdirAll(d.tmpDir, 0777)
-	require.NoError(t, err, "create tmp dir")
+	require.NotEmpty(t, tmpDir, "tmp dir does not set")
+
+	err := os.MkdirAll(tmpDir, 0777)
+	require.NoError(t, err, "create tmp dir %s", tmpDir)
 	t.Cleanup(func() {
 		d.cleanup()
 	})
+
+	d.logger.InfoF("Root tmp dir %s created", tmpDir)
+}
+
+func (d *testTmpDir) createSubDir(t *testing.T, name string) string {
+	tmpDir := d.tmpDir
+
+	require.NotEmpty(t, tmpDir, "tmp dir does not set")
+
+	path := filepath.Join(tmpDir, name)
+
+	err := os.MkdirAll(path, 0777)
+	require.NoError(t, err, "create tmp sub dir %s", path)
+
+	d.logger.InfoF("Sub dir tmp for %s created %s", name, path)
+
+	return path
 }
 
 func (d *testTmpDir) writeFile(t *testing.T, content string, name string) string {
@@ -653,7 +760,7 @@ func (k *testPrivateKeys) create(t *testing.T) {
 		return
 	}
 
-	k.createDir(t)
+	k.createRootDir(t)
 
 	for i, key := range k.keys {
 		if key.path != "" {
@@ -674,7 +781,9 @@ func (k *testPrivateKeys) create(t *testing.T) {
 			k.logger.InfoF("Private key content present for %d Skip generating", i)
 		}
 
-		path := k.writeFile(t, keyContent, fmt.Sprintf("id_rsa.%d", i))
+		keyID := GenerateID(k.name, fmt.Sprintf("%d", i))
+
+		path := k.writeFile(t, keyContent, fmt.Sprintf("id_rsa.%s", keyID))
 		k.logger.InfoF("Private key %s written", path)
 
 		key.path = path

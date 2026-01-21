@@ -9,6 +9,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	mathrand "math/rand"
+	"os"
 	"strings"
 	"testing"
 	"text/template"
@@ -164,6 +165,44 @@ func init() {
 
 	if err != nil {
 		panic(err)
+	}
+}
+
+func setEnvs(t *testing.T, envs map[string]string) {
+	if len(envs) == 0 {
+		return
+	}
+
+	forUnset := make(map[string]struct{})
+	oldEnvs := make(map[string]string)
+
+	t.Cleanup(func() {
+		for k, v := range oldEnvs {
+			if err := os.Setenv(k, v); err != nil {
+				t.Logf("error restore env variable %s: %v", k, err)
+			}
+		}
+
+		for k := range forUnset {
+			if err := os.Unsetenv(k); err != nil {
+				t.Logf("error unset env variable %s: %v", k, err)
+			}
+		}
+	})
+
+	for k, v := range envs {
+		old, ok := os.LookupEnv(k)
+		if ok {
+			oldEnvs[k] = old
+		}
+
+		if err := os.Setenv(k, v); err != nil {
+			require.NoError(t, err, "error set env variable %s", k)
+		}
+
+		if !ok {
+			forUnset[k] = struct{}{}
+		}
 	}
 }
 
