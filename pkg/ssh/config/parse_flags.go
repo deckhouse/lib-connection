@@ -189,8 +189,9 @@ const (
 )
 
 type (
-	AskPasswordFunc func(string) ([]byte, error)
-	EnvsLookupFunc  func(string) (string, bool)
+	AskPasswordFunc         func(promt string) ([]byte, error)
+	EnvsLookupFunc          func(name string) (string, bool)
+	PrivateKeyExtractorFunc func(path string, logger log.Logger) (content string, password string, err error)
 )
 
 type FlagsParser struct {
@@ -198,6 +199,11 @@ type FlagsParser struct {
 	ask        AskPasswordFunc
 	sett       settings.Settings
 	envsLookup EnvsLookupFunc
+
+	// extractPrivateKey
+	// custom extract content and password for private key file
+	// need to rewrite for testing purposes
+	extractPrivateKey PrivateKeyExtractorFunc
 }
 
 // NewFlagsParser
@@ -212,17 +218,33 @@ func NewFlagsParser(sett settings.Settings) *FlagsParser {
 // NewFlagsParserWithEnvsPrefix trim right all _ ang - symbols and spaces left and right
 // By default parser add _ after prefix for all env vars
 func NewFlagsParserWithEnvsPrefix(sett settings.Settings, envsPrefix string) *FlagsParser {
+	terminalPrivateKeyPasswordExtractor := func(path string, logger log.Logger) (string, string, error) {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return "", "", fmt.Errorf("Cannot read private key %s: %w", path, err)
+		}
+
+		_, password, err := utils.ParseSSHPrivateKey(
+			content,
+			path,
+			utils.NewTerminalPassphraseConsumer(logger, make([]byte, 0)),
+		)
+
+		return string(content), password, err
+	}
+
+	askFromTerminal := func(prompt string) ([]byte, error) {
+		return terminal.AskPassword(sett.Logger(), prompt)
+	}
+
 	parser := &FlagsParser{
 		sett: sett,
 	}
 
-	ask := func(prompt string) ([]byte, error) {
-		return terminal.AskPassword(sett.Logger(), prompt)
-	}
-
 	return parser.WithEnvsPrefix(envsPrefix).
-		WithAskFunc(ask).
-		WithEnvsLookup(os.LookupEnv)
+		WithAsk(askFromTerminal).
+		WithEnvsLookup(os.LookupEnv).
+		WithPrivateKeyPasswordExtractor(terminalPrivateKeyPasswordExtractor)
 }
 
 // WithEnvsPrefix
@@ -255,13 +277,13 @@ func (p *FlagsParser) WithEnvsLookup(lookup EnvsLookupFunc) *FlagsParser {
 	return p
 }
 
-func (p *FlagsParser) WithAskFunc(ask AskPasswordFunc) *FlagsParser {
-	if govalue.Nil(ask) {
-		p.sett.Logger().WarnF("Ask function is nil. Skip set ask function.")
+func (p *FlagsParser) WithPrivateKeyPasswordExtractor(extractor PrivateKeyExtractorFunc) *FlagsParser {
+	if govalue.Nil(extractor) {
+		p.sett.Logger().WarnF("Private key password extractor function is nil. Skip set extractor function.")
 		return p
 	}
 
-	p.ask = ask
+	p.extractPrivateKey = extractor
 	return p
 }
 
@@ -478,14 +500,12 @@ func (p *FlagsParser) ExtractConfigAfterParse(flags *Flags, opts ...ValidateOpti
 		return nil, fmt.Errorf("--%s and --%s cannot be use both", legacyModeFlag, modernModeFlag)
 	}
 
-	privateKeys, err := readPrivateKeysFromFlags(flags, logger)
+	privateKeys, err := p.readPrivateKeysFromFlags(flags, logger)
 	if err != nil {
 		return nil, fmt.Errorf("Failed to read private keys from flags: %w", err)
 	}
 
-	passwords, err := getPasswordsFromUser(flags, func(prompt string) ([]byte, error) {
-		return terminal.AskPassword(logger, prompt)
-	})
+	passwords, err := p.getPasswordsFromUser(flags)
 
 	if err != nil {
 		return nil, err
@@ -545,7 +565,64 @@ func (p *FlagsParser) envsExtractor() *envExtractor {
 	return newEnvExtractor(p.envsPrefix, p.envsLookup)
 }
 
-func (p *FlagsParser) addEnvToUsage(usage string, envName string) {}
+func (p *FlagsParser) readPrivateKeysFromFlags(flags *Flags, logger log.Logger) ([]AgentPrivateKey, error) {
+	res := make([]AgentPrivateKey, 0, len(flags.PrivateKeysPaths))
+
+	if len(flags.PrivateKeysPaths) == 0 {
+		return res, nil
+	}
+
+	pathsParsed := make(map[string]struct{}, len(flags.PrivateKeysPaths))
+	var parseErr *multierror.Error
+	for _, path := range flags.PrivateKeysPaths {
+		if _, ok := pathsParsed[path]; ok {
+			logger.DebugF("Multiple private keys found for %s", path)
+			continue
+		}
+
+		pathsParsed[path] = struct{}{}
+
+		content, keysPassword, err := p.extractPrivateKey(path, logger)
+		if err != nil {
+			parseErr = multierror.Append(parseErr, fmt.Errorf("cannot parse private key file %s: %w", path, err))
+			continue
+		}
+
+		res = append(res, AgentPrivateKey{
+			Key:        content,
+			Passphrase: keysPassword,
+		})
+	}
+
+	if err := parseErr.ErrorOrNil(); err != nil {
+		return nil, err
+	}
+
+	return res, nil
+}
+
+func (p *FlagsParser) getPasswordsFromUser(flags *Flags) (*passwordsFromUser, error) {
+	res := &passwordsFromUser{}
+
+	if flags.AskBastionPass {
+		bastionPass, err := p.ask("[bastion] Password: ")
+		if err != nil {
+			return nil, fmt.Errorf("Cannot get bastion password: %w", err)
+		}
+		res.Bastion = string(bastionPass)
+	}
+
+	if flags.AskSudoPass {
+		sudoPass, err := p.ask("[sudo] Password: ")
+		if err != nil {
+			return nil, fmt.Errorf("Cannot get sudo password: %w", err)
+		}
+
+		res.Sudo = string(sudoPass)
+	}
+
+	return res, nil
+}
 
 func getHomeDir() (string, error) {
 	home := os.Getenv("HOME")
@@ -694,81 +771,9 @@ func (e *envExtractor) Bool(name string, destination *bool) {
 	*destination = value
 }
 
-func readPrivateKeysFromFlags(flags *Flags, logger log.Logger) ([]AgentPrivateKey, error) {
-	res := make([]AgentPrivateKey, 0, len(flags.PrivateKeysPaths))
-
-	if len(flags.PrivateKeysPaths) == 0 {
-		return res, nil
-	}
-
-	pathToContent := map[string][]byte{}
-
-	var readErr *multierror.Error
-	for _, path := range flags.PrivateKeysPaths {
-		if _, ok := pathToContent[path]; ok {
-			logger.DebugF("Multiple private keys found in %s", path)
-			continue
-		}
-
-		content, err := os.ReadFile(path)
-		if err != nil {
-			readErr = multierror.Append(readErr, fmt.Errorf("cannot read private key file %s: %v", path, err))
-			continue
-		}
-		pathToContent[path] = content
-	}
-
-	if err := readErr.ErrorOrNil(); err != nil {
-		return nil, err
-	}
-
-	var parseErr *multierror.Error
-	for path, content := range pathToContent {
-		_, keysPassword, err := utils.ParseSSHPrivateKey(content, path, utils.NewTerminalPassphraseConsumer(logger, make([]byte, 0)))
-		if err != nil {
-			parseErr = multierror.Append(parseErr, fmt.Errorf("cannot parse private key file %s: %w", path, err))
-			continue
-		}
-
-		res = append(res, AgentPrivateKey{
-			Key:        string(content),
-			Passphrase: keysPassword,
-		})
-	}
-
-	if err := readErr.ErrorOrNil(); err != nil {
-		return nil, err
-	}
-
-	return res, nil
-}
-
 type passwordsFromUser struct {
 	Sudo    string
 	Bastion string
-}
-
-func getPasswordsFromUser(flags *Flags, ask func(string) ([]byte, error)) (*passwordsFromUser, error) {
-	res := &passwordsFromUser{}
-
-	if flags.AskBastionPass {
-		bastionPass, err := ask("[bastion] Password: ")
-		if err != nil {
-			return nil, err
-		}
-		res.Bastion = string(bastionPass)
-	}
-
-	if flags.AskSudoPass {
-		sudoPass, err := ask("[sudo] Password: ")
-		if err != nil {
-			return nil, err
-		}
-
-		res.Sudo = string(sudoPass)
-	}
-
-	return res, nil
 }
 
 func intPtr(i int) *int {

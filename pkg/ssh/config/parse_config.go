@@ -33,39 +33,6 @@ const (
 	sshHostKind   = "SSHHost"
 )
 
-type validateOptions struct {
-	omitDocInError  bool
-	strictUnmarshal bool
-	requiredSSHHost bool
-	noPrettyError   bool
-}
-
-type ValidateOption func(o *validateOptions)
-
-func ParseWithOmitDocInError(v bool) ValidateOption {
-	return func(o *validateOptions) {
-		o.omitDocInError = v
-	}
-}
-
-func ParseWithStrictUnmarshal(v bool) ValidateOption {
-	return func(o *validateOptions) {
-		o.strictUnmarshal = v
-	}
-}
-
-func ParseWithRequiredSSHHost(v bool) ValidateOption {
-	return func(o *validateOptions) {
-		o.requiredSSHHost = v
-	}
-}
-
-func ParseWithNoPrettyError(v bool) ValidateOption {
-	return func(o *validateOptions) {
-		o.noPrettyError = v
-	}
-}
-
 func ParseConnectionConfig(reader io.Reader, sett settings.Settings, opts ...ValidateOption) (*ConnectionConfig, error) {
 	options := &validateOptions{
 		requiredSSHHost: true,

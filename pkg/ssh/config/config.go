@@ -24,8 +24,8 @@ type Host struct {
 }
 
 type Mode struct {
-	ForceLegacy     bool `json:"forceLegacy,omitempty"`
-	ForceModernMode bool `json:"forceModernMode,omitempty"`
+	ForceLegacy     bool `json:"legacyMode,omitempty"`
+	ForceModernMode bool `json:"modernMode,omitempty"`
 }
 
 type Config struct {

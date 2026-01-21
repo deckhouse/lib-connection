@@ -21,8 +21,6 @@ import (
 	"testing"
 	"text/template"
 
-	"github.com/deckhouse/lib-connection/pkg/settings"
-	"github.com/deckhouse/lib-dhctl/pkg/log"
 	"github.com/stretchr/testify/require"
 )
 
@@ -391,43 +389,17 @@ val: 1
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			const isDebug = true
-			sett := settings.NewBaseProviders(settings.ProviderParams{
-				LoggerProvider: log.SimpleLoggerProvider(
-					log.NewInMemoryLoggerWithParent(
-						log.NewPrettyLogger(log.LoggerOptions{IsDebug: isDebug}),
-					),
-				),
-				IsDebug: isDebug,
-			})
+			sett := testSettings()
 
 			cfg, err := ParseConnectionConfig(strings.NewReader(test.input), sett, test.opts...)
 
-			if test.hasErrorContains != "" {
-				require.Error(t, err, "expected error but got none")
-				// show log msg for human observability
-				sett.Logger().ErrorF("%v", err)
-				require.Contains(t, err.Error(), test.hasErrorContains, "error should contain")
-				require.Nil(t, cfg, "cfg should be nil")
-				return
-			}
-
-			require.NoError(t, err, "expected no error but got one")
-
-			if len(cfg.Config.PrivateKeys) > 0 {
-				trimmedKeys := make([]AgentPrivateKey, 0, len(cfg.Config.PrivateKeys))
-
-				for _, key := range cfg.Config.PrivateKeys {
-					trimmedKeys = append(trimmedKeys, AgentPrivateKey{
-						Key:        strings.TrimRight(key.Key, "\n"),
-						Passphrase: key.Passphrase,
-					})
-				}
-
-				cfg.Config.PrivateKeys = trimmedKeys
-			}
-
-			require.Equal(t, test.expected, cfg)
+			assertConnectionConfig(t, connectionConfigAssertParams{
+				hasErrorContains: test.hasErrorContains,
+				err:              err,
+				got:              cfg,
+				expected:         test.expected,
+				logger:           sett.Logger(),
+			})
 		})
 	}
 }
