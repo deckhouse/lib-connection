@@ -371,10 +371,7 @@ func TestParseFlags(t *testing.T) {
 
 		{
 			name: "rewrite from envs",
-			passwords: &passwordsFromUser{
-				Sudo:    RandPassword(10),
-				Bastion: RandPassword(10),
-			},
+
 			arguments: []string{
 				"--ssh-host=192.168.0.1",
 				"--ssh-user=user",
@@ -414,6 +411,67 @@ func TestParseFlags(t *testing.T) {
 				Hosts: []Host{
 					{Host: "192.168.0.2"},
 					{Host: "192.168.0.3"},
+				},
+			},
+		},
+
+		{
+			name: "connection config",
+
+			arguments: []string{},
+
+			before: func(t *testing.T, tst *test, logger log.Logger) {
+				validPrivateKeys := []AgentPrivateKey{
+					{
+						Key:        generateKey(t, "no_secure_password"),
+						Passphrase: "no_secure_password",
+					},
+					{
+						Key: generateKey(t, ""),
+					},
+				}
+
+				config := generateConfigWithKeys(t, validPrivateKeys, `
+sshPort: 2221
+sshUser: ubuntu
+sudoPassword: "not_secure_password"
+sshBastionHost: "127.0.0.1"
+sshBastionPort: 2220
+sshBastionUser: bastion
+legacyMode: true
+sshBastionPassword: "not_secure_password_bastion"
+`, "192.168.0.1", "192.168.0.2")
+
+				path := tst.tmpDir.writeFile(t, config, "connection-config")
+
+				tst.arguments = append(tst.arguments, fmt.Sprintf("--connection-config=%s", path))
+
+				tst.expected.Config.PrivateKeys = validPrivateKeys
+			},
+
+			hasErrorContains: "",
+
+			expected: &ConnectionConfig{
+				Config: &Config{
+					Mode: Mode{
+						ForceLegacy:     true,
+						ForceModernMode: false,
+					},
+					User: "ubuntu",
+					Port: intPtr(2221),
+
+					BastionHost: "127.0.0.1",
+					BastionUser: "bastion",
+					BastionPort: intPtr(2220),
+
+					SudoPassword:    "not_secure_password",
+					BastionPassword: "not_secure_password_bastion",
+
+					// PrivateKeys added in before
+				},
+				Hosts: []Host{
+					{Host: "192.168.0.1"},
+					{Host: "192.168.0.2"},
 				},
 			},
 		},
@@ -552,6 +610,8 @@ func (d *testTmpDir) writeFile(t *testing.T, content string, name string) string
 	path := filepath.Join(d.tmpDir, fmt.Sprintf("%s.%s", name, d.id))
 	err := os.WriteFile(path, []byte(content), 0600)
 	require.NoError(t, err, "write file %s", path)
+
+	d.logger.InfoF("File written: %s", path)
 
 	return path
 }

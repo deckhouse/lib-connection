@@ -1,14 +1,17 @@
 package config
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	mathrand "math/rand"
 	"strings"
 	"testing"
+	"text/template"
 	"time"
 
 	"github.com/deckhouse/lib-dhctl/pkg/log"
@@ -88,6 +91,80 @@ func assertConnectionConfig(t *testing.T, params connectionConfigAssertParams) {
 	}
 
 	require.Equal(t, params.expected, cfg, "config should be equal")
+}
+
+var (
+	testConfigTemplate = `
+apiVersion: dhctl.deckhouse.io/v1
+kind: SSHConfig
+
+{{ .fields }}
+
+{{ if .keys }}
+sshAgentPrivateKeys:
+{{- range .keys }}
+- key: |
+{{ .key | indent 4}}
+  {{- if .passphrase }}
+  passphrase: "{{ .passphrase }}"
+  {{- end }}
+{{- end }}
+{{- else }}
+sshAgentPrivateKeys: []
+{{- end }}
+{{- range .hosts }}
+---
+apiVersion: dhctl.deckhouse.io/v1
+kind: SSHHost
+{{- if . }}
+host: "{{ . }}"
+{{- end }}
+{{- end }}
+`
+
+	testConfigTemplateEngine *template.Template
+)
+
+func generateConfigWithKeys(t *testing.T, keys []AgentPrivateKey, additionalFields string, hosts ...string) string {
+	var keysMap []map[string]string
+	keysJson, err := json.Marshal(keys)
+	require.NoError(t, err)
+	err = json.Unmarshal(keysJson, &keysMap)
+	require.NoError(t, err)
+
+	if additionalFields == "" {
+		additionalFields = `
+sshPort: 22
+sshUser: ubuntu
+`
+	}
+
+	if len(hosts) == 0 {
+		hosts = make([]string, 0)
+	}
+
+	var tpl bytes.Buffer
+	err = testConfigTemplateEngine.Execute(&tpl, map[string]any{
+		"keys":   keysMap,
+		"fields": additionalFields,
+		"hosts":  hosts,
+	})
+	require.NoError(t, err, "error executing template")
+	return strings.TrimRight(tpl.String(), "\n")
+}
+
+func init() {
+	var err error
+	testConfigTemplateEngine, err = template.New("test_connection_config").Funcs(template.FuncMap{
+		"indent": func(spaces int, v string) string {
+			pad := strings.Repeat(" ", spaces)
+			return pad + strings.Replace(v, "\n", "\n"+pad, -1)
+		},
+	}).Parse(testConfigTemplate)
+
+	if err != nil {
+		panic(err)
+	}
 }
 
 // TODO move to test helpers packet

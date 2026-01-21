@@ -15,79 +15,11 @@
 package config
 
 import (
-	"bytes"
-	"encoding/json"
 	"strings"
 	"testing"
-	"text/template"
-
-	"github.com/stretchr/testify/require"
 )
 
 func TestParseConfig(t *testing.T) {
-	testConfigTemplate := `
-apiVersion: dhctl.deckhouse.io/v1
-kind: SSHConfig
-
-{{ .fields }}
-
-{{ if .keys }}
-sshAgentPrivateKeys:
-{{- range .keys }}
-- key: |
-{{ .key | indent 4}}
-  {{- if .passphrase }}
-  passphrase: "{{ .passphrase }}"
-  {{- end }}
-{{- end }}
-{{- else }}
-sshAgentPrivateKeys: []
-{{- end }}
-{{- range .hosts }}
----
-apiVersion: dhctl.deckhouse.io/v1
-kind: SSHHost
-{{- if . }}
-host: "{{ . }}"
-{{- end }}
-{{- end }}
-`
-	testConfigTemplateEngine, err := template.New("test_key").Funcs(template.FuncMap{
-		"indent": func(spaces int, v string) string {
-			pad := strings.Repeat(" ", spaces)
-			return pad + strings.Replace(v, "\n", "\n"+pad, -1)
-		},
-	}).Parse(testConfigTemplate)
-	require.NoError(t, err, "error parsing template")
-
-	generateConfigWithKeys := func(t *testing.T, keys []AgentPrivateKey, additionalFields string, hosts ...string) string {
-		var keysMap []map[string]string
-		keysJson, err := json.Marshal(keys)
-		require.NoError(t, err)
-		err = json.Unmarshal(keysJson, &keysMap)
-		require.NoError(t, err)
-
-		if additionalFields == "" {
-			additionalFields = `
-sshPort: 22
-sshUser: ubuntu
-`
-		}
-
-		if len(hosts) == 0 {
-			hosts = make([]string, 0)
-		}
-
-		var tpl bytes.Buffer
-		err = testConfigTemplateEngine.Execute(&tpl, map[string]any{
-			"keys":   keysMap,
-			"fields": additionalFields,
-			"hosts":  hosts,
-		})
-		require.NoError(t, err, "error executing template")
-		return strings.TrimRight(tpl.String(), "\n")
-	}
-
 	noRequiredHostsOpts := []ValidateOption{
 		ParseWithRequiredSSHHost(false),
 	}
