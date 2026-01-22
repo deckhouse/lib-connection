@@ -23,9 +23,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/deckhouse/lib-connection/pkg/settings"
 	"github.com/stretchr/testify/require"
 
+	"github.com/deckhouse/lib-connection/pkg/settings"
 	sshtesting "github.com/deckhouse/lib-connection/pkg/ssh/gossh/testing"
 )
 
@@ -431,7 +431,6 @@ func TestSSHFileDownloadBytes(t *testing.T) {
 					// out contains a contant of uploaded file, should be equal to testFile contant
 					require.Equal(t, expectedFileContent, string(bytes))
 				}
-
 			})
 		}
 	})

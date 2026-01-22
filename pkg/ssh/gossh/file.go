@@ -27,10 +27,11 @@ import (
 	"sync"
 
 	"github.com/bramvdbogaerde/go-scp"
-	"github.com/deckhouse/lib-connection/pkg/settings"
 	"github.com/deckhouse/lib-dhctl/pkg/log"
 	gossh "github.com/deckhouse/lib-gossh"
 	"github.com/google/uuid"
+
+	"github.com/deckhouse/lib-connection/pkg/settings"
 )
 
 type SSHFile struct {
@@ -168,7 +169,10 @@ func (f *SSHFile) Download(ctx context.Context, remotePath, dstPath string) erro
 		re := regexp.MustCompile(`\s+`)
 		files := re.Split(filesString, -1)
 		for _, file := range files {
-			f.Download(ctx, remotePath+"/"+file, dstPath+"/"+file)
+			err = f.Download(ctx, remotePath+"/"+file, dstPath+"/"+file)
+			if err != nil {
+				return err
+			}
 		}
 	}
 
@@ -403,7 +407,6 @@ func wait(wg *sync.WaitGroup, ctx context.Context) error {
 }
 
 func CopyFromRemote(ctx context.Context, file *os.File, remotePath string, sshClient *gossh.Client) error {
-
 	session, err := sshClient.NewSession()
 	if err != nil {
 		return fmt.Errorf("Error creating ssh session in copy from remote: %v", err)

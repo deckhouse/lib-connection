@@ -25,10 +25,10 @@ import (
 	"time"
 
 	"al.essio.dev/pkg/shellescape"
-	"github.com/deckhouse/lib-connection/pkg/settings"
 	"github.com/deckhouse/lib-dhctl/pkg/log"
 	gossh "github.com/deckhouse/lib-gossh"
 
+	"github.com/deckhouse/lib-connection/pkg/settings"
 	"github.com/deckhouse/lib-connection/pkg/ssh/utils"
 	"github.com/deckhouse/lib-connection/pkg/ssh/utils/tar"
 )
@@ -105,14 +105,14 @@ func (u *SSHUploadScript) WithExecuteUploadDir(dir string) {
 	u.uploadDir = dir
 }
 
-func (u *SSHUploadScript) Execute(ctx context.Context) (stdout []byte, err error) {
+func (u *SSHUploadScript) Execute(ctx context.Context) ([]byte, error) {
 	logger := u.sshClient.settings.Logger()
 
 	scriptName := filepath.Base(u.ScriptPath)
 
 	remotePath := utils.ExecuteRemoteScriptPath(u, scriptName, false)
 	logger.DebugF("Uploading script %s to %s\n", u.ScriptPath, remotePath)
-	err = NewSSHFile(u.sshClient.settings, u.sshClient.sshClient).Upload(ctx, u.ScriptPath, remotePath)
+	err := NewSSHFile(u.sshClient.settings, u.sshClient.sshClient).Upload(ctx, u.ScriptPath, remotePath)
 	if err != nil {
 		return nil, fmt.Errorf("upload: %v", err)
 	}
@@ -180,23 +180,23 @@ func (u *SSHUploadScript) pathWithEnv(path string) string {
 
 var ErrBashibleTimeout = errors.New("Timeout bashible step running")
 
-func (u *SSHUploadScript) ExecuteBundle(ctx context.Context, parentDir, bundleDir string) (stdout []byte, err error) {
+func (u *SSHUploadScript) ExecuteBundle(ctx context.Context, parentDir, bundleDir string) ([]byte, error) {
 	logger := u.sshClient.settings.Logger()
 
 	bundleName := fmt.Sprintf("bundle-%s.tar", time.Now().Format("20060102-150405"))
 	bundleLocalFilepath := filepath.Join(u.sshClient.settings.TmpDir(), bundleName)
 
 	// tar cpf bundle.tar -C /tmp/dhctl.1231qd23/var/lib bashible
-	err = tar.CreateTar(bundleLocalFilepath, parentDir, bundleDir)
+	err := tar.CreateTar(bundleLocalFilepath, parentDir, bundleDir)
 	if err != nil {
 		return nil, fmt.Errorf("tar bundle: %v", err)
 	}
 
 	// todo
-	//tomb.RegisterOnShutdown(
+	// tomb.RegisterOnShutdown(
 	//	"Delete bashible bundle folder",
 	//	func() { _ = os.Remove(bundleLocalFilepath) },
-	//)
+	// )
 
 	// upload to node's deckhouse tmp directory
 	err = NewSSHFile(u.sshClient.settings, u.sshClient.sshClient).

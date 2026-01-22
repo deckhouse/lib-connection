@@ -46,7 +46,7 @@ func NewScript(sett settings.Settings, path string, args ...string) *Script {
 	}
 }
 
-func (s *Script) Execute(ctx context.Context) (stdout []byte, err error) {
+func (s *Script) Execute(ctx context.Context) ([]byte, error) {
 	cmd := NewCommand(s.settings, s.scriptPath, s.args...)
 	if s.sudo {
 		cmd.Sudo(ctx)
@@ -66,24 +66,24 @@ func (s *Script) Execute(ctx context.Context) (stdout []byte, err error) {
 		defer os.Remove(cmd.program)
 	}
 
-	err = cmd.Run(ctx)
+	err := cmd.Run(ctx)
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			exitErr.Stderr = cmd.StderrBytes()
 		}
 
-		err = fmt.Errorf("Execute locally failed: %w", err)
+		return nil, fmt.Errorf("Execute locally failed: %w", err)
 	}
 
 	return cmd.StdoutBytes(), nil
 }
 
-func (s *Script) ExecuteBundle(ctx context.Context, parentDir, bundleDir string) (stdout []byte, err error) {
+func (s *Script) ExecuteBundle(ctx context.Context, parentDir, bundleDir string) ([]byte, error) {
 	srcPath := filepath.Join(parentDir, bundleDir)
 	dstPath := filepath.Join("/var/lib/", bundleDir)
 	_ = os.RemoveAll(dstPath) // Cleanup from previous runs
-	if err = copyRecursively(srcPath, dstPath); err != nil {
+	if err := copyRecursively(srcPath, dstPath); err != nil {
 		return nil, fmt.Errorf("copy bundle to /var/lib/%s: %w", bundleDir, err)
 	}
 
@@ -101,7 +101,7 @@ func (s *Script) ExecuteBundle(ctx context.Context, parentDir, bundleDir string)
 		cmd.Sudo(ctx)
 	}
 
-	if err = cmd.Run(ctx); err != nil {
+	if err := cmd.Run(ctx); err != nil {
 		s.settings.Logger().DebugF("Execute bundle failed: stdout: %s\n\nstderr: %s\n", cmd.StdoutBytes(), cmd.StderrBytes())
 		return nil, fmt.Errorf("Execute bundle failed: %w", err)
 	}

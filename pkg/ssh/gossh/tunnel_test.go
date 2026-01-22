@@ -163,10 +163,8 @@ done`, remoteServerPort)
 			m, ok := <-errChan
 			if !ok {
 				msg = "monitor channel closed"
-			} else {
-				if m != nil {
-					msg = m.Error()
-				}
+			} else if m != nil {
+				msg = m.Error()
 			}
 
 			require.Contains(t, msg, fmt.Sprintf("Cannot dial to %s", remoteStr), "got: '%s'", msg)

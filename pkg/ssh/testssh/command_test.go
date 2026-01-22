@@ -19,12 +19,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/deckhouse/lib-connection/pkg"
 	"github.com/deckhouse/lib-connection/pkg/ssh/clissh"
 	"github.com/deckhouse/lib-connection/pkg/ssh/gossh"
 	sshtesting "github.com/deckhouse/lib-connection/pkg/ssh/gossh/testing"
 	"github.com/deckhouse/lib-connection/pkg/ssh/session"
-	"github.com/stretchr/testify/require"
 )
 
 func TestCommandOutput(t *testing.T) {
@@ -76,11 +77,11 @@ func TestCommandOutput(t *testing.T) {
 					defer cancel2()
 				}
 				sshSettings := sshtesting.CreateDefaultTestSettings(test)
-				goSshClient, err := initBothClients(t, ctx, sshSettings, sess, keys)
+				goSSHClient, err := initBothClients(t, ctx, sshSettings, sess, keys)
 				require.NoError(t, err)
 
 				var gocmd, clicmd pkg.Command
-				gocmd = gossh.NewSSHCommand(goSshClient.(*gossh.Client), c.command, c.args...)
+				gocmd = gossh.NewSSHCommand(goSSHClient.(*gossh.Client), c.command, c.args...)
 				clicmd = clissh.NewCommand(sshSettings, sess, c.command, c.args...)
 
 				goout, _, err := gocmd.Output(ctx)
@@ -152,11 +153,11 @@ func TestCommandCombinedOutput(t *testing.T) {
 					defer cancel2()
 				}
 				sshSettings := sshtesting.CreateTestSettingNoDebug(test)
-				goSshClient, err := initBothClients(t, ctx, sshSettings, sess, keys)
+				goSSHClient, err := initBothClients(t, ctx, sshSettings, sess, keys)
 				require.NoError(t, err)
 
 				var gocmd, clicmd pkg.Command
-				gocmd = gossh.NewSSHCommand(goSshClient.(*gossh.Client), c.command, c.args...)
+				gocmd = gossh.NewSSHCommand(goSSHClient.(*gossh.Client), c.command, c.args...)
 				clicmd = clissh.NewCommand(sshSettings, sess, c.command, c.args...)
 				gocombined, err := gocmd.CombinedOutput(ctx)
 				clicombined, err2 := clicmd.CombinedOutput(ctx2)
@@ -255,11 +256,11 @@ func TestCommandRun(t *testing.T) {
 					defer cancel2()
 				}
 				sshSettings := sshtesting.CreateDefaultTestSettings(test)
-				goSshClient, err := initBothClients(t, ctx, sshSettings, sess, keys)
+				goSSHClient, err := initBothClients(t, ctx, sshSettings, sess, keys)
 				require.NoError(t, err)
 
 				var gocmd, clicmd pkg.Command
-				gocmd = gossh.NewSSHCommand(goSshClient.(*gossh.Client), c.command, c.args...)
+				gocmd = gossh.NewSSHCommand(goSSHClient.(*gossh.Client), c.command, c.args...)
 				clicmd = clissh.NewCommand(sshSettings, sess, c.command, c.args...)
 				clicmd.Cmd(ctx2)
 				if c.prepareFunc != nil {
@@ -287,7 +288,7 @@ func TestCommandRun(t *testing.T) {
 
 				// second run for context after deadline exceeded
 				if c.timeout != emptyDuration {
-					gocmd2 := gossh.NewSSHCommand(goSshClient.(*gossh.Client), c.command, c.args...)
+					gocmd2 := gossh.NewSSHCommand(goSSHClient.(*gossh.Client), c.command, c.args...)
 					clicmd2 := clissh.NewCommand(sshSettings, sess, c.command, c.args...)
 					clicmd2.Cmd(ctx2)
 					if c.prepareFunc != nil {
@@ -307,7 +308,6 @@ func TestCommandRun(t *testing.T) {
 					require.Contains(t, err.Error(), "context deadline exceeded")
 					require.Error(t, err2)
 					require.Contains(t, err2.Error(), "context deadline exceeded")
-
 				}
 			})
 		}
@@ -396,11 +396,11 @@ func TestCommandSudoRun(t *testing.T) {
 					defer cancel2()
 				}
 				sshSettings := sshtesting.CreateDefaultTestSettings(test)
-				goSshClient, err := initBothClients(t, ctx, sshSettings, c.settings, c.keys)
+				goSSHClient, err := initBothClients(t, ctx, sshSettings, c.settings, c.keys)
 				require.NoError(t, err)
 
 				var gocmd, clicmd pkg.Command
-				gocmd = gossh.NewSSHCommand(goSshClient.(*gossh.Client), c.command, c.args...)
+				gocmd = gossh.NewSSHCommand(goSSHClient.(*gossh.Client), c.command, c.args...)
 				clicmd = clissh.NewCommand(sshSettings, c.settings, c.command, c.args...)
 				clicmd.Cmd(ctx2)
 

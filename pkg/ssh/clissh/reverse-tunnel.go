@@ -23,11 +23,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/deckhouse/lib-dhctl/pkg/retry"
+
 	connection "github.com/deckhouse/lib-connection/pkg"
 	"github.com/deckhouse/lib-connection/pkg/settings"
 	"github.com/deckhouse/lib-connection/pkg/ssh/clissh/cmd"
 	"github.com/deckhouse/lib-connection/pkg/ssh/session"
-	"github.com/deckhouse/lib-dhctl/pkg/retry"
 )
 
 type tunnelWaitResult struct {
@@ -146,7 +147,6 @@ func (t *ReverseTunnel) StartHealthMonitor(ctx context.Context, checker connecti
 	logger := t.settings.Logger()
 
 	checkReverseTunnel := func(id int) bool {
-
 		logger.DebugF("[%d] Start Check reverse tunnel\n", id)
 
 		err := retry.NewSilentLoop("Check reverse tunnel", 2, 2*time.Second).RunContext(ctx, func() error {

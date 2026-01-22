@@ -22,10 +22,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/deckhouse/lib-dhctl/pkg/retry"
+
 	ssh "github.com/deckhouse/lib-connection/pkg"
 	"github.com/deckhouse/lib-connection/pkg/settings"
 	"github.com/deckhouse/lib-connection/pkg/ssh/session"
-	"github.com/deckhouse/lib-dhctl/pkg/retry"
 )
 
 var defaultAvailabilityOpts = []retry.ParamsBuilderOpt{

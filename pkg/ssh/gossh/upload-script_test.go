@@ -128,7 +128,6 @@ fi
 			})
 		}
 	})
-
 }
 
 func TestUploadScriptExecuteBundle(t *testing.T) {

@@ -18,15 +18,16 @@ import (
 	"context"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/deckhouse/lib-connection/pkg"
 	sshtesting "github.com/deckhouse/lib-connection/pkg/ssh/gossh/testing"
-	"github.com/stretchr/testify/require"
 )
 
 func TestUploadScriptExecute(t *testing.T) {
 	test := sshtesting.ShouldNewTest(t, "TestUploadScriptExecute")
 
-	goSshClient, cliSshClient, _, err := startTwoContainersWithClients(t, test, true)
+	goSSHClient, cliSSHClient, _, err := startTwoContainersWithClients(t, test, true)
 	require.NoError(t, err)
 	prepareScp(t)
 
@@ -97,10 +98,10 @@ fi
 		for _, c := range cases {
 			t.Run(c.title, func(t *testing.T) {
 				var s, s2 pkg.Script
-				s = goSshClient.UploadScript(c.scriptPath, c.scriptArgs...)
+				s = goSSHClient.UploadScript(c.scriptPath, c.scriptArgs...)
 				s.WithCleanupAfterExec(true)
 
-				s2 = cliSshClient.UploadScript(c.scriptPath, c.scriptArgs...)
+				s2 = cliSSHClient.UploadScript(c.scriptPath, c.scriptArgs...)
 				s2.WithCleanupAfterExec(true)
 
 				if c.wantSudo {
@@ -129,13 +130,12 @@ fi
 			})
 		}
 	})
-
 }
 
 func TestUploadScriptExecuteBundle(t *testing.T) {
 	test := sshtesting.ShouldNewTest(t, "TestUploadScriptExecuteBundle")
 
-	goSshClient, cliSshClient, _, err := startTwoContainersWithClients(t, test, true)
+	goSSHClient, cliSSHClient, _, err := startTwoContainersWithClients(t, test, true)
 	require.NoError(t, err)
 	prepareScp(t)
 
@@ -184,11 +184,11 @@ func TestUploadScriptExecuteBundle(t *testing.T) {
 				parentDir:  testDir,
 				bundleDir:  "bashible",
 				prepareFunc: func() error {
-					err := chmodTmpDir(goSshClient, nodeTmpPath)
+					err := chmodTmpDir(goSSHClient, nodeTmpPath)
 					if err != nil {
 						return err
 					}
-					return chmodTmpDir(cliSshClient, nodeTmpPath)
+					return chmodTmpDir(cliSSHClient, nodeTmpPath)
 				},
 				wantErr: true,
 			},
@@ -196,8 +196,8 @@ func TestUploadScriptExecuteBundle(t *testing.T) {
 
 		for _, c := range cases {
 			t.Run(c.title, func(t *testing.T) {
-				s := goSshClient.UploadScript(entrypoint, c.scriptArgs...)
-				s2 := cliSshClient.UploadScript(entrypoint, c.scriptArgs...)
+				s := goSSHClient.UploadScript(entrypoint, c.scriptArgs...)
+				s2 := cliSSHClient.UploadScript(entrypoint, c.scriptArgs...)
 				if c.prepareFunc != nil {
 					err = c.prepareFunc()
 					require.NoError(t, err)

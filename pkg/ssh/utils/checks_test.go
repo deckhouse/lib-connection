@@ -145,7 +145,6 @@ func TestSSHHostChecks(t *testing.T) {
 					"master-0": passedHosts[0].Host,
 				}, "nodes name must be the same")
 			})
-
 		})
 	})
 }

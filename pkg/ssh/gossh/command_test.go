@@ -417,7 +417,6 @@ func TestCommandRun(t *testing.T) {
 					// command should fail to run
 					require.Error(t, err)
 					require.Contains(t, err.Error(), "context deadline exceeded")
-
 				}
 				sshClient.Stop()
 			})

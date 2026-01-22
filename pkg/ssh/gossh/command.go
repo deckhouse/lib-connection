@@ -546,7 +546,7 @@ func (c *SSHCommand) CaptureStderr(buf *bytes.Buffer) *SSHCommand {
 	return c
 }
 
-func (c *SSHCommand) SetupStreamHandlers() (err error) {
+func (c *SSHCommand) SetupStreamHandlers() error {
 	// stderr goes to console (commented because ssh writes only "Connection closed" messages to stderr)
 	// c.Cmd.Stderr = os.Stderr
 	// connect console's stdin
@@ -557,9 +557,10 @@ func (c *SSHCommand) SetupStreamHandlers() (err error) {
 		c.session.Stdout = os.Stdout
 		c.session.Stdout = &c.OutBytes
 		c.session.Stderr = &c.ErrBytes
-		return
+		return nil
 	}
 
+	var err error
 	var stdoutHandlerWritePipe *os.File
 	var stdoutHandlerReadPipe *os.File
 	if c.out != nil || c.stdoutHandler != nil || len(c.Matchers) > 0 {
@@ -588,7 +589,6 @@ func (c *SSHCommand) SetupStreamHandlers() (err error) {
 	var stderrHandlerWritePipe *os.File
 	var stderrHandlerReadPipe *os.File
 	if c.err != nil || c.stderrHandler != nil || len(c.Matchers) > 0 {
-
 		if c.err == nil {
 			c.err = new(bytes.Buffer)
 		}
@@ -627,7 +627,7 @@ func (c *SSHCommand) SetupStreamHandlers() (err error) {
 		c.readFromStreams(c.stdoutPipeFile, stdoutHandlerWritePipe, false)
 	}()
 
-	// sudo hack, becouse of password prompt is sent to STDERR, not STDOUT
+	// sudo hack, because of password prompt is sent to STDERR, not STDOUT
 	go func() {
 		c.readFromStreams(c.stderrPipeFile, stdoutHandlerWritePipe, true)
 	}()
@@ -739,18 +739,18 @@ func (c *SSHCommand) readFromStreams(stdoutReadPipe io.Reader, stdoutHandlerWrit
 		}
 		// TODO logboek
 		if c.sshClient.settings.IsDebug() {
-			os.Stdout.Write(buf[m:n])
+			_, _ = os.Stdout.Write(buf[m:n])
 		}
 		if c.out != nil && !isError {
-			c.out.Write(buf[:n])
+			_, _ = c.out.Write(buf[:n])
 		}
 
 		if c.err != nil && isError {
-			c.err.Write(buf[:n])
+			_, _ = c.err.Write(buf[:n])
 		}
 
 		if c.combined != nil {
-			c.combined.Write(buf[:n])
+			_, _ = c.combined.Write(buf[:n])
 		}
 		if c.stdoutHandler != nil {
 			_, _ = stdoutHandlerWritePipe.Write(buf[m:n])
@@ -804,9 +804,9 @@ func (c *SSHCommand) Stop() {
 	}
 	c.logDebugF("Stopped")
 	c.logDebugF("Sending SIGINT...")
-	c.session.Signal(gossh.SIGINT)
+	_ = c.session.Signal(gossh.SIGINT)
 	c.logDebugF("Signal SIGINT sent")
-	c.session.Signal(gossh.SIGKILL)
+	_ = c.session.Signal(gossh.SIGKILL)
 }
 
 func (c *SSHCommand) setWaitError(err error) {

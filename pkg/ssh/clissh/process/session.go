@@ -55,7 +55,7 @@ func (s *Session) Stop() {
 			s.Stop()
 		}(stopable)
 	}
-	//log.DebugF("Wait while %d processes stops\n", count)
+	// log.DebugF("Wait while %d processes stops\n", count)
 	wg.Wait()
 }
 

@@ -23,9 +23,10 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/deckhouse/lib-connection/pkg/ssh/gossh"
 	sshtesting "github.com/deckhouse/lib-connection/pkg/ssh/gossh/testing"
-	"github.com/stretchr/testify/require"
 )
 
 func TestFileUpload(t *testing.T) {
@@ -54,7 +55,7 @@ func TestFileUpload(t *testing.T) {
 	test.MustCreateUnaccessibleDir(t, unaccessibleDirectoryName)
 	unaccessibleDirectoryPath := filepath.Join(test.TmpDir(), unaccessibleDirectoryName)
 
-	goSshClient, cliSshClient, goSshClient2, err := startTwoContainersWithClients(t, test, false)
+	goSSHClient, cliSSHClient, goSSHClient2, err := startTwoContainersWithClients(t, test, false)
 	require.NoError(t, err)
 
 	prepareScp(t)
@@ -138,8 +139,8 @@ func TestFileUpload(t *testing.T) {
 
 		for _, c := range cases {
 			t.Run(c.title, func(t *testing.T) {
-				f := goSshClient.File()
-				f2 := cliSshClient.File()
+				f := goSSHClient.File()
+				f2 := cliSSHClient.File()
 				err = f.Upload(context.Background(), c.srcPath, c.dstPath)
 				err2 := f2.Upload(context.Background(), c.srcPath, c.dstPath)
 				if !c.wantErr {
@@ -156,27 +157,27 @@ func TestFileUpload(t *testing.T) {
 	})
 
 	t.Run("Equality of uploaded and local file content", func(t *testing.T) {
-		f := goSshClient.File()
+		f := goSSHClient.File()
 		err := f.Upload(context.Background(), testFile, "/tmp/testfile.txt")
 		// testFile contains "Hello world" string
 		require.NoError(t, err)
 
-		assertFilesViaRemoteRun(t, goSshClient.(*gossh.Client), "cat /tmp/testfile.txt", testFileContent)
+		assertFilesViaRemoteRun(t, goSSHClient.(*gossh.Client), "cat /tmp/testfile.txt", testFileContent)
 
 		// clissh check
-		f = cliSshClient.File()
+		f = cliSSHClient.File()
 		err = f.Upload(context.Background(), testFile, "/tmp/testfile.txt")
 		require.NoError(t, err)
 
-		err = goSshClient2.Start()
+		err = goSSHClient2.Start()
 		require.NoError(t, err)
-		registerStopClient(t, goSshClient2)
+		registerStopClient(t, goSSHClient2)
 
-		assertFilesViaRemoteRun(t, goSshClient2.(*gossh.Client), "cat /tmp/testfile.txt", testFileContent)
+		assertFilesViaRemoteRun(t, goSSHClient2.(*gossh.Client), "cat /tmp/testfile.txt", testFileContent)
 	})
 
 	t.Run("Equality of uploaded and local directory", func(t *testing.T) {
-		f := goSshClient.File()
+		f := goSSHClient.File()
 		err := f.Upload(context.Background(), testDir, "/tmp/upload")
 		require.NoError(t, err)
 
@@ -184,63 +185,63 @@ func TestFileUpload(t *testing.T) {
 		lsResult, err := cmd.Output()
 		require.NoError(t, err)
 
-		assertFilesViaRemoteRun(t, goSshClient.(*gossh.Client), "ls /tmp/upload", string(lsResult))
+		assertFilesViaRemoteRun(t, goSSHClient.(*gossh.Client), "ls /tmp/upload", string(lsResult))
 
 		// clissh
-		f = cliSshClient.File()
+		f = cliSSHClient.File()
 		err = f.Upload(context.Background(), testDir, "/tmp/upload")
 		require.NoError(t, err)
 
-		err = goSshClient2.Start()
+		err = goSSHClient2.Start()
 		require.NoError(t, err)
-		registerStopClient(t, goSshClient2)
+		registerStopClient(t, goSSHClient2)
 
-		assertFilesViaRemoteRun(t, goSshClient2.(*gossh.Client), "ls /tmp/upload", string(lsResult))
+		assertFilesViaRemoteRun(t, goSSHClient2.(*gossh.Client), "ls /tmp/upload", string(lsResult))
 	})
 }
 
 func TestFileUploadBytes(t *testing.T) {
 	test := sshtesting.ShouldNewTest(t, "TestSSHFileUploadBytes")
 
-	goSshClient, cliSshClient, goSshClient2, err := startTwoContainersWithClients(t, test, false)
+	goSSHClient, cliSSHClient, goSSHClient2, err := startTwoContainersWithClients(t, test, false)
 	require.NoError(t, err)
 
 	prepareScp(t)
-	err = os.MkdirAll(goSshClient.(*gossh.Client).Settings().TmpDir(), 0o777)
+	err = os.MkdirAll(goSSHClient.(*gossh.Client).Settings().TmpDir(), 0o777)
 	require.NoError(t, err)
 
 	t.Run("Upload bytes", func(t *testing.T) {
 		const content = "Hello world"
-		f := goSshClient.File()
+		f := goSSHClient.File()
 		err := f.UploadBytes(context.Background(), []byte(content), "/tmp/testfile.txt")
 		require.NoError(t, err)
 
-		assertFilesViaRemoteRun(t, goSshClient.(*gossh.Client), "cat /tmp/testfile.txt", content)
+		assertFilesViaRemoteRun(t, goSSHClient.(*gossh.Client), "cat /tmp/testfile.txt", content)
 
 		// clissh
-		f = cliSshClient.File()
+		f = cliSSHClient.File()
 		err = f.UploadBytes(context.Background(), []byte(content), "/tmp/testfile.txt")
 		require.NoError(t, err)
 
-		err = goSshClient2.Start()
+		err = goSSHClient2.Start()
 		require.NoError(t, err)
-		registerStopClient(t, goSshClient2)
+		registerStopClient(t, goSSHClient2)
 
-		assertFilesViaRemoteRun(t, goSshClient2.(*gossh.Client), "cat /tmp/testfile.txt", content)
+		assertFilesViaRemoteRun(t, goSSHClient2.(*gossh.Client), "cat /tmp/testfile.txt", content)
 	})
 }
 
 func TestFileDownload(t *testing.T) {
 	test := sshtesting.ShouldNewTest(t, "TestSSHFileDownload")
 
-	goSshClient, cliSshClient, goSshClient2, err := startTwoContainersWithClients(t, test, false)
+	goSSHClient, cliSSHClient, goSSHClient2, err := startTwoContainersWithClients(t, test, false)
 	require.NoError(t, err)
 
 	prepareScp(t)
 
 	// preparing some test related data
-	mustPrepareData(t, goSshClient)
-	mustPrepareData(t, cliSshClient)
+	mustPrepareData(t, goSSHClient)
+	mustPrepareData(t, cliSSHClient)
 
 	t.Run("Download files and directories to container via existing ssh client", func(t *testing.T) {
 		testDir := test.MustMkSubDirs(t, "download")
@@ -329,7 +330,7 @@ func TestFileDownload(t *testing.T) {
 				os.RemoveAll(testDir)
 				testDir = test.MustMkSubDirs(t, "download")
 				// do test
-				f := goSshClient.File()
+				f := goSSHClient.File()
 				err = f.Download(context.Background(), c.srcPath, c.dstPath)
 				if c.wantErr {
 					require.Error(t, err)
@@ -345,7 +346,7 @@ func TestFileDownload(t *testing.T) {
 				// cleanup and download via clissh, then do the check again
 				err = os.RemoveAll(c.dstPath)
 				require.NoError(t, err)
-				f = cliSshClient.File()
+				f = cliSSHClient.File()
 				err = f.Download(context.Background(), c.srcPath, c.dstPath)
 				if c.wantErr {
 					require.Error(t, err)
@@ -364,7 +365,7 @@ func TestFileDownload(t *testing.T) {
 	t.Run("Equality of downloaded and remote file content", func(t *testing.T) {
 		downloadContentDir := test.MustMkSubDirs(t, "download_content")
 
-		f := goSshClient.File()
+		f := goSSHClient.File()
 
 		dstPath := path.Join(downloadContentDir, "testfile.txt")
 
@@ -374,7 +375,7 @@ func TestFileDownload(t *testing.T) {
 		downloadedContent, err := os.ReadFile(dstPath)
 		require.NoError(t, err)
 
-		assertFilesViaRemoteRun(t, goSshClient.(*gossh.Client), "cat /tmp/testdata/first", string(downloadedContent))
+		assertFilesViaRemoteRun(t, goSSHClient.(*gossh.Client), "cat /tmp/testdata/first", string(downloadedContent))
 
 		// out contains a contant of uploaded file, should be equal to testFile contant
 		require.Equal(t, expectedFileContent, string(downloadedContent))
@@ -383,25 +384,25 @@ func TestFileDownload(t *testing.T) {
 		err = os.Remove(dstPath)
 		require.NoError(t, err)
 
-		f = cliSshClient.File()
+		f = cliSSHClient.File()
 		err = f.Download(context.Background(), "/tmp/testdata/first", dstPath)
 		// /tmp/testdata/first contains "Some test data" string
 		require.NoError(t, err)
 		downloadedContent, err = os.ReadFile(dstPath)
 		require.NoError(t, err)
 
-		err = goSshClient2.Start()
+		err = goSSHClient2.Start()
 		require.NoError(t, err)
-		registerStopClient(t, goSshClient2)
+		registerStopClient(t, goSSHClient2)
 
-		assertFilesViaRemoteRun(t, goSshClient2.(*gossh.Client), "cat /tmp/testdata/first", string(downloadedContent))
+		assertFilesViaRemoteRun(t, goSSHClient2.(*gossh.Client), "cat /tmp/testdata/first", string(downloadedContent))
 		require.Equal(t, expectedFileContent, string(downloadedContent))
 	})
 
 	t.Run("Equality of downloaded and remote directory", func(t *testing.T) {
 		downloadWholeDirDir := test.MustMkSubDirs(t, "download_dir")
 
-		f := goSshClient.File()
+		f := goSSHClient.File()
 		err = f.Download(context.Background(), "/tmp/testdata", downloadWholeDirDir)
 		require.NoError(t, err)
 
@@ -409,13 +410,13 @@ func TestFileDownload(t *testing.T) {
 		lsResult, err := cmd.Output()
 		require.NoError(t, err)
 
-		assertFilesViaRemoteRun(t, goSshClient.(*gossh.Client), "ls /tmp/testdata/", string(lsResult))
+		assertFilesViaRemoteRun(t, goSSHClient.(*gossh.Client), "ls /tmp/testdata/", string(lsResult))
 
 		// cleanup and download via clissh, then do the check again
 		err = os.RemoveAll(downloadWholeDirDir)
 		require.NoError(t, err)
 
-		f = cliSshClient.File()
+		f = cliSSHClient.File()
 		err = f.Download(context.Background(), "/tmp/testdata", downloadWholeDirDir)
 		require.NoError(t, err)
 
@@ -424,18 +425,18 @@ func TestFileDownload(t *testing.T) {
 		test.Logger.InfoLn(string(lsResult))
 		require.NoError(t, err)
 
-		err = goSshClient2.Start()
+		err = goSSHClient2.Start()
 		require.NoError(t, err)
-		registerStopClient(t, goSshClient2)
+		registerStopClient(t, goSSHClient2)
 
-		assertFilesViaRemoteRun(t, goSshClient2.(*gossh.Client), "ls /tmp/testdata/", string(lsResult))
+		assertFilesViaRemoteRun(t, goSSHClient2.(*gossh.Client), "ls /tmp/testdata/", string(lsResult))
 	})
 }
 
 func TestFileDownloadBytes(t *testing.T) {
 	test := sshtesting.ShouldNewTest(t, "TestSSHFileDownloadBytes")
 
-	goSshClient, cliSshClient, _, err := startTwoContainersWithClients(t, test, false)
+	goSSHClient, cliSSHClient, _, err := startTwoContainersWithClients(t, test, false)
 	require.NoError(t, err)
 
 	prepareScp(t)
@@ -443,9 +444,9 @@ func TestFileDownloadBytes(t *testing.T) {
 	const expectedFileContent = "Some test data"
 
 	// preparing file to download
-	err = goSshClient.Command(fmt.Sprintf(`echo -n '%s' > /tmp/testfile`, expectedFileContent)).Run(context.Background())
+	err = goSSHClient.Command(fmt.Sprintf(`echo -n '%s' > /tmp/testfile`, expectedFileContent)).Run(context.Background())
 	require.NoError(t, err)
-	err = cliSshClient.Command(fmt.Sprintf(`echo -n '%s' > /tmp/testfile`, expectedFileContent)).Run(context.Background())
+	err = cliSSHClient.Command(fmt.Sprintf(`echo -n '%s' > /tmp/testfile`, expectedFileContent)).Run(context.Background())
 	require.NoError(t, err)
 
 	t.Run("Download bytes", func(t *testing.T) {
@@ -468,9 +469,9 @@ func TestFileDownloadBytes(t *testing.T) {
 
 		for _, c := range cases {
 			t.Run(c.title, func(t *testing.T) {
-				f := goSshClient.File()
+				f := goSSHClient.File()
 				bytes, err := f.DownloadBytes(context.Background(), c.remotePath)
-				f2 := cliSshClient.File()
+				f2 := cliSSHClient.File()
 				bytes2, err2 := f2.DownloadBytes(context.Background(), c.remotePath)
 				if c.wantErr {
 					require.Error(t, err)
@@ -482,7 +483,6 @@ func TestFileDownloadBytes(t *testing.T) {
 					require.Equal(t, expectedFileContent, string(bytes))
 					require.Equal(t, expectedFileContent, string(bytes2))
 				}
-
 			})
 		}
 	})

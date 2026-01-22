@@ -17,9 +17,10 @@ package ssh_testing
 import (
 	"testing"
 
-	"github.com/deckhouse/lib-connection/pkg/ssh/session"
 	"github.com/name212/govalue"
 	"github.com/stretchr/testify/require"
+
+	"github.com/deckhouse/lib-connection/pkg/ssh/session"
 )
 
 type TestContainerWrapperSettingsOpts func(container *TestContainerWrapperSettings)
@@ -56,11 +57,6 @@ func NewTestContainerWrapper(t *testing.T, test *Test, opts ...TestContainerWrap
 
 	for _, opt := range opts {
 		opt(testSettings)
-	}
-
-	logger := testSettings.Logger
-	if govalue.Nil(logger) {
-		logger = TestLogger()
 	}
 
 	testContainer := &TestContainerWrapper{

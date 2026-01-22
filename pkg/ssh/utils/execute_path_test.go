@@ -17,9 +17,10 @@ package utils
 import (
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/deckhouse/lib-connection/pkg/settings"
 	sshtesting "github.com/deckhouse/lib-connection/pkg/ssh/gossh/testing"
-	"github.com/stretchr/testify/require"
 )
 
 type testScriptPath struct {

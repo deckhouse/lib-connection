@@ -22,14 +22,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/deckhouse/lib-dhctl/pkg/retry"
+	"github.com/stretchr/testify/require"
+
 	"github.com/deckhouse/lib-connection/pkg"
 	"github.com/deckhouse/lib-connection/pkg/settings"
 	"github.com/deckhouse/lib-connection/pkg/ssh/clissh"
 	"github.com/deckhouse/lib-connection/pkg/ssh/gossh"
 	sshtesting "github.com/deckhouse/lib-connection/pkg/ssh/gossh/testing"
 	"github.com/deckhouse/lib-connection/pkg/ssh/session"
-	"github.com/deckhouse/lib-dhctl/pkg/retry"
-	"github.com/stretchr/testify/require"
 )
 
 const expectedFileContent = "Some test data"
@@ -49,30 +50,30 @@ func newSessionTestLoopParams() gossh.ClientLoopsParams {
 	}
 }
 
-func initBothClients(t *testing.T, ctx context.Context, setting settings.Settings, sess *session.Session, keys []session.AgentPrivateKey) (goSshClient pkg.SSHClient, err error) {
-	goSshClient = gossh.NewClient(ctx, setting, sess, keys).
+func initBothClients(t *testing.T, ctx context.Context, setting settings.Settings, sess *session.Session, keys []session.AgentPrivateKey) (pkg.SSHClient, error) {
+	goSSHClient := gossh.NewClient(ctx, setting, sess, keys).
 		WithLoopsParams(newSessionTestLoopParams())
-	err = goSshClient.Start()
+	err := goSSHClient.Start()
 	if err != nil {
 		return nil, err
 	}
-	registerStopClient(t, goSshClient)
-	var cliSshClient pkg.SSHClient
-	cliSshClient = clissh.NewClient(setting, sess, keys, true)
-	err = cliSshClient.Start()
+	registerStopClient(t, goSSHClient)
+	cliSSHClient := clissh.NewClient(setting, sess, keys, true)
+	err = cliSSHClient.Start()
 
-	return
+	return goSSHClient, err
 }
 
-func initContexts(dur time.Duration) (ctx, ctx2 context.Context, cancel, cancel2 context.CancelFunc) {
-	ctx = context.Background()
-	ctx2 = context.Background()
+func initContexts(dur time.Duration) (context.Context, context.Context, context.CancelFunc, context.CancelFunc) {
+	ctx := context.Background()
+	ctx2 := context.Background()
 	var emptyDuration time.Duration
+	var cancel, cancel2 context.CancelFunc
 	if dur != emptyDuration {
 		ctx, cancel = context.WithDeadline(ctx, time.Now().Add(dur))
 		ctx2, cancel2 = context.WithDeadline(ctx, time.Now().Add(dur))
 	}
-	return
+	return ctx, ctx2, cancel, cancel2
 }
 
 // todo mount local directory to container and assert via local exec
@@ -86,20 +87,20 @@ func assertFilesViaRemoteRun(t *testing.T, sshClient *gossh.Client, cmd string, 
 	require.Equal(t, expectedOutput, string(out))
 }
 
-func startTwoContainersWithClients(t *testing.T, test *sshtesting.Test, createDeckhouseDirs bool) (goSshClient, cliSshClient, goSshClient2 pkg.SSHClient, err error) {
+func startTwoContainersWithClients(t *testing.T, test *sshtesting.Test, createDeckhouseDirs bool) (pkg.SSHClient, pkg.SSHClient, pkg.SSHClient, error) {
 	// first container for gossh client
 	container := sshtesting.NewTestContainerWrapper(t, test)
 	ctx := context.Background()
 	sess := sshtesting.Session(container)
 	keys := container.AgentPrivateKeys()
 	sshSettings := sshtesting.CreateTestSettingNoDebug(test)
-	goSshClient = gossh.NewClient(ctx, sshSettings, sess, keys).
+	goSSHClient := gossh.NewClient(ctx, sshSettings, sess, keys).
 		WithLoopsParams(newSessionTestLoopParams())
-	err = goSshClient.Start()
+	err := goSSHClient.Start()
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	registerStopClient(t, goSshClient)
+	registerStopClient(t, goSSHClient)
 
 	// second container for clissh
 	container2 := sshtesting.NewTestContainerWrapper(t, test, sshtesting.WithConnectToContainerNetwork(container))
@@ -107,29 +108,29 @@ func startTwoContainersWithClients(t *testing.T, test *sshtesting.Test, createDe
 	keys2 := container2.AgentPrivateKeys()
 
 	// check connection
-	goSshClient2 = gossh.NewClient(ctx, sshSettings, sess2, keys2).
+	goSSHClient2 := gossh.NewClient(ctx, sshSettings, sess2, keys2).
 		WithLoopsParams(newSessionTestLoopParams())
-	err = goSshClient2.Start()
+	err = goSSHClient2.Start()
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	goSshClient2.Stop()
+	goSSHClient2.Stop()
 
 	if createDeckhouseDirs {
 		err = container.Container.CreateDeckhouseDirs()
 		if err != nil {
-			return
+			return nil, nil, nil, err
 		}
 		err = container2.Container.CreateDeckhouseDirs()
 		if err != nil {
-			return
+			return nil, nil, nil, err
 		}
 	}
 
-	cliSshClient = clissh.NewClient(sshSettings, sess2, keys2, true)
-	err = cliSshClient.Start()
+	cliSSHClient := clissh.NewClient(sshSettings, sess2, keys2, true)
+	err = cliSSHClient.Start()
 
-	return
+	return goSSHClient, cliSSHClient, goSSHClient2, err
 }
 
 func prepareScp(t *testing.T) {

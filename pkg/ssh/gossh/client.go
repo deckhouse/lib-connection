@@ -758,7 +758,7 @@ func (s *Client) stopAll(cause string) []error {
 		}
 
 		if err := sess.Close(); err != nil {
-			addError(err, "Failed to close session %d: %v", indx)
+			addError(err, "Failed to close session %d: %v", indx, err)
 		}
 	}
 	s.sshSessionsList = nil

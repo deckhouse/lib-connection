@@ -131,7 +131,8 @@ func TestSession_ChoiceNewHost(t *testing.T) {
 		var remainedHosts []Host
 		for i, host := range availableHosts {
 			if host.Host == ses.host {
-				remainedHosts = append(availableHosts[:i], availableHosts[i+1:]...)
+				remainedHosts = availableHosts[:i]
+				remainedHosts = append(remainedHosts, availableHosts[i+1:]...)
 				break
 			}
 		}

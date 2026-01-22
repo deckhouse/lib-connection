@@ -23,9 +23,10 @@ import (
 	"testing"
 	"time"
 
-	sshtesting "github.com/deckhouse/lib-connection/pkg/ssh/gossh/testing"
 	"github.com/deckhouse/lib-dhctl/pkg/retry"
 	"github.com/stretchr/testify/require"
+
+	sshtesting "github.com/deckhouse/lib-connection/pkg/ssh/gossh/testing"
 )
 
 func registerStopClient(t *testing.T, sshClient *Client) {
@@ -64,8 +65,8 @@ func startContainerAndClientWithContainer(t *testing.T, test *sshtesting.Test, o
 	return sshClient, container
 }
 
-func startContainerAndClient(t *testing.T, test *sshtesting.Test, opts ...sshtesting.TestContainerWrapperSettingsOpts) *Client {
-	sshClient, _ := startContainerAndClientWithContainer(t, test, opts...)
+func startContainerAndClient(t *testing.T, test *sshtesting.Test) *Client {
+	sshClient, _ := startContainerAndClientWithContainer(t, test)
 	return sshClient
 }
 
@@ -97,7 +98,7 @@ func startContainerAndClientAndKind(t *testing.T, test *sshtesting.Test, opts ..
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
-		sshtesting.DeleteKindCluster()
+		_ = sshtesting.DeleteKindCluster()
 	})
 
 	err = container.Container.DockerNetworkConnect(false, "kind")

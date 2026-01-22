@@ -56,7 +56,7 @@ func NewKubeProxy(sett settings.Settings, sess *session.Session) *KubeProxy {
 	}
 }
 
-func (k *KubeProxy) Start(useLocalPort int) (port string, err error) {
+func (k *KubeProxy) Start(useLocalPort int) (string, error) {
 	startID := rand.Int()
 
 	logger := k.settings.Logger()
@@ -114,12 +114,11 @@ func (k *KubeProxy) StopAll() {
 }
 
 func (k *KubeProxy) Stop(startID int) {
-	logger := k.settings.Logger()
-
 	if k == nil {
-		logger.DebugF("[%d] Stop kube-proxy: kube proxy object is nil. Skip.\n", startID)
 		return
 	}
+
+	logger := k.settings.Logger()
 
 	if k.stop {
 		logger.DebugF("[%d] Stop kube-proxy: kube proxy already stopped. Skip.\n", startID)
@@ -244,7 +243,7 @@ func (k *KubeProxy) upTunnel(
 	useLocalPort int,
 	tunnelErrorCh chan error,
 	startID int,
-) (tun *Tunnel, localPort int, err error) {
+) (*Tunnel, int, error) {
 	logger := k.settings.Logger()
 
 	logger.DebugF(
@@ -255,7 +254,7 @@ func (k *KubeProxy) upTunnel(
 	)
 
 	rewriteLocalPort := false
-	localPort = useLocalPort
+	localPort := useLocalPort
 
 	if useLocalPort < 1 {
 		logger.DebugF(
@@ -271,6 +270,7 @@ func (k *KubeProxy) upTunnel(
 	maxRetries := 5
 	retries := 0
 	var lastError error
+	var tun *Tunnel
 	for {
 		logger.DebugF("[%d] Start %d iteration for up tunnel\n", startID, retries)
 
@@ -327,13 +327,13 @@ func (k *KubeProxy) upTunnel(
 func (k *KubeProxy) runKubeProxy(
 	waitCh chan error,
 	startID int,
-) (proxy *Command, port string, err error) {
+) (*Command, string, error) {
 	logger := k.settings.Logger()
 
 	logger.DebugF("[%d] Begin starting proxy\n", startID)
-	proxy = k.proxyCMD(startID)
+	proxy := k.proxyCMD(startID)
 
-	port = ""
+	port := ""
 	portReady := make(chan struct{}, 1)
 	portRe := regexp.MustCompile(`Starting to serve on .*?:(\d+)`)
 
@@ -358,7 +358,7 @@ func (k *KubeProxy) runKubeProxy(
 	})
 
 	logger.DebugF("[%d] Start proxy command\n", startID)
-	err = proxy.Start()
+	err := proxy.Start()
 	if err != nil {
 		logger.DebugF("[%d] Start proxy command error: %v\n", startID, err)
 		return nil, "", fmt.Errorf("start kubectl proxy: %w", err)
