@@ -37,6 +37,17 @@ func CreateDefaultTestSettings(test *Test) settings.Settings {
 	return settings.NewBaseProviders(getDefaultParams(test))
 }
 
+func getParamsNoDebug(test *Test) settings.ProviderParams {
+	return settings.ProviderParams{
+		LoggerProvider: log.SimpleLoggerProvider(test.Logger),
+		IsDebug:        false,
+	}
+}
+
+func CreateTestSettingNoDebug(test *Test) settings.Settings {
+	return settings.NewBaseProviders(getParamsNoDebug(test))
+}
+
 func CreateDefaultTestSettingsWithAgent(test *Test, agentSockPath string) settings.Settings {
 	params := getDefaultParams(test)
 	params.AuthSock = agentSockPath

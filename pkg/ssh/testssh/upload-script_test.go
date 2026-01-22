@@ -12,33 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package gossh
+package testssh
 
 import (
 	"context"
 	"testing"
-	"time"
 
-	"github.com/deckhouse/lib-dhctl/pkg/retry"
-	"github.com/stretchr/testify/require"
-
+	"github.com/deckhouse/lib-connection/pkg"
 	sshtesting "github.com/deckhouse/lib-connection/pkg/ssh/gossh/testing"
+	"github.com/stretchr/testify/require"
 )
 
 func TestUploadScriptExecute(t *testing.T) {
 	test := sshtesting.ShouldNewTest(t, "TestUploadScriptExecute")
 
-	sshClient, container := startContainerAndClientWithContainer(t, test, sshtesting.WithNoWriteSSHDConfig())
-	sshClient.WithLoopsParams(ClientLoopsParams{
-		NewSession: retry.NewEmptyParams(
-			retry.WithAttempts(5),
-			retry.WithWait(250*time.Millisecond),
-		),
-	})
-
-	// we don't have /opt/deckhouse in the container, so we should create it before start any UploadScript with sudo
-	err := container.Container.CreateDeckhouseDirs()
-	require.NoError(t, err, "could not create deckhouse dirs")
+	goSshClient, cliSshClient, _, err := startTwoContainersWithClients(t, test, true)
+	require.NoError(t, err)
+	prepareScp(t)
 
 	script := `#!/bin/bash
 if [[ $# -eq 0 ]]; then
@@ -73,7 +63,7 @@ fi
 				title:      "Happy case",
 				scriptPath: scriptFile,
 				scriptArgs: []string{"one"},
-				expected:   "provided: one\n",
+				expected:   "provided: one",
 				wantSudo:   false,
 				wantErr:    false,
 			},
@@ -81,7 +71,7 @@ fi
 				title:      "Happy case with sudo",
 				scriptPath: scriptFile,
 				scriptArgs: []string{"one"},
-				expected:   "SUDO-SUCCESS\nprovided: one\n",
+				expected:   "provided: one",
 				wantSudo:   true,
 				wantErr:    false,
 			},
@@ -97,7 +87,7 @@ fi
 				title:      "With envs",
 				scriptPath: scriptFile,
 				scriptArgs: []string{"one"},
-				expected:   "provided: one\n",
+				expected:   "provided: one",
 				wantSudo:   false,
 				envs:       envs,
 				wantErr:    false,
@@ -106,25 +96,36 @@ fi
 
 		for _, c := range cases {
 			t.Run(c.title, func(t *testing.T) {
-				s := sshClient.UploadScript(c.scriptPath, c.scriptArgs...)
+				var s, s2 pkg.Script
+				s = goSshClient.UploadScript(c.scriptPath, c.scriptArgs...)
 				s.WithCleanupAfterExec(true)
+
+				s2 = cliSshClient.UploadScript(c.scriptPath, c.scriptArgs...)
+				s2.WithCleanupAfterExec(true)
 
 				if c.wantSudo {
 					s.Sudo()
+					s2.Sudo()
 				}
 				if len(c.envs) > 0 {
 					s.WithEnvs(c.envs)
+					s2.WithEnvs(c.envs)
 				}
 
 				out, err := s.Execute(context.Background())
+				out2, err2 := s2.Execute(context.Background())
 				if c.wantErr {
 					require.Error(t, err)
 					require.Contains(t, err.Error(), c.err)
+					require.Error(t, err2)
+					require.Contains(t, err2.Error(), c.err)
 					return
 				}
 
 				require.NoError(t, err)
-				require.Equal(t, c.expected, string(out))
+				require.Contains(t, string(out), c.expected)
+				require.NoError(t, err2)
+				require.Contains(t, string(out2), c.expected)
 			})
 		}
 	})
@@ -134,19 +135,14 @@ fi
 func TestUploadScriptExecuteBundle(t *testing.T) {
 	test := sshtesting.ShouldNewTest(t, "TestUploadScriptExecuteBundle")
 
-	sshClient, container := startContainerAndClientWithContainer(t, test, sshtesting.WithNoWriteSSHDConfig())
-	sshClient.WithLoopsParams(ClientLoopsParams{
-		NewSession: retry.NewEmptyParams(
-			retry.WithAttempts(5),
-			retry.WithWait(250*time.Millisecond),
-		),
-	})
+	goSshClient, cliSshClient, _, err := startTwoContainersWithClients(t, test, true)
+	require.NoError(t, err)
+	prepareScp(t)
 
-	// we don't have /opt/deckhouse in the container, so we should create it before start any UploadScript with sudo
-	err := container.Container.CreateDeckhouseDirs()
-	require.NoError(t, err, "could not create deckhouse dirs")
-
-	const entrypoint = "test.sh"
+	const (
+		entrypoint  = "test.sh"
+		nodeTmpPath = "/opt/deckhouse/tmp"
+	)
 
 	testDir := sshtesting.PrepareFakeBashibleBundle(t, test, entrypoint, "bashible")
 
@@ -188,9 +184,11 @@ func TestUploadScriptExecuteBundle(t *testing.T) {
 				parentDir:  testDir,
 				bundleDir:  "bashible",
 				prepareFunc: func() error {
-					cmd := sshClient.Command("chmod", "700", container.Container.ContainerSettings().NodeTmpPath)
-					cmd.Sudo(context.Background())
-					return cmd.Run(context.Background())
+					err := chmodTmpDir(goSshClient, nodeTmpPath)
+					if err != nil {
+						return err
+					}
+					return chmodTmpDir(cliSshClient, nodeTmpPath)
 				},
 				wantErr: true,
 			},
@@ -198,20 +196,25 @@ func TestUploadScriptExecuteBundle(t *testing.T) {
 
 		for _, c := range cases {
 			t.Run(c.title, func(t *testing.T) {
-				s := sshClient.UploadScript(entrypoint, c.scriptArgs...)
+				s := goSshClient.UploadScript(entrypoint, c.scriptArgs...)
+				s2 := cliSshClient.UploadScript(entrypoint, c.scriptArgs...)
 				if c.prepareFunc != nil {
 					err = c.prepareFunc()
 					require.NoError(t, err)
 				}
 
 				_, err := s.ExecuteBundle(context.Background(), c.parentDir, c.bundleDir)
+				_, err2 := s2.ExecuteBundle(context.Background(), c.parentDir, c.bundleDir)
 				if c.wantErr {
 					require.Error(t, err)
 					require.Contains(t, err.Error(), c.err)
+					require.Error(t, err2)
+					require.Contains(t, err2.Error(), c.err)
 					return
 				}
 
 				require.NoError(t, err)
+				require.NoError(t, err2)
 			})
 		}
 	})

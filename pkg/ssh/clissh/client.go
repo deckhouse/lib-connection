@@ -131,6 +131,10 @@ func (s *Client) Session() *session.Session {
 	return s.SessionSettings
 }
 
+func (s *Client) Settings() settings.Settings {
+	return s.settings
+}
+
 func (s *Client) PrivateKeys() []session.AgentPrivateKey {
 	return s.privateKeys
 }

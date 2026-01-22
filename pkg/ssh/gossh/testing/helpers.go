@@ -20,6 +20,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -139,4 +140,101 @@ func removeFiles(paths ...string) []error {
 	}
 
 	return removeErrors
+}
+
+func PrepareFakeBashibleBundle(t *testing.T, test *Test, entrypoint, bundleDir string) string {
+	bundleDirPath := func() []string {
+		return []string{"bundle_test", bundleDir}
+	}
+
+	parentDir := test.MustMkSubDirs(t, bundleDirPath()...)
+
+	entrypointScript := `#!/bin/bash
+
+echo "starting execute steps..."
+
+BUNDLE_STEPS_DIR=/var/lib/bashible/bundle_steps
+BOOTSTRAP_DIR=/var/lib/bashible
+MAX_RETRIES=5
+
+for arg in "$@"; do
+  if [[ "$arg" == "--add-failure" ]]
+    then
+      echo "failures included"
+      export INCLUDE_FAILURE=true
+  fi
+done
+
+# Execute bashible steps
+for step in $BUNDLE_STEPS_DIR/*; do
+  echo ===
+  echo === Step: $step
+  echo ===
+  attempt=0
+  sx=""
+  until /bin/bash --noprofile --norc -"$sx"eEo pipefail -c "export TERM=xterm-256color; unset CDPATH; cd $BOOTSTRAP_DIR; source $step" 2> >(tee /var/lib/bashible/step.log >&2)
+  do
+    attempt=$(( attempt + 1 ))
+    if [ -n "${MAX_RETRIES-}" ] && [ "$attempt" -gt "${MAX_RETRIES}" ]; then
+      >&2 echo "ERROR: Failed to execute step $step. Retry limit is over."
+      exit 1
+    fi
+    >&2 echo "Failed to execute step "$step" ... retry in 10 seconds."
+    sleep 10
+    echo ===
+    echo === Step: $step
+    echo ===
+    if [ "$attempt" -gt 2 ]; then
+      sx=x
+    fi
+  done
+done
+
+`
+
+	entrypointPath := append(bundleDirPath(), entrypoint)
+	test.MustCreateFile(t, entrypointScript, true, entrypointPath...)
+
+	scrips := []struct {
+		name    string
+		content string
+	}{
+		{
+			name: "01-step.sh",
+			content: `#!/bin/bash
+echo "just a step"
+
+for i in {0..3}
+do
+  sleep $(( $RANDOM % 2 ))
+  echo $i  
+done
+`,
+		},
+		{
+			name: "02-step.sh",
+			content: `#!/bin/bash
+
+echo "second step"
+
+for i in {0..4}
+do
+  sleep $(( $RANDOM % 2 ))
+  echo $i
+  if [[ $i -gt 2 && $INCLUDE_FAILURE == "true" ]]
+    then
+      echo "oops! failure!"
+      exit 1
+  fi
+done
+`,
+		},
+	}
+
+	for _, c := range scrips {
+		scriptPath := append(bundleDirPath(), "bundle_steps", c.name)
+		test.MustCreateFile(t, c.content, true, scriptPath...)
+	}
+
+	return filepath.Dir(parentDir)
 }

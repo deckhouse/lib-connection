@@ -198,7 +198,7 @@ func (u *UploadScript) ExecuteBundle(ctx context.Context, parentDir, bundleDir s
 	)
 
 	// upload to node's deckhouse tmp directory
-	err = NewFile(u.settings, u.Session).Upload(ctx, bundleLocalFilepath, u.settings.TmpDir())
+	err = NewFile(u.settings, u.Session).Upload(ctx, bundleLocalFilepath, u.settings.NodeTmpDir())
 	if err != nil {
 		return nil, fmt.Errorf("upload: %v", err)
 	}
@@ -207,7 +207,7 @@ func (u *UploadScript) ExecuteBundle(ctx context.Context, parentDir, bundleDir s
 	// tar xpof ${app.DeckhouseNodeTmpPath}/bundle.tar -C /var/lib && /var/lib/bashible/bashible.sh args...
 	tarCmdline := fmt.Sprintf(
 		"tar xpof %s/%s -C /var/lib && /var/lib/%s/%s %s",
-		u.settings.TmpDir(),
+		u.settings.NodeTmpDir(),
 		bundleName,
 		bundleDir,
 		u.ScriptPath,

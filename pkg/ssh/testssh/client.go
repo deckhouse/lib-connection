@@ -602,6 +602,12 @@ func (t *Command) Run(ctx context.Context) error {
 	return t.doRun()
 }
 
+func (t *Command) Start() error {
+	return t.doRun()
+}
+
+func (t *Command) Stop() {}
+
 func (t *Command) Cmd(ctx context.Context)  {}
 func (t *Command) Sudo(ctx context.Context) {}
 
