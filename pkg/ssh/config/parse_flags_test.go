@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/user"
 	"path/filepath"
 	"regexp"
@@ -32,6 +33,8 @@ import (
 	"github.com/deckhouse/lib-dhctl/pkg/log"
 	flag "github.com/spf13/pflag"
 	"github.com/stretchr/testify/require"
+
+	"github.com/deckhouse/lib-connection/pkg/settings"
 )
 
 func TestParseFlagsHelp(t *testing.T) {
@@ -921,106 +924,241 @@ sshBastionPassword: "not_secure_password_bastion"
 	}
 
 	t.Run("ParseFlagsAndExtractConfig", func(t *testing.T) {
-		sett := testSettings()
-
-		defaultArgs := func(name string) ([]string, *ConnectionConfig) {
-			tmpDir := newTestTmpDir(t, "with_args", sett.Logger())
-
-			keys := newTestPrivateKeys(tmpDir, []*testPrivateKey{
-				{password: stringPtr("")},
-			})
-			keys.create(t)
-
-			key := keys.keys[0]
-
-			arguments := []string{
-				"--ssh-bastion-host=127.0.0.1",
-				"--ssh-bastion-port=2200",
-				"--ssh-bastion-user=bastion",
-				"--ssh-host=192.168.0.1",
-				"--ssh-host=192.168.0.2",
-				"--ssh-user=user",
-				"--ssh-port=2201",
-				"--ssh-extra-args=arg0,arg1",
-				"--ssh-modern-mode",
-				fmt.Sprintf("--ssh-agent-private-keys=%s", key.path),
-			}
-
-			expected := &ConnectionConfig{
-				Config: &Config{
-					Mode: Mode{
-						ForceLegacy:     false,
-						ForceModernMode: true,
-					},
-					User: "user",
-					Port: intPtr(2201),
-
-					PrivateKeys: []AgentPrivateKey{
-						{
-							Key:        key.content,
-							Passphrase: "",
-						},
-					},
-
-					BastionUser: "bastion",
-					BastionHost: "127.0.0.1",
-					BastionPort: intPtr(2200),
-
-					ExtraArgs: "arg0,arg1",
-				},
-				Hosts: []Host{
-					{Host: "192.168.0.1"},
-					{Host: "192.168.0.2"},
-				},
-			}
-
-			return arguments, expected
-		}
-
-		assertParseAndExtract := func(t *testing.T, arguments []string, flagSet *flag.FlagSet, expected *ConnectionConfig) {
-			logger := sett.Logger()
-
-			name := t.Name()
-			namesSet := strings.Split(name, "/")
-			require.NotEmpty(t, namesSet, "nameSet should not be empty")
-
-			prefix := namesSet[len(namesSet)-1]
-			prefix = strings.ReplaceAll(prefix, " ", "_")
-			prefix = strings.ReplaceAll(prefix, ":", "_")
-			prefix = strings.ToTitle(prefix)
-
-			logger.InfoF("Got prefix: %s", prefix)
-
-			parser := NewFlagsParserWithEnvsPrefix(sett, prefix)
-
-			config, err := parser.ParseFlagsAndExtractConfig(arguments, flagSet, ParseWithRequiredSSHHost(true))
-
-			assertConnectionConfig(t, connectionConfigAssertParams{
-				hasErrorContains: "",
-				err:              err,
-				got:              config,
-				expected:         expected,
-				logger:           logger,
-			})
-		}
-
 		t.Run("with args and no FlagSet", func(t *testing.T) {
-			arguments, expected := defaultArgs("with_args")
-			assertParseAndExtract(t, arguments, nil, expected)
+			params := defaultArgsForParseFlagsAndExtractConfig(t, "no_flag_set")
+			assertParseAndExtract(t, params, nil)
 		})
 
 		t.Run("with args and with FlagSet", func(t *testing.T) {
-			flagSet := flag.NewFlagSet("test-connection-flagset", flag.ContinueOnError)
-			var additionalParam string
-			flagSet.StringVar(&additionalParam, "my-param", "", "test argument")
+			params := defaultArgsForParseFlagsAndExtractConfig(t, "with_flag_set")
 
-			arguments, expected := defaultArgs("with_args")
-			arguments = append(arguments, "--my-param=val")
+			flagSet := newParseFlagsAndExtractConfigFlagSet("test-connection-flagset", params)
 
-			assertParseAndExtract(t, arguments, flagSet, expected)
+			assertParseAndExtract(t, params, flagSet.flagSet)
 
-			require.Equal(t, additionalParam, "val", "should parse additional argument")
+			flagSet.assertAdditionalFlagsParsed(t)
 		})
+
+		t.Run("without args and with FlagSet", func(t *testing.T) {
+			params := defaultArgsForParseFlagsAndExtractConfig(t, "with_flag_set")
+
+			// use subtest for safe rewrite os.Args
+			// we cannot use pass args with -args because we can run test from IDE
+			//nolint:gosec
+			cmd := exec.Command(os.Args[0], "-test.run=TestParseFlagsAndExtractConfigNoArgs")
+			cmd.Env = append(
+				os.Environ(),
+				fmt.Sprintf("TEST_NO_ARGS=%s",
+					strings.Join(params.arguments, " "),
+				),
+			)
+
+			output, err := cmd.CombinedOutput()
+			require.NoError(
+				t,
+				err,
+				"TestParseFlagsAndExtractConfigNoArgs should run without error: %s",
+				string(output),
+			)
+
+			params.sett.Logger().InfoF("Got output from TestParseFlagsAndExtractConfigNoArgs:\n%s", string(output))
+		})
+	})
+}
+
+func TestParseFlagsAndExtractConfigNoArgs(t *testing.T) {
+	argsStr, ok := os.LookupEnv("TEST_NO_ARGS")
+	argsStr = strings.TrimSpace(argsStr)
+
+	if !ok || argsStr == "" {
+		t.Skip("Run TestParseFlagsAndExtractConfigNoArgs directly")
+	}
+
+	privateKeyPath := ""
+	// split by -- for safe process arguments with spaces
+	argsParts := strings.Split(argsStr, "--")
+	require.NotEmpty(t, argsParts, "args should not be empty")
+
+	testArgs := make([]string, 0, len(argsParts))
+	for _, arg := range argsParts {
+		arg = strings.TrimSpace(arg)
+		if arg == "" {
+			continue
+		}
+
+		if !strings.HasPrefix(arg, "--") {
+			arg = fmt.Sprintf("--%s", arg)
+		}
+
+		testArgs = append(testArgs, arg)
+	}
+
+	const privateKeyArg = "--ssh-agent-private-keys="
+
+	for _, arg := range testArgs {
+		if strings.HasPrefix(arg, privateKeyArg) {
+			privateKeyPath = strings.TrimPrefix(arg, privateKeyArg)
+			privateKeyPath = strings.TrimSpace(privateKeyPath)
+			break
+		}
+	}
+
+	require.NotEmpty(
+		t,
+		privateKeyPath,
+		"privateKeyPath should present in args: %v",
+		strings.Join(testArgs, " "),
+	)
+
+	t.Logf("os.Args after parse: %s", strings.Join(testArgs, " "))
+
+	params := defaultArgsForParseFlagsAndExtractConfig(t, "without_args", &testPrivateKey{
+		path:            privateKeyPath,
+		readKeyFromPath: true,
+	})
+
+	// drop arguments for extract additional arguments
+	params.arguments = nil
+
+	flagSet := newParseFlagsAndExtractConfigFlagSet("test-connection-without-args", params)
+
+	require.Len(t, params.arguments, 1, "should add additional arguments")
+
+	oldArgs := os.Args
+	t.Cleanup(func() {
+		os.Args = oldArgs
+	})
+
+	withAdditional := []string{
+		os.Args[0],
+		params.arguments[0],
+	}
+
+	os.Args = append(withAdditional, testArgs...)
+
+	// should extract from os.Args
+	params.arguments = nil
+
+	assertParseAndExtract(t, params, flagSet.flagSet)
+	flagSet.assertAdditionalFlagsParsed(t)
+}
+
+type parseFlagsAndExtractConfigFlagSet struct {
+	additionalParam string
+	flagSet         *flag.FlagSet
+}
+
+func newParseFlagsAndExtractConfigFlagSet(name string, params *parseFlagsAndExtractConfigParams) *parseFlagsAndExtractConfigFlagSet {
+	res := &parseFlagsAndExtractConfigFlagSet{}
+
+	flagSet := flag.NewFlagSet(name, flag.ContinueOnError)
+	flagSet.StringVar(&res.additionalParam, "my-param", "", "test argument")
+
+	res.flagSet = flagSet
+
+	params.arguments = append(params.arguments, "--my-param=val")
+
+	return res
+}
+
+func (s *parseFlagsAndExtractConfigFlagSet) assertAdditionalFlagsParsed(t *testing.T) {
+	require.Equal(t, s.additionalParam, "val", "should parse additional argument")
+}
+
+type parseFlagsAndExtractConfigParams struct {
+	arguments []string
+	expected  *ConnectionConfig
+	sett      settings.Settings
+}
+
+func defaultArgsForParseFlagsAndExtractConfig(t *testing.T, name string, overrideKeys ...*testPrivateKey) *parseFlagsAndExtractConfigParams {
+	sett := testSettings()
+
+	tmpDir := newTestTmpDir(t, name, sett.Logger())
+
+	if len(overrideKeys) == 0 {
+		overrideKeys = []*testPrivateKey{
+			{password: stringPtr("")},
+		}
+	}
+
+	keys := newTestPrivateKeys(tmpDir, overrideKeys)
+	keys.create(t)
+
+	key := keys.keys[0]
+
+	arguments := []string{
+		"--ssh-bastion-host=127.0.0.1",
+		"--ssh-bastion-port=2200",
+		"--ssh-bastion-user=bastion",
+		"--ssh-host=192.168.0.1",
+		"--ssh-host=192.168.0.2",
+		"--ssh-user=user",
+		"--ssh-port=2201",
+		"--ssh-extra-args=arg0,arg1",
+		"--ssh-modern-mode",
+		fmt.Sprintf("--ssh-agent-private-keys=%s", key.path),
+	}
+
+	expected := &ConnectionConfig{
+		Config: &Config{
+			Mode: Mode{
+				ForceLegacy:     false,
+				ForceModernMode: true,
+			},
+			User: "user",
+			Port: intPtr(2201),
+
+			PrivateKeys: []AgentPrivateKey{
+				{
+					Key:        key.content,
+					Passphrase: "",
+				},
+			},
+
+			BastionUser: "bastion",
+			BastionHost: "127.0.0.1",
+			BastionPort: intPtr(2200),
+
+			ExtraArgs: "arg0,arg1",
+		},
+		Hosts: []Host{
+			{Host: "192.168.0.1"},
+			{Host: "192.168.0.2"},
+		},
+	}
+
+	return &parseFlagsAndExtractConfigParams{
+		arguments: arguments,
+		expected:  expected,
+		sett:      sett,
+	}
+}
+
+func assertParseAndExtract(t *testing.T, params *parseFlagsAndExtractConfigParams, flagSet *flag.FlagSet) {
+	logger := params.sett.Logger()
+
+	name := t.Name()
+	namesSet := strings.Split(name, "/")
+	require.NotEmpty(t, namesSet, "nameSet should not be empty")
+
+	prefix := namesSet[len(namesSet)-1]
+	prefix = strings.ReplaceAll(prefix, " ", "_")
+	prefix = strings.ReplaceAll(prefix, ":", "_")
+	prefix = strings.ToTitle(prefix)
+
+	logger.InfoF("Got prefix: %s", prefix)
+
+	parser := NewFlagsParserWithEnvsPrefix(params.sett, prefix)
+
+	config, err := parser.ParseFlagsAndExtractConfig(params.arguments, flagSet, ParseWithRequiredSSHHost(true))
+
+	assertConnectionConfig(t, connectionConfigAssertParams{
+		hasErrorContains: "",
+		err:              err,
+		got:              config,
+		expected:         params.expected,
+		logger:           logger,
 	})
 }
 
@@ -1029,6 +1167,26 @@ type testPrivateKey struct {
 	password         *string
 	expectedPassword string
 	content          string
+	readKeyFromPath  bool
+}
+
+func (k *testPrivateKey) processKeyPath(t *testing.T, logger log.Logger) bool {
+	if k.path == "" {
+		return false
+	}
+
+	if !k.readKeyFromPath {
+		logger.InfoF("Private path present %s Skip creating", k.path)
+		return true
+	}
+
+	content, err := os.ReadFile(k.path)
+	require.NoError(t, err, "cannot read private key %s", k.path)
+	k.content = string(content)
+
+	logger.InfoF("Private path %s content read successfully", k.path)
+
+	return true
 }
 
 type testTmpDir struct {
@@ -1037,7 +1195,7 @@ type testTmpDir struct {
 	logger log.Logger
 	name   string
 
-	alreadyCleanup bool
+	alreadyCleaned bool
 }
 
 type testPrivateKeys struct {
@@ -1059,8 +1217,7 @@ func (k *testPrivateKeys) create(t *testing.T) {
 	}
 
 	for i, key := range k.keys {
-		if key.path != "" {
-			k.logger.InfoF("Private path present %s Skip creating", key.path)
+		if key.processKeyPath(t, k.logger) {
 			continue
 		}
 

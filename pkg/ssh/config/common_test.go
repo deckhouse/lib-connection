@@ -269,7 +269,7 @@ func (d *testTmpDir) writeFile(t *testing.T, content string, name string) string
 }
 
 func (d *testTmpDir) cleanup() {
-	if d.alreadyCleanup {
+	if d.alreadyCleaned {
 		return
 	}
 
@@ -284,7 +284,7 @@ func (d *testTmpDir) cleanup() {
 	}
 
 	d.logger.InfoF("Test dir '%s' removed", tmpDir)
-	d.alreadyCleanup = true
+	d.alreadyCleaned = true
 }
 
 // TODO move to test helpers packet
