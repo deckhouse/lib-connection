@@ -966,6 +966,65 @@ sshBastionPassword: "not_secure_password_bastion"
 	})
 }
 
+func TestParseFlagsNoInitialize(t *testing.T) {
+	getParser := func() *FlagsParser {
+		return NewFlagsParser(testSettings())
+	}
+
+	assertError := func(t *testing.T, config *ConnectionConfig, err error, contains string) {
+		require.Error(t, err, "should not have an error")
+		require.Contains(t, err.Error(), contains)
+		require.Nil(t, config)
+	}
+
+	t.Run("Extract without initialize", func(t *testing.T) {
+		flags := &Flags{
+			BastionHost: "127.0.0.1",
+			BastionUser: "bastion",
+			BastionPort: 22201,
+
+			User: "user",
+			Port: 22202,
+
+			Hosts: []string{"192.168.0.1"},
+		}
+
+		parser := getParser()
+		config, err := parser.ExtractConfigAfterParse(flags, ParseWithRequiredSSHHost(true))
+		assertError(t, config, err, "Call InitFlags first and pass Flags from result of InitFlags")
+	})
+
+	t.Run("Extract from no parsed flagset", func(t *testing.T) {
+		flagSet := flag.NewFlagSet("no-parsed", flag.ContinueOnError)
+		parser := getParser()
+		flags, err := parser.InitFlags(flagSet)
+		require.NoError(t, err, "init flags should initialized")
+		config, err := parser.ExtractConfigAfterParse(flags, ParseWithRequiredSSHHost(true))
+		assertError(t, config, err, "flagsSet is not parsed. Call flag.Parse or flag.FlagSet.Parse before extract config")
+	})
+
+	t.Run("Init config if flags already parsed", func(t *testing.T) {
+		params := &parseFlagsAndExtractConfigParams{}
+		flagSet := newParseFlagsAndExtractConfigFlagSet("already-parsed", params)
+		flagSet.parseOnlyAdditional(t)
+
+		parser := getParser()
+		flags, err := parser.InitFlags(flagSet.flagSet)
+		assertError(t, nil, err, "Flags already parsed")
+		require.Nil(t, flags, "flags should be nil")
+	})
+
+	t.Run("ParseFlagsAndExtractConfig if flags already parsed", func(t *testing.T) {
+		params := &parseFlagsAndExtractConfigParams{}
+		flagSet := newParseFlagsAndExtractConfigFlagSet("already-parsed-parse-extract", params)
+		flagSet.parseOnlyAdditional(t)
+
+		parser := getParser()
+		config, err := parser.ParseFlagsAndExtractConfig(make([]string, 0), flagSet.flagSet)
+		assertError(t, config, err, "Flags already parsed")
+	})
+}
+
 func TestParseFlagsAndExtractConfigNoArgs(t *testing.T) {
 	argsStr, ok := os.LookupEnv("TEST_NO_ARGS")
 	argsStr = strings.TrimSpace(argsStr)
@@ -1056,9 +1115,21 @@ func newParseFlagsAndExtractConfigFlagSet(name string, params *parseFlagsAndExtr
 
 	res.flagSet = flagSet
 
-	params.arguments = append(params.arguments, "--my-param=val")
+	params.arguments = append(params.arguments, res.additionalArguments()...)
 
 	return res
+}
+
+func (s *parseFlagsAndExtractConfigFlagSet) additionalArguments() []string {
+	return []string{
+		"--my-param=val",
+	}
+}
+
+func (s *parseFlagsAndExtractConfigFlagSet) parseOnlyAdditional(t *testing.T) {
+	err := s.flagSet.Parse(s.additionalArguments())
+	require.NoError(t, err, "should parse only additional flags")
+	s.assertAdditionalFlagsParsed(t)
 }
 
 func (s *parseFlagsAndExtractConfigFlagSet) assertAdditionalFlagsParsed(t *testing.T) {

@@ -184,7 +184,7 @@ func (f *Flags) IsInitialized() error {
 	}
 
 	if !f.flagSet.Parsed() {
-		return fmt.Errorf("flagsSet is not parsed. Call flag.Parse or flag.FlagSet.Parse before ConfigAfterParse")
+		return fmt.Errorf("flagsSet is not parsed. Call flag.Parse or flag.FlagSet.Parse before extract config")
 	}
 
 	return nil
