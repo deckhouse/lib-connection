@@ -919,6 +919,109 @@ sshBastionPassword: "not_secure_password_bastion"
 			})
 		})
 	}
+
+	t.Run("ParseFlagsAndExtractConfig", func(t *testing.T) {
+		sett := testSettings()
+
+		defaultArgs := func(name string) ([]string, *ConnectionConfig) {
+			tmpDir := newTestTmpDir(t, "with_args", sett.Logger())
+
+			keys := newTestPrivateKeys(tmpDir, []*testPrivateKey{
+				{password: stringPtr("")},
+			})
+			keys.create(t)
+
+			key := keys.keys[0]
+
+			arguments := []string{
+				"--ssh-bastion-host=127.0.0.1",
+				"--ssh-bastion-port=2200",
+				"--ssh-bastion-user=bastion",
+				"--ssh-host=192.168.0.1",
+				"--ssh-host=192.168.0.2",
+				"--ssh-user=user",
+				"--ssh-port=2201",
+				"--ssh-extra-args=arg0,arg1",
+				"--ssh-modern-mode",
+				fmt.Sprintf("--ssh-agent-private-keys=%s", key.path),
+			}
+
+			expected := &ConnectionConfig{
+				Config: &Config{
+					Mode: Mode{
+						ForceLegacy:     false,
+						ForceModernMode: true,
+					},
+					User: "user",
+					Port: intPtr(2201),
+
+					PrivateKeys: []AgentPrivateKey{
+						{
+							Key:        key.content,
+							Passphrase: "",
+						},
+					},
+
+					BastionUser: "bastion",
+					BastionHost: "127.0.0.1",
+					BastionPort: intPtr(2200),
+
+					ExtraArgs: "arg0,arg1",
+				},
+				Hosts: []Host{
+					{Host: "192.168.0.1"},
+					{Host: "192.168.0.2"},
+				},
+			}
+
+			return arguments, expected
+		}
+
+		assertParseAndExtract := func(t *testing.T, arguments []string, flagSet *flag.FlagSet, expected *ConnectionConfig) {
+			logger := sett.Logger()
+
+			name := t.Name()
+			namesSet := strings.Split(name, "/")
+			require.NotEmpty(t, namesSet, "nameSet should not be empty")
+
+			prefix := namesSet[len(namesSet)-1]
+			prefix = strings.ReplaceAll(prefix, " ", "_")
+			prefix = strings.ReplaceAll(prefix, ":", "_")
+			prefix = strings.ToTitle(prefix)
+
+			logger.InfoF("Got prefix: %s", prefix)
+
+			parser := NewFlagsParserWithEnvsPrefix(sett, prefix)
+
+			config, err := parser.ParseFlagsAndExtractConfig(arguments, flagSet, ParseWithRequiredSSHHost(true))
+
+			assertConnectionConfig(t, connectionConfigAssertParams{
+				hasErrorContains: "",
+				err:              err,
+				got:              config,
+				expected:         expected,
+				logger:           logger,
+			})
+		}
+
+		t.Run("with args and no FlagSet", func(t *testing.T) {
+			arguments, expected := defaultArgs("with_args")
+			assertParseAndExtract(t, arguments, nil, expected)
+		})
+
+		t.Run("with args and with FlagSet", func(t *testing.T) {
+			flagSet := flag.NewFlagSet("test-connection-flagset", flag.ContinueOnError)
+			var additionalParam string
+			flagSet.StringVar(&additionalParam, "my-param", "", "test argument")
+
+			arguments, expected := defaultArgs("with_args")
+			arguments = append(arguments, "--my-param=val")
+
+			assertParseAndExtract(t, arguments, flagSet, expected)
+
+			require.Equal(t, additionalParam, "val", "should parse additional argument")
+		})
+	})
 }
 
 type testPrivateKey struct {
