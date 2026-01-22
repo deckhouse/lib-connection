@@ -187,30 +187,39 @@ func TestParseFlags(t *testing.T) {
 
 	currentUserName, currentHomeDir := usr.Username, usr.HomeDir
 
+	defaultPrivateKey := AgentPrivateKey{
+		Key:        "content",
+		Passphrase: "not secure",
+	}
+
 	// by default, we have ~/.ssh/id_rsa key
 	// it can be protected with password with local development env
-	defaultPrivateKeyExtractor := func(path string, _ log.Logger) (string, string, error) {
-		expectedPath := filepath.Join(currentHomeDir, ".ssh", "id_rsa")
-		if path != expectedPath {
-			return "", "", fmt.Errorf("expected %s, got %s", expectedPath, path)
-		}
+	defaultPrivateKeyExtractor := func(homePath string) PrivateKeyExtractorFunc {
+		return func(path string, logger log.Logger) (content string, password string, err error) {
+			expected := filepath.Join(homePath, ".ssh", "id_rsa")
+			if path != expected {
+				return "", "", fmt.Errorf("expected %s, got %s", homePath, path)
+			}
 
-		return "content", "not secure", nil
+			return defaultPrivateKey.Key, defaultPrivateKey.Passphrase, nil
+		}
 	}
 
 	type test struct {
-		name                string
-		passwords           *passwordsFromUser
-		envsPrefix          string
-		envs                map[string]string
-		arguments           []string
-		opts                []ValidateOption
-		hasErrorContains    string
-		expected            *ConnectionConfig
-		privateKeys         []*testPrivateKey
-		before              func(*testing.T, *test, log.Logger)
-		privateKeyExtractor PrivateKeyExtractorFunc
-		tmpDir              *testTmpDir
+		name                  string
+		passwords             *passwordsFromUser
+		envsPrefix            string
+		envs                  map[string]string
+		arguments             []string
+		opts                  []ValidateOption
+		hasErrorContains      string
+		hasParseErrorContains string
+		expected              *ConnectionConfig
+		privateKeys           []*testPrivateKey
+		before                func(*testing.T, *test, log.Logger)
+		privateKeyExtractor   PrivateKeyExtractorFunc
+		tmpDir                *testTmpDir
+		defaultAsk            bool
 	}
 
 	beforeAddPrivateKeys := func(t *testing.T, tst *test, logger log.Logger) {
@@ -220,12 +229,14 @@ func TestParseFlags(t *testing.T) {
 		for _, privateKey := range tst.privateKeys {
 			tst.arguments = append(tst.arguments, fmt.Sprintf("--ssh-agent-private-keys=%s", privateKey.path))
 
-			tst.expected.Config.PrivateKeys = append(
-				tst.expected.Config.PrivateKeys, AgentPrivateKey{
-					Key:        privateKey.content,
-					Passphrase: privateKey.expectedPassword,
-				},
-			)
+			if tst.expected != nil {
+				tst.expected.Config.PrivateKeys = append(
+					tst.expected.Config.PrivateKeys, AgentPrivateKey{
+						Key:        privateKey.content,
+						Passphrase: privateKey.expectedPassword,
+					},
+				)
+			}
 
 			if privateKey.expectedPassword != "" {
 				pathToPassword[privateKey.path] = privateKey.expectedPassword
@@ -253,7 +264,8 @@ func TestParseFlags(t *testing.T) {
 			arguments:        []string{},
 			hasErrorContains: "",
 
-			privateKeyExtractor: defaultPrivateKeyExtractor,
+			privateKeyExtractor: defaultPrivateKeyExtractor(currentHomeDir),
+
 			expected: &ConnectionConfig{
 				Config: &Config{
 					Mode: Mode{
@@ -262,12 +274,9 @@ func TestParseFlags(t *testing.T) {
 					},
 					User: currentUserName,
 					Port: intPtr(22),
-					PrivateKeys: []AgentPrivateKey{
-						{
-							Key:        "content",
-							Passphrase: "not secure",
-						},
-					},
+
+					PrivateKeys: []AgentPrivateKey{defaultPrivateKey},
+
 					BastionUser: currentUserName,
 					BastionPort: intPtr(22),
 				},
@@ -287,13 +296,80 @@ func TestParseFlags(t *testing.T) {
 					"HOME": homePath,
 				})
 
-				tst.privateKeyExtractor = func(path string, logger log.Logger) (content string, password string, err error) {
-					expected := filepath.Join(homePath, ".ssh", "id_rsa")
-					if path != expected {
-						return "", "", fmt.Errorf("expected %s, got %s", homePath, path)
-					}
+				tst.privateKeyExtractor = defaultPrivateKeyExtractor(homePath)
+			},
 
-					return "content", "not secure", nil
+			expected: &ConnectionConfig{
+				Config: &Config{
+					Mode: Mode{
+						ForceLegacy:     false,
+						ForceModernMode: false,
+					},
+					User: currentUserName,
+					Port: intPtr(22),
+
+					PrivateKeys: []AgentPrivateKey{defaultPrivateKey},
+
+					BastionUser: currentUserName,
+					BastionPort: intPtr(22),
+				},
+				Hosts: make([]Host, 0),
+			},
+		},
+
+		{
+			name:      "empty rewrite USER env",
+			passwords: nil,
+			arguments: []string{},
+
+			hasErrorContains: "",
+
+			envsPrefix: "EXTRACT_USER",
+
+			before: func(t *testing.T, tst *test, logger log.Logger) {
+				homePath := tst.tmpDir.createSubDir(t, "testhomeextract")
+
+				tst.privateKeyExtractor = defaultPrivateKeyExtractor(homePath)
+
+				tst.envs = map[string]string{
+					"USER": "notexists8",
+					"HOME": homePath,
+				}
+			},
+
+			expected: &ConnectionConfig{
+				Config: &Config{
+					Mode: Mode{
+						ForceLegacy:     false,
+						ForceModernMode: false,
+					},
+					User: "notexists8",
+					Port: intPtr(22),
+
+					PrivateKeys: []AgentPrivateKey{defaultPrivateKey},
+
+					BastionUser: "notexists8",
+					BastionPort: intPtr(22),
+				},
+				Hosts: make([]Host, 0),
+			},
+		},
+
+		{
+			name:      "empty arguments and empty USER and HOME env",
+			passwords: nil,
+			arguments: []string{},
+
+			hasErrorContains: "",
+
+			envsPrefix: "EXTRACT_ENVS_EMPTY",
+
+			before: func(t *testing.T, tst *test, logger log.Logger) {
+				tst.privateKeyExtractor = defaultPrivateKeyExtractor(currentHomeDir)
+
+				tst.envs = map[string]string{
+					"USER": "",
+					"HOME": "",
 				}
 			},
 
@@ -305,12 +381,9 @@ func TestParseFlags(t *testing.T) {
 					},
 					User: currentUserName,
 					Port: intPtr(22),
-					PrivateKeys: []AgentPrivateKey{
-						{
-							Key:        "content",
-							Passphrase: "not secure",
-						},
-					},
+
+					PrivateKeys: []AgentPrivateKey{defaultPrivateKey},
+
 					BastionUser: currentUserName,
 					BastionPort: intPtr(22),
 				},
@@ -472,8 +545,8 @@ func TestParseFlags(t *testing.T) {
 				{password: stringPtr("")},
 			},
 
-			before: func(t *testing.T, test *test, logger log.Logger) {
-				beforeAddPrivateKeys(t, test, logger)
+			before: func(t *testing.T, tst *test, logger log.Logger) {
+				beforeAddPrivateKeys(t, tst, logger)
 				setEnvs(t, map[string]string{
 					"MY_SSH_HOSTS":        "192.168.1.2,192.168.1.3",
 					"MY_SSH_LEGACY_MODE":  "true",
@@ -573,8 +646,202 @@ sshBastionPassword: "not_secure_password_bastion"
 			hasErrorContains: "SSH hosts for connection is required. Please pass hosts for connection via --ssh-host flag",
 			// by default, we have ~/.ssh/id_rsa key
 			// it can be protected with password with local development env
-			privateKeyExtractor: defaultPrivateKeyExtractor,
+			privateKeyExtractor: defaultPrivateKeyExtractor(currentHomeDir),
 			opts:                []ValidateOption{ParseWithRequiredSSHHost(true)},
+		},
+
+		{
+			name:      "pass connection-config and ssh args both",
+			passwords: nil,
+			arguments: []string{
+				"--ssh-host=192.168.0.1",
+				"--connection-config=/tmp/not_exists.yaml",
+			},
+			hasErrorContains: "Cannot use both --connection-config and --ssh-* flags or envs at the same time",
+		},
+
+		{
+			name:      "pass connection-config and ssh envs both",
+			passwords: nil,
+			arguments: []string{
+				"--connection-config=/tmp/not_exists.yaml",
+			},
+			envsPrefix: "SOME",
+			envs: map[string]string{
+				"SOME_SSH_BASTION_PORT": "2200",
+			},
+			hasErrorContains: "Cannot use both --connection-config and --ssh-* flags or envs at the same time",
+		},
+
+		{
+			name:      "unknown flag",
+			passwords: nil,
+			arguments: []string{
+				"--ssh-host=192.168.0.1",
+				"--unknown=value",
+			},
+			hasParseErrorContains: "unknown flag: --unknown",
+		},
+
+		{
+			name:      "incorrect flag type",
+			passwords: nil,
+			arguments: []string{
+				"--ssh-bastion-port=portstr",
+			},
+			hasParseErrorContains: `flag: strconv.ParseInt: parsing "portstr": invalid syntax`,
+		},
+
+		{
+			name:      "incorrect env type",
+			passwords: nil,
+			arguments: []string{},
+
+			envsPrefix: "TYPE",
+			envs: map[string]string{
+				"TYPE_SSH_BASTION_PORT": "portstr",
+			},
+
+			hasErrorContains: `Cannot convert 'portstr' to int for TYPE_SSH_BASTION_PORT`,
+		},
+
+		{
+			name:      "legacy and modern mode both",
+			passwords: nil,
+			arguments: []string{
+				"--ssh-legacy-mode",
+			},
+
+			envsPrefix: "MODE",
+			envs: map[string]string{
+				"MODE_SSH_MODERN_MODE": "yes",
+			},
+
+			hasErrorContains: "--ssh-legacy-mode and --ssh-modern-mode cannot be use both",
+		},
+
+		{
+			name:      "connection-config not exist",
+			passwords: nil,
+			arguments: []string{
+				"--connection-config=/tmp/not_exists.86t6ff6d.yaml",
+			},
+			hasErrorContains: "Cannot get connection config file info for /tmp/not_exists.86t6ff6d.yaml",
+		},
+
+		{
+			name:      "connection-config not regular file",
+			passwords: nil,
+			arguments: []string{},
+			before: func(t *testing.T, tst *test, logger log.Logger) {
+				path := tst.tmpDir.createSubDir(t, "connection-config-dir")
+				tst.arguments = append(tst.arguments, fmt.Sprintf("--connection-config=%s", path))
+			},
+			hasErrorContains: "should be regular file",
+		},
+
+		{
+			name:      "invalid private key",
+			passwords: nil,
+			arguments: []string{},
+			privateKeys: []*testPrivateKey{
+				{
+					content:  "not key",
+					password: stringPtr(""),
+				},
+			},
+
+			before:           beforeAddPrivateKeys,
+			hasErrorContains: "got error: ssh: no key found",
+		},
+
+		{
+			name:      "invalid private key password",
+			passwords: nil,
+			arguments: []string{},
+
+			privateKeys: []*testPrivateKey{
+				{expectedPassword: RandPassword(6)},
+			},
+
+			before: func(t *testing.T, tst *test, logger log.Logger) {
+				defaultPassword := []byte(tst.privateKeys[0].expectedPassword)
+				tst.privateKeyExtractor = func(path string, logger log.Logger) (string, string, error) {
+					return terminalPrivateKeyPasswordExtractor(path, defaultPassword, logger)
+				}
+				beforeAddPrivateKeys(t, tst, logger)
+			},
+			hasErrorContains: "got error: x509: decryption password incorrect",
+		},
+
+		{
+			name:      "rewrite HOME env with file",
+			passwords: nil,
+			arguments: []string{},
+
+			envsPrefix: "EXTRACT_HOME",
+
+			before: func(t *testing.T, tst *test, logger log.Logger) {
+				homePath := tst.tmpDir.writeFile(t, "content", "testhome")
+				tst.envs = map[string]string{
+					"HOME": homePath,
+				}
+			},
+			hasErrorContains: "Cannot get user home dir:",
+		},
+
+		{
+			name: "ask passwords use default password reader",
+			passwords: &passwordsFromUser{
+				Sudo:    RandPassword(10),
+				Bastion: RandPassword(10),
+			},
+			arguments: []string{
+				"--ssh-host=192.168.0.1",
+				"--ssh-user=user",
+				"--ssh-port=2201",
+				"--ssh-legacy-mode",
+				"--ask-bastion-pass",
+				"--ask-become-pass",
+			},
+
+			privateKeys: []*testPrivateKey{
+				{password: stringPtr("")},
+			},
+
+			before: beforeAddPrivateKeys,
+
+			defaultAsk: true,
+
+			// because test stdin is not terminal and we do not emulate it in fast way
+			// we check that in tests we got error
+			hasErrorContains: "Cannot get bastion password: stdin is not a terminal, error reading password",
+		},
+
+		{
+			name: "ask private key password with default password reader",
+			arguments: []string{
+				"--ssh-host=192.168.0.1",
+				"--ssh-user=user",
+				"--ssh-port=2201",
+				"--ssh-legacy-mode",
+			},
+
+			privateKeys: []*testPrivateKey{
+				{password: stringPtr(RandPassword(10))},
+			},
+
+			before: func(t *testing.T, tst *test, logger log.Logger) {
+				for _, privateKey := range tst.privateKeys {
+					tst.arguments = append(tst.arguments, fmt.Sprintf("--ssh-agent-private-keys=%s", privateKey.path))
+				}
+			},
+
+			defaultAsk: true,
+
+			// because test stdin is not terminal and we do not emulate it in fast way
+			// we check that in tests we got error
+			hasErrorContains: "stdin is not a terminal, error reading password",
 		},
 	}
 
@@ -594,24 +861,25 @@ sshBastionPassword: "not_secure_password_bastion"
 				tst.before(t, &tst, logger)
 			}
 
-			ask := func(promt string) ([]byte, error) {
-				if tst.passwords == nil {
-					return nil, fmt.Errorf("no passwords set")
-				}
-
-				switch true {
-				case promt == "[bastion] Password: ":
-					return []byte(tst.passwords.Bastion), nil
-				case promt == "[sudo] Password: ":
-					return []byte(tst.passwords.Sudo), nil
-				default:
-					return nil, fmt.Errorf("unknown prompt")
-				}
-			}
-
 			parser := NewFlagsParser(sett).
-				WithAsk(ask).
 				WithEnvsPrefix(tst.envsPrefix)
+
+			if !tst.defaultAsk {
+				parser.WithAsk(func(promt string) ([]byte, error) {
+					if tst.passwords == nil {
+						return nil, fmt.Errorf("no passwords set")
+					}
+
+					switch true {
+					case promt == "[bastion] Password: ":
+						return []byte(tst.passwords.Bastion), nil
+					case promt == "[sudo] Password: ":
+						return []byte(tst.passwords.Sudo), nil
+					default:
+						return nil, fmt.Errorf("unknown prompt")
+					}
+				})
+			}
 
 			if len(tst.envs) > 0 {
 				parser.WithEnvsLookup(func(name string) (string, bool) {
@@ -633,7 +901,13 @@ sshBastionPassword: "not_secure_password_bastion"
 			require.NoError(t, err, "init flags")
 
 			err = fset.Parse(tst.arguments)
-			require.NoError(t, err, "parse flags")
+			if tst.hasParseErrorContains != "" {
+				require.Error(t, err, "should parse error")
+				require.Contains(t, err.Error(), tst.hasParseErrorContains, "should parse error contains")
+				return
+			} else {
+				require.NoError(t, err, "parse flags")
+			}
 
 			config, err := parser.ExtractConfigAfterParse(flags, tst.opts...)
 			assertConnectionConfig(t, connectionConfigAssertParams{
@@ -663,85 +937,6 @@ type testTmpDir struct {
 	alreadyCleanup bool
 }
 
-func newTestTmpDir(t *testing.T, name string, logger log.Logger) *testTmpDir {
-	id := GenerateID(name)
-	localTmpDirStr := filepath.Join(os.TempDir(), tmpGlobalDirName, "test-flags", id)
-
-	d := &testTmpDir{
-		id:     id,
-		tmpDir: localTmpDirStr,
-		logger: logger,
-		name:   name,
-	}
-
-	d.createRootDir(t)
-
-	return d
-}
-
-func (d *testTmpDir) createRootDir(t *testing.T) {
-	tmpDir := d.tmpDir
-
-	require.NotEmpty(t, tmpDir, "tmp dir does not set")
-
-	err := os.MkdirAll(tmpDir, 0777)
-	require.NoError(t, err, "create tmp dir %s", tmpDir)
-	t.Cleanup(func() {
-		d.cleanup()
-	})
-
-	d.logger.InfoF("Root tmp dir %s created", tmpDir)
-}
-
-func (d *testTmpDir) createSubDir(t *testing.T, name string) string {
-	tmpDir := d.tmpDir
-
-	require.NotEmpty(t, tmpDir, "tmp dir does not set")
-
-	path := filepath.Join(tmpDir, name)
-
-	err := os.MkdirAll(path, 0777)
-	require.NoError(t, err, "create tmp sub dir %s", path)
-
-	d.logger.InfoF("Sub dir tmp for %s created %s", name, path)
-
-	return path
-}
-
-func (d *testTmpDir) writeFile(t *testing.T, content string, name string) string {
-	require.NotEmpty(t, d.tmpDir, "tmp dir does not set")
-	if name == "" {
-		name = GenerateID()
-	}
-
-	path := filepath.Join(d.tmpDir, fmt.Sprintf("%s.%s", name, d.id))
-	err := os.WriteFile(path, []byte(content), 0600)
-	require.NoError(t, err, "write file %s", path)
-
-	d.logger.InfoF("File written: %s", path)
-
-	return path
-}
-
-func (d *testTmpDir) cleanup() {
-	if d.alreadyCleanup {
-		return
-	}
-
-	tmpDir := d.tmpDir
-	if tmpDir == "" || tmpDir == "." || tmpDir == "/" {
-		return
-	}
-
-	if err := os.RemoveAll(tmpDir); err != nil && !errors.Is(err, os.ErrNotExist) {
-		d.logger.ErrorF("Cannot remove test dir '%s': %v", tmpDir, err)
-		return
-	}
-
-	d.logger.InfoF("Test dir '%s' removed", tmpDir)
-	d.alreadyCleanup = true
-}
-
 type testPrivateKeys struct {
 	*testTmpDir
 
@@ -759,8 +954,6 @@ func (k *testPrivateKeys) create(t *testing.T) {
 	if len(k.keys) == 0 {
 		return
 	}
-
-	k.createRootDir(t)
 
 	for i, key := range k.keys {
 		if key.path != "" {

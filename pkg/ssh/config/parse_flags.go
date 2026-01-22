@@ -49,6 +49,13 @@ const (
 	AskSudoPasswordEnv    = "ASK_BECOME_PASS"
 )
 
+const (
+	sshHostsFlag         = "ssh-host"
+	legacyModeFlag       = "ssh-legacy-mode"
+	modernModeFlag       = "ssh-modern-mode"
+	connectionConfigFlag = "connection-config"
+)
+
 type Flags struct {
 	Mode
 
@@ -84,7 +91,7 @@ func (f *Flags) IsConflictBetweenFlags() error {
 		f.ExtraArgs != ""
 
 	if userPassedArguments && f.ConnectionConfigPath != "" {
-		return fmt.Errorf("Cannot use both connection config path and flags at the same time")
+		return fmt.Errorf("Cannot use both --%s and --ssh-* flags or envs at the same time", connectionConfigFlag)
 	}
 
 	return nil
@@ -92,7 +99,7 @@ func (f *Flags) IsConflictBetweenFlags() error {
 
 func (f *Flags) FillDefaults() error {
 	if len(f.PrivateKeysPaths) == 0 {
-		home, err := getHomeDir()
+		home, err := getHomeDir(f.envExtractor)
 		if err != nil {
 			return err
 		}
@@ -100,17 +107,18 @@ func (f *Flags) FillDefaults() error {
 		f.PrivateKeysPaths = []string{filepath.Join(home, ".ssh", "id_rsa")}
 	}
 
+	getUser := f.userExtractor()
 	var err error
 
 	if f.User == "" {
-		f.User, err = getCurrentUser()
+		f.User, err = getUser()
 		if err != nil {
 			return err
 		}
 	}
 
 	if f.BastionUser == "" {
-		f.BastionUser, err = getCurrentUser()
+		f.BastionUser, err = getUser()
 		if err != nil {
 			return err
 		}
@@ -176,17 +184,30 @@ func (f *Flags) IsInitialized() error {
 	}
 
 	if !f.flagSet.Parsed() {
-		return fmt.Errorf("flags is not parsed. Call flag.Parse or flag.FlagSet.Parse before ConfigAfterParse")
+		return fmt.Errorf("flagsSet is not parsed. Call flag.Parse or flag.FlagSet.Parse before ConfigAfterParse")
 	}
 
 	return nil
 }
 
-const (
-	sshHostsFlag   = "ssh-host"
-	legacyModeFlag = "ssh-legacy-mode"
-	modernModeFlag = "ssh-modern-mode"
-)
+func (f *Flags) userExtractor() func() (string, error) {
+	var currentUser *string
+
+	return func() (string, error) {
+		if currentUser != nil {
+			return *currentUser, nil
+		}
+
+		userName, err := getCurrentUser(f.envExtractor)
+		if err != nil {
+			return "", err
+		}
+
+		currentUser = &userName
+
+		return userName, nil
+	}
+}
 
 type (
 	AskPasswordFunc         func(promt string) ([]byte, error)
@@ -218,21 +239,6 @@ func NewFlagsParser(sett settings.Settings) *FlagsParser {
 // NewFlagsParserWithEnvsPrefix trim right all _ ang - symbols and spaces left and right
 // By default parser add _ after prefix for all env vars
 func NewFlagsParserWithEnvsPrefix(sett settings.Settings, envsPrefix string) *FlagsParser {
-	terminalPrivateKeyPasswordExtractor := func(path string, logger log.Logger) (string, string, error) {
-		content, err := os.ReadFile(path)
-		if err != nil {
-			return "", "", fmt.Errorf("Cannot read private key %s: %w", path, err)
-		}
-
-		_, password, err := utils.ParseSSHPrivateKey(
-			content,
-			path,
-			utils.NewTerminalPassphraseConsumer(logger, make([]byte, 0)),
-		)
-
-		return string(content), password, err
-	}
-
 	askFromTerminal := func(prompt string) ([]byte, error) {
 		return terminal.AskPassword(sett.Logger(), prompt)
 	}
@@ -241,10 +247,14 @@ func NewFlagsParserWithEnvsPrefix(sett settings.Settings, envsPrefix string) *Fl
 		sett: sett,
 	}
 
+	terminalPrivateKeyPasswordExtractorWithoutDefault := func(path string, logger log.Logger) (string, string, error) {
+		return terminalPrivateKeyPasswordExtractor(path, make([]byte, 0), logger)
+	}
+
 	return parser.WithEnvsPrefix(envsPrefix).
 		WithAsk(askFromTerminal).
 		WithEnvsLookup(os.LookupEnv).
-		WithPrivateKeyPasswordExtractor(terminalPrivateKeyPasswordExtractor)
+		WithPrivateKeyPasswordExtractor(terminalPrivateKeyPasswordExtractorWithoutDefault)
 }
 
 // WithEnvsPrefix
@@ -457,7 +467,7 @@ func (p *FlagsParser) ExtractConfigAfterParse(flags *Flags, opts ...ValidateOpti
 	logger := p.sett.Logger()
 
 	if flags.ConnectionConfigPath != "" {
-		configReader, err := fileReader(flags.ConnectionConfigPath)
+		configReader, err := fileReader(flags.ConnectionConfigPath, "connection config")
 		if err != nil {
 			return nil, err
 		}
@@ -624,29 +634,36 @@ func (p *FlagsParser) getPasswordsFromUser(flags *Flags) (*passwordsFromUser, er
 	return res, nil
 }
 
-func getHomeDir() (string, error) {
-	home := os.Getenv("HOME")
+func getHomeDir(extractor *envExtractor) (string, error) {
+	home := ""
+
+	extractor.StringWithoutPrefix("HOME", &home)
+
 	if home == "" {
 		var err error
 		home, err = os.UserHomeDir()
 		if err != nil {
-			return "", fmt.Errorf("cannot get user home dir: %w", err)
+			return "", fmt.Errorf("Cannot get user home dir: %w", err)
+		}
+
+		if home == "" {
+			return "", fmt.Errorf("Cannot get user home dir: empty after call os.UserHomeDir")
 		}
 	}
 
 	var err error
 	home, err = filepath.Abs(home)
 	if err != nil {
-		return "", fmt.Errorf("cannot get absolute path of home directory: %w", err)
+		return "", fmt.Errorf("Cannot get absolute path of home directory: %w", err)
 	}
 
 	stat, err := os.Stat(home)
 	if err != nil {
-		return "", fmt.Errorf("cannot get user home dir stat: %w", err)
+		return "", fmt.Errorf("Cannot get user home dir stat: %w", err)
 	}
 
 	if !stat.IsDir() {
-		return "", fmt.Errorf("cannot get user home dir: '%s' not a directory", home)
+		return "", fmt.Errorf("Cannot get user home dir: '%s' not a directory", home)
 	}
 
 	return home, nil
@@ -656,8 +673,12 @@ func getHomeDir() (string, error) {
 // returns current user name
 // first attempt get user from env
 // can be call multiple times because user.Current() cache user info
-func getCurrentUser() (string, error) {
-	if userName := os.Getenv("USER"); userName != "" {
+func getCurrentUser(extractor *envExtractor) (string, error) {
+	userName := ""
+
+	extractor.StringWithoutPrefix("USER", &userName)
+
+	if userName != "" {
 		return userName, nil
 	}
 
@@ -666,22 +687,27 @@ func getCurrentUser() (string, error) {
 		return "", fmt.Errorf("cannot get current user: %w", err)
 	}
 
-	return currentUser.Username, nil
+	userName = currentUser.Username
+	if userName == "" {
+		return "", fmt.Errorf("Cannot get current user: empty after call user.Current")
+	}
+
+	return userName, nil
 }
 
-func fileReader(path string) (io.ReadCloser, error) {
+func fileReader(path string, fileType string) (io.ReadCloser, error) {
 	fullPath, err := filepath.Abs(path)
 	if err != nil {
-		return nil, fmt.Errorf("cannot get abs path for %s: %w", path, err)
+		return nil, fmt.Errorf("Cannot get abs path for %s: %w", path, err)
 	}
 
 	stat, err := os.Stat(fullPath)
 	if err != nil {
-		return nil, fmt.Errorf("cannot get file info for %s: %w", fullPath, err)
+		return nil, fmt.Errorf("Cannot get %s file info for %s: %w", fileType, fullPath, err)
 	}
 
-	if stat.IsDir() {
-		return nil, fmt.Errorf("cannot get file info for %s: '%s' should be file", fullPath, path)
+	if stat.IsDir() || !stat.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s path '%s' should be regular file", fileType, fullPath)
 	}
 
 	return os.Open(fullPath)
@@ -719,6 +745,10 @@ func (e *envExtractor) Var(name string) (string, bool) {
 	return e.lookupFunc(e.NameWithPrefix(name))
 }
 
+func (e *envExtractor) VarWithoutPrefix(name string) (string, bool) {
+	return e.lookupFunc(name)
+}
+
 func (e *envExtractor) Int(name string, destination *int) error {
 	strVar, ok := e.Var(name)
 	if !ok {
@@ -727,12 +757,21 @@ func (e *envExtractor) Int(name string, destination *int) error {
 
 	value, err := strconv.Atoi(strVar)
 	if err != nil {
-		return fmt.Errorf("cannot convert %s to int for %s: %w", strVar, name, err)
+		return fmt.Errorf("Cannot convert '%s' to int for %s: %w", strVar, e.NameWithPrefix(name), err)
 	}
 
 	*destination = value
 
 	return nil
+}
+
+func (e *envExtractor) StringWithoutPrefix(name string, destination *string) {
+	strVar, ok := e.VarWithoutPrefix(name)
+	if !ok {
+		return
+	}
+
+	*destination = strVar
 }
 
 func (e *envExtractor) String(name string, destination *string) {
@@ -769,6 +808,21 @@ func (e *envExtractor) Bool(name string, destination *bool) {
 	value := strVar != ""
 
 	*destination = value
+}
+
+func terminalPrivateKeyPasswordExtractor(path string, defaultPassword []byte, logger log.Logger) (string, string, error) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return "", "", fmt.Errorf("Cannot read private key %s: %w", path, err)
+	}
+
+	_, password, err := utils.ParseSSHPrivateKey(
+		content,
+		path,
+		utils.NewTerminalPassphraseConsumer(logger, defaultPassword),
+	)
+
+	return string(content), password, err
 }
 
 type passwordsFromUser struct {

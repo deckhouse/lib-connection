@@ -7,9 +7,11 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	mathrand "math/rand"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"text/template"
@@ -204,6 +206,85 @@ func setEnvs(t *testing.T, envs map[string]string) {
 			forUnset[k] = struct{}{}
 		}
 	}
+}
+
+func newTestTmpDir(t *testing.T, name string, logger log.Logger) *testTmpDir {
+	id := GenerateID(name)
+	localTmpDirStr := filepath.Join(os.TempDir(), tmpGlobalDirName, "test-flags", id)
+
+	d := &testTmpDir{
+		id:     id,
+		tmpDir: localTmpDirStr,
+		logger: logger,
+		name:   name,
+	}
+
+	d.createRootDir(t)
+
+	return d
+}
+
+func (d *testTmpDir) createRootDir(t *testing.T) {
+	tmpDir := d.tmpDir
+
+	require.NotEmpty(t, tmpDir, "tmp dir does not set")
+
+	err := os.MkdirAll(tmpDir, 0777)
+	require.NoError(t, err, "create tmp dir %s", tmpDir)
+	t.Cleanup(func() {
+		d.cleanup()
+	})
+
+	d.logger.InfoF("Root tmp dir %s created", tmpDir)
+}
+
+func (d *testTmpDir) createSubDir(t *testing.T, name string) string {
+	tmpDir := d.tmpDir
+
+	require.NotEmpty(t, tmpDir, "tmp dir does not set")
+
+	path := filepath.Join(tmpDir, name)
+
+	err := os.MkdirAll(path, 0777)
+	require.NoError(t, err, "create tmp sub dir %s", path)
+
+	d.logger.InfoF("Sub dir tmp for %s created %s", name, path)
+
+	return path
+}
+
+func (d *testTmpDir) writeFile(t *testing.T, content string, name string) string {
+	require.NotEmpty(t, d.tmpDir, "tmp dir does not set")
+	if name == "" {
+		name = GenerateID()
+	}
+
+	path := filepath.Join(d.tmpDir, fmt.Sprintf("%s.%s", name, d.id))
+	err := os.WriteFile(path, []byte(content), 0600)
+	require.NoError(t, err, "write file %s", path)
+
+	d.logger.InfoF("File written: %s", path)
+
+	return path
+}
+
+func (d *testTmpDir) cleanup() {
+	if d.alreadyCleanup {
+		return
+	}
+
+	tmpDir := d.tmpDir
+	if tmpDir == "" || tmpDir == "." || tmpDir == "/" {
+		return
+	}
+
+	if err := os.RemoveAll(tmpDir); err != nil && !errors.Is(err, os.ErrNotExist) {
+		d.logger.ErrorF("Cannot remove test dir '%s': %v", tmpDir, err)
+		return
+	}
+
+	d.logger.InfoF("Test dir '%s' removed", tmpDir)
+	d.alreadyCleanup = true
 }
 
 // TODO move to test helpers packet
