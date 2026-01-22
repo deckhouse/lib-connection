@@ -130,7 +130,7 @@ func TestParseFlagsHelp(t *testing.T) {
 
 	flagSet := flag.NewFlagSet("ssh-help", flag.ContinueOnError)
 
-	parser := NewFlagsParser(sett)
+	parser := NewFlagsParserWithEnvsPrefix(sett, "MY_PREFIX")
 	_, err = parser.InitFlags(flagSet)
 	assertNoError(t, "Flags init failed", err)
 
@@ -164,7 +164,7 @@ func TestParseFlagsHelp(t *testing.T) {
 			))
 	}
 
-	envMsgRe := regexp.MustCompile(`\(Can rewrite with [A-Z_]+ env\)`)
+	envMsgRe := regexp.MustCompile(`\(Can rewrite with MY_PREFIX_[A-Z_]+ env\)`)
 
 	notContainsEnv := make([]string, 0)
 	for _, line := range lines {
