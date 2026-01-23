@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -229,16 +230,9 @@ type FlagsParser struct {
 
 // NewFlagsParser
 // init FlagsParser with empty envsPrefix
-func NewFlagsParser(sett settings.Settings) *FlagsParser {
-	return NewFlagsParserWithEnvsPrefix(sett, "")
-}
-
-// NewFlagsParserWithEnvsPrefix
-// init FlagsParser
-// envsPrefix - prefix for rewrite flags from envs. Can be empty
-// NewFlagsParserWithEnvsPrefix trim right all _ ang - symbols and spaces left and right
+// trim right all _ ang - symbols and spaces left and right from sett.EnvsPrefix
 // By default parser add _ after prefix for all env vars
-func NewFlagsParserWithEnvsPrefix(sett settings.Settings, envsPrefix string) *FlagsParser {
+func NewFlagsParser(sett settings.Settings) *FlagsParser {
 	askFromTerminal := func(prompt string) ([]byte, error) {
 		return terminal.AskPassword(sett.Logger(), prompt)
 	}
@@ -251,7 +245,7 @@ func NewFlagsParserWithEnvsPrefix(sett settings.Settings, envsPrefix string) *Fl
 		return terminalPrivateKeyPasswordExtractor(path, make([]byte, 0), logger)
 	}
 
-	return parser.WithEnvsPrefix(envsPrefix).
+	return parser.WithEnvsPrefix(sett.EnvsPrefix()).
 		WithAsk(askFromTerminal).
 		WithEnvsLookup(os.LookupEnv).
 		WithPrivateKeyPasswordExtractor(terminalPrivateKeyPasswordExtractorWithoutDefault)
@@ -495,15 +489,16 @@ func (p *FlagsParser) ExtractConfigAfterParse(flags *Flags, opts ...ValidateOpti
 	// unfortunately we cannot handle error from ParseConnectionConfig
 	// we should parse error string but it is hard in current time
 
-	if options.requiredSSHHost && len(flags.Hosts) == 0 {
-		return nil, fmt.Errorf("SSH hosts for connection is required. Please pass hosts for connection via --%s flag", sshHostsFlag)
-	}
-
 	hosts := make([]Host, 0, len(flags.Hosts))
 	for _, h := range flags.Hosts {
 		hosts = append(hosts, Host{
 			Host: h,
 		})
+	}
+
+	err := validateOnlyUniqueHosts(hosts, options).flagsError()
+	if err != nil {
+		return nil, err
 	}
 
 	if flags.ForceLegacy && flags.ForceModernMode {
@@ -835,4 +830,24 @@ func intPtr(i int) *int {
 		return nil
 	}
 	return &i
+}
+
+func (h notUniqueHosts) flagsError() error {
+	var errs []string
+	if h.noHosts {
+		errs = append(errs, fmt.Sprintf("SSH hosts for connection is required. Please pass hosts for connection via --%s flag", sshHostsFlag))
+	}
+
+	for host, count := range h.hosts {
+		errs = append(errs, notUniqueHostErr(host, count))
+	}
+
+	if len(errs) == 0 {
+		return nil
+	}
+
+	sort.Strings(errs)
+
+	errsJoined := "\t" + strings.Join(errs, "\n\t")
+	return fmt.Errorf("--%s flag parse errors:\n%s", sshHostsFlag, errsJoined)
 }

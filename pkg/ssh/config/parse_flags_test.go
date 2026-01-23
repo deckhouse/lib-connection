@@ -130,7 +130,7 @@ func TestParseFlagsHelp(t *testing.T) {
 
 	flagSet := flag.NewFlagSet("ssh-help", flag.ContinueOnError)
 
-	parser := NewFlagsParserWithEnvsPrefix(sett, "MY_PREFIX")
+	parser := NewFlagsParser(sett).WithEnvsPrefix("MY_PREFIX")
 	_, err = parser.InitFlags(flagSet)
 	assertNoError(t, "Flags init failed", err)
 
@@ -647,6 +647,25 @@ sshBastionPassword: "not_secure_password_bastion"
 			passwords:        nil,
 			arguments:        []string{},
 			hasErrorContains: "SSH hosts for connection is required. Please pass hosts for connection via --ssh-host flag",
+			// by default, we have ~/.ssh/id_rsa key
+			// it can be protected with password with local development env
+			privateKeyExtractor: defaultPrivateKeyExtractor(currentHomeDir),
+			opts:                []ValidateOption{ParseWithRequiredSSHHost(true)},
+		},
+
+		{
+			name:      "multiple same hosts passed",
+			passwords: nil,
+			arguments: []string{
+				"--ssh-host=192.168.0.4",
+				"--ssh-host=192.168.0.3",
+				"--ssh-host=192.168.0.4",
+				"--ssh-host=192.168.0.4",
+				"--ssh-host=192.168.0.2",
+				"--ssh-host=192.168.0.1",
+				"--ssh-host=192.168.0.2",
+			},
+			hasErrorContains: "\thost '192.168.0.2' present multiple times 2\n\thost '192.168.0.4' present multiple times 3",
 			// by default, we have ~/.ssh/id_rsa key
 			// it can be protected with password with local development env
 			privateKeyExtractor: defaultPrivateKeyExtractor(currentHomeDir),
@@ -1220,7 +1239,7 @@ func assertParseAndExtract(t *testing.T, params *parseFlagsAndExtractConfigParam
 
 	logger.InfoF("Got prefix: %s", prefix)
 
-	parser := NewFlagsParserWithEnvsPrefix(params.sett, prefix)
+	parser := NewFlagsParser(params.sett).WithEnvsPrefix(prefix)
 
 	config, err := parser.ParseFlagsAndExtractConfig(params.arguments, flagSet, ParseWithRequiredSSHHost(true))
 

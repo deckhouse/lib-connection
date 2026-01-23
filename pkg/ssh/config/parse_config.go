@@ -125,39 +125,13 @@ func ParseConnectionConfig(reader io.Reader, sett settings.Settings, opts ...Val
 		)
 	}
 
-	if options.requiredSSHHost && sshHostConfigDocsCount == 0 {
-		errs.appendError(
-			validation.ErrKindValidationFailed,
-			0,
-			"at least one %q required", sshHostKind,
-		)
-	}
-
-	validateOnlyUniqueHosts(config, errs)
+	validateOnlyUniqueHosts(config.Hosts, options).appendToParseErrors(errs)
 
 	if err := errs.ErrorOrNil(); err != nil {
 		return nil, err
 	}
 
 	return config, nil
-}
-
-func validateOnlyUniqueHosts(cfg *ConnectionConfig, errs *parseErrors) {
-	if len(cfg.Hosts) == 0 {
-		return
-	}
-
-	hostsCounts := make(map[string]int)
-
-	for _, host := range cfg.Hosts {
-		hostsCounts[host.Host]++
-	}
-
-	for host, count := range hostsCounts {
-		if count > 1 {
-			errs.appendMultipleHost(host, count)
-		}
-	}
 }
 
 func getValidator(logger log.LoggerProvider) *validation.Validator {
@@ -171,6 +145,60 @@ func parseOptionsToValidatorOpts(o *validateOptions) []validation.ValidateOption
 		validation.ValidateWithStrictUnmarshal(o.strictUnmarshal),
 		validation.ValidateWithNoPrettyError(o.noPrettyError),
 	}
+}
+
+type notUniqueHosts struct {
+	hosts   map[string]int
+	noHosts bool
+}
+
+func newNotUniqueHosts() notUniqueHosts {
+	return notUniqueHosts{
+		hosts:   make(map[string]int),
+		noHosts: false,
+	}
+}
+
+func (h notUniqueHosts) appendToParseErrors(errs *parseErrors) {
+	if h.noHosts {
+		errs.appendError(
+			validation.ErrKindValidationFailed,
+			0,
+			"at least one %q required", sshHostKind,
+		)
+	}
+
+	for host, count := range h.hosts {
+		errs.appendMultipleHost(host, count)
+	}
+}
+
+func notUniqueHostErr(host string, count int) string {
+	return fmt.Sprintf("host '%s' present multiple times %d", host, count)
+}
+
+func validateOnlyUniqueHosts(hosts []Host, opts *validateOptions) notUniqueHosts {
+	notUnique := newNotUniqueHosts()
+	if len(hosts) == 0 {
+		if opts.requiredSSHHost {
+			notUnique.noHosts = true
+		}
+		return notUnique
+	}
+
+	hostsCounts := make(map[string]int)
+
+	for _, host := range hosts {
+		hostsCounts[host.Host]++
+	}
+
+	for host, count := range hostsCounts {
+		if count > 1 {
+			notUnique.hosts[host] = count
+		}
+	}
+
+	return notUnique
 }
 
 type parseErrors struct {
@@ -206,7 +234,7 @@ func (e *parseErrors) appendError(err error, index int, msgFormat string, args .
 func (e *parseErrors) appendMultipleHost(host string, count int) {
 	e.Append(validation.ErrDocumentValidationFailed, validation.Error{
 		Messages: []string{
-			fmt.Sprintf("host '%s' present multiple times %d", host, count),
+			notUniqueHostErr(host, count),
 		},
 	})
 }
