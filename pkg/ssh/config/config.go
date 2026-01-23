@@ -32,15 +32,18 @@ type Mode struct {
 type Config struct {
 	Mode
 
-	User            string            `json:"sshUser"`
-	Port            *int              `json:"sshPort,omitempty"`
-	PrivateKeys     []AgentPrivateKey `json:"sshAgentPrivateKeys,omitempty"`
-	ExtraArgs       string            `json:"sshExtraArgs,omitempty"`
-	BastionHost     string            `json:"sshBastionHost,omitempty"`
-	BastionPort     *int              `json:"sshBastionPort,omitempty"`
-	BastionUser     string            `json:"sshBastionUser,omitempty"`
-	BastionPassword string            `json:"sshBastionPassword,omitempty"`
-	SudoPassword    string            `json:"sudoPassword,omitempty"`
+	User         string `json:"sshUser"`
+	Port         *int   `json:"sshPort,omitempty"`
+	SudoPassword string `json:"sudoPassword,omitempty"`
+
+	PrivateKeys []AgentPrivateKey `json:"sshAgentPrivateKeys,omitempty"`
+
+	BastionHost     string `json:"sshBastionHost,omitempty"`
+	BastionPort     *int   `json:"sshBastionPort,omitempty"`
+	BastionUser     string `json:"sshBastionUser,omitempty"`
+	BastionPassword string `json:"sshBastionPassword,omitempty"`
+
+	ExtraArgs string `json:"sshExtraArgs,omitempty"`
 }
 
 func (c *Config) FillDefaults() *Config {
@@ -53,6 +56,43 @@ func (c *Config) FillDefaults() *Config {
 	}
 
 	return c
+}
+
+func (c *Config) Clone() *Config {
+	pkLen := len(c.PrivateKeys)
+
+	var privateKeysCpy []AgentPrivateKey
+	if pkLen > 0 {
+		privateKeysCpy = make([]AgentPrivateKey, pkLen)
+		copy(privateKeysCpy, c.PrivateKeys)
+	}
+
+	var port *int
+	if c.Port != nil {
+		port = intPtr(*c.Port)
+	}
+
+	var bastionPort *int
+	if c.BastionPort != nil {
+		bastionPort = intPtr(*c.BastionPort)
+	}
+
+	return &Config{
+		Mode: c.Mode,
+
+		User:         c.User,
+		Port:         port,
+		SudoPassword: c.SudoPassword,
+
+		PrivateKeys: privateKeysCpy,
+
+		BastionHost:     c.BastionHost,
+		BastionPort:     bastionPort,
+		BastionUser:     c.BastionUser,
+		BastionPassword: c.BastionPassword,
+
+		ExtraArgs: c.ExtraArgs,
+	}
 }
 
 type ConnectionConfig struct {
