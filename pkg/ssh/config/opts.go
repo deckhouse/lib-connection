@@ -14,6 +14,8 @@
 
 package config
 
+const DefaultPort = 22
+
 type validateOptions struct {
 	omitDocInError  bool
 	strictUnmarshal bool

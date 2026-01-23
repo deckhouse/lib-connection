@@ -42,6 +42,18 @@ type Config struct {
 	SudoPassword    string            `json:"sudoPassword,omitempty"`
 }
 
+func (c *Config) FillDefaults() *Config {
+	if c.Port == nil {
+		c.Port = intPtr(DefaultPort)
+	}
+
+	if c.BastionPort == nil {
+		c.BastionPort = intPtr(DefaultPort)
+	}
+
+	return c
+}
+
 type ConnectionConfig struct {
 	Config *Config
 	Hosts  []Host

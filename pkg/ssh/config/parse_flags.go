@@ -126,11 +126,11 @@ func (f *Flags) FillDefaults() error {
 	}
 
 	if f.BastionPort == 0 {
-		f.BastionPort = 22
+		f.BastionPort = DefaultPort
 	}
 
 	if f.Port == 0 {
-		f.Port = 22
+		f.Port = DefaultPort
 	}
 
 	return nil
