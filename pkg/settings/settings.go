@@ -38,6 +38,7 @@ type Settings interface {
 	IsDebug() bool
 	TmpDir() string
 	AuthSock() string
+	EnvsPrefix() string
 	RegisterOnShutdown(string, func())
 }
 
@@ -48,6 +49,7 @@ type ProviderParams struct {
 	NodeBinPath    string
 	TmpDir         string
 	AuthSock       string
+	EnvsPrefix     string
 	OnShutdown     OnShutdown
 }
 
@@ -114,6 +116,10 @@ func (b *BaseProviders) AuthSock() string {
 	}
 
 	return os.Getenv("SSH_AUTH_SOCK")
+}
+
+func (b *BaseProviders) EnvsPrefix() string {
+	return b.params.EnvsPrefix
 }
 
 func (b *BaseProviders) RegisterOnShutdown(name string, action func()) {

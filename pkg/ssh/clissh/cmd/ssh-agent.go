@@ -40,6 +40,8 @@ type SSHAgent struct {
 	agentCmd *exec.Cmd
 
 	authSock string
+
+	stopped bool
 }
 
 func NewAgent(sshSett settings.Settings, agentSettings *session.AgentSettings) *SSHAgent {
@@ -125,7 +127,13 @@ func (a *SSHAgent) Start() error {
 }
 
 func (a *SSHAgent) Stop() {
+	if a.stopped {
+		return
+	}
+
 	if a.Executor != nil {
 		a.Executor.Stop()
 	}
+
+	a.stopped = true
 }
