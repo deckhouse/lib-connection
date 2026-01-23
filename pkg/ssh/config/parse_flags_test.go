@@ -23,6 +23,7 @@ import (
 	"os"
 	"os/exec"
 	"os/user"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -190,21 +191,25 @@ func TestParseFlags(t *testing.T) {
 
 	currentUserName, currentHomeDir := usr.Username, usr.HomeDir
 
-	defaultPrivateKey := AgentPrivateKey{
-		Key:        "content",
-		Passphrase: "not secure",
+	defaultPrivateKey := func(homeDir string) AgentPrivateKey {
+		return AgentPrivateKey{
+			Key:        path.Join(homeDir, ".ssh", "id_rsa"),
+			Passphrase: "not secure",
+			IsPath:     true,
+		}
 	}
-
 	// by default, we have ~/.ssh/id_rsa key
 	// it can be protected with password with local development env
 	defaultPrivateKeyExtractor := func(homePath string) PrivateKeyExtractorFunc {
-		return func(path string, logger log.Logger) (content string, password string, err error) {
+		return func(path string, logger log.Logger) (password string, err error) {
 			expected := filepath.Join(homePath, ".ssh", "id_rsa")
 			if path != expected {
-				return "", "", fmt.Errorf("expected %s, got %s", homePath, path)
+				return "", fmt.Errorf("expected %s, got %s", homePath, path)
 			}
 
-			return defaultPrivateKey.Key, defaultPrivateKey.Passphrase, nil
+			defaultKey := defaultPrivateKey(path)
+
+			return defaultKey.Passphrase, nil
 		}
 	}
 
@@ -227,7 +232,6 @@ func TestParseFlags(t *testing.T) {
 
 	beforeAddPrivateKeys := func(t *testing.T, tst *test, logger log.Logger) {
 		pathToPassword := make(map[string]string)
-		pathToContent := make(map[string]string)
 
 		for _, privateKey := range tst.privateKeys {
 			tst.arguments = append(tst.arguments, fmt.Sprintf("--ssh-agent-private-keys=%s", privateKey.path))
@@ -235,8 +239,9 @@ func TestParseFlags(t *testing.T) {
 			if tst.expected != nil {
 				tst.expected.Config.PrivateKeys = append(
 					tst.expected.Config.PrivateKeys, AgentPrivateKey{
-						Key:        privateKey.content,
+						Key:        privateKey.path,
 						Passphrase: privateKey.expectedPassword,
+						IsPath:     true,
 					},
 				)
 			}
@@ -244,18 +249,11 @@ func TestParseFlags(t *testing.T) {
 			if privateKey.expectedPassword != "" {
 				pathToPassword[privateKey.path] = privateKey.expectedPassword
 			}
-
-			pathToContent[privateKey.path] = privateKey.content
 		}
 
 		if tst.privateKeyExtractor == nil && len(pathToPassword) > 0 {
-			tst.privateKeyExtractor = func(path string, _ log.Logger) (string, string, error) {
-				content, ok := pathToContent[path]
-				if !ok {
-					return "", "", fmt.Errorf("content for path %s not found", path)
-				}
-
-				return content, pathToPassword[path], nil
+			tst.privateKeyExtractor = func(path string, _ log.Logger) (string, error) {
+				return pathToPassword[path], nil
 			}
 		}
 	}
@@ -272,13 +270,15 @@ func TestParseFlags(t *testing.T) {
 			expected: &ConnectionConfig{
 				Config: &Config{
 					Mode: Mode{
-						ForceLegacy:     false,
-						ForceModernMode: false,
+						ForceLegacy: false,
+						ForceModern: false,
 					},
 					User: currentUserName,
 					Port: intPtr(22),
 
-					PrivateKeys: []AgentPrivateKey{defaultPrivateKey},
+					PrivateKeys: []AgentPrivateKey{
+						defaultPrivateKey(currentHomeDir),
+					},
 
 					BastionUser: currentUserName,
 					BastionPort: intPtr(22),
@@ -300,18 +300,21 @@ func TestParseFlags(t *testing.T) {
 				})
 
 				tst.privateKeyExtractor = defaultPrivateKeyExtractor(homePath)
+				tst.expected.Config.PrivateKeys = []AgentPrivateKey{
+					defaultPrivateKey(homePath),
+				}
 			},
 
 			expected: &ConnectionConfig{
 				Config: &Config{
 					Mode: Mode{
-						ForceLegacy:     false,
-						ForceModernMode: false,
+						ForceLegacy: false,
+						ForceModern: false,
 					},
 					User: currentUserName,
 					Port: intPtr(22),
 
-					PrivateKeys: []AgentPrivateKey{defaultPrivateKey},
+					// PrivateKeys added in before
 
 					BastionUser: currentUserName,
 					BastionPort: intPtr(22),
@@ -338,18 +341,22 @@ func TestParseFlags(t *testing.T) {
 					"USER": "notexists8",
 					"HOME": homePath,
 				}
+
+				tst.expected.Config.PrivateKeys = []AgentPrivateKey{
+					defaultPrivateKey(homePath),
+				}
 			},
 
 			expected: &ConnectionConfig{
 				Config: &Config{
 					Mode: Mode{
-						ForceLegacy:     false,
-						ForceModernMode: false,
+						ForceLegacy: false,
+						ForceModern: false,
 					},
 					User: "notexists8",
 					Port: intPtr(22),
 
-					PrivateKeys: []AgentPrivateKey{defaultPrivateKey},
+					// PrivateKeys added in before
 
 					BastionUser: "notexists8",
 					BastionPort: intPtr(22),
@@ -374,18 +381,22 @@ func TestParseFlags(t *testing.T) {
 					"USER": "",
 					"HOME": "",
 				}
+
+				tst.expected.Config.PrivateKeys = []AgentPrivateKey{
+					defaultPrivateKey(currentHomeDir),
+				}
 			},
 
 			expected: &ConnectionConfig{
 				Config: &Config{
 					Mode: Mode{
-						ForceLegacy:     false,
-						ForceModernMode: false,
+						ForceLegacy: false,
+						ForceModern: false,
 					},
 					User: currentUserName,
 					Port: intPtr(22),
 
-					PrivateKeys: []AgentPrivateKey{defaultPrivateKey},
+					// PrivateKeys added in before
 
 					BastionUser: currentUserName,
 					BastionPort: intPtr(22),
@@ -420,8 +431,8 @@ func TestParseFlags(t *testing.T) {
 			expected: &ConnectionConfig{
 				Config: &Config{
 					Mode: Mode{
-						ForceLegacy:     false,
-						ForceModernMode: true,
+						ForceLegacy: false,
+						ForceModern: true,
 					},
 					User: "user",
 					Port: intPtr(2201),
@@ -470,8 +481,8 @@ func TestParseFlags(t *testing.T) {
 			expected: &ConnectionConfig{
 				Config: &Config{
 					Mode: Mode{
-						ForceLegacy:     true,
-						ForceModernMode: false,
+						ForceLegacy: true,
+						ForceModern: false,
 					},
 					User: "user",
 					Port: intPtr(2201),
@@ -515,8 +526,8 @@ func TestParseFlags(t *testing.T) {
 			expected: &ConnectionConfig{
 				Config: &Config{
 					Mode: Mode{
-						ForceLegacy:     false,
-						ForceModernMode: true,
+						ForceLegacy: false,
+						ForceModern: true,
 					},
 					User: "user",
 					Port: intPtr(2201),
@@ -562,8 +573,8 @@ func TestParseFlags(t *testing.T) {
 			expected: &ConnectionConfig{
 				Config: &Config{
 					Mode: Mode{
-						ForceLegacy:     true,
-						ForceModernMode: false,
+						ForceLegacy: true,
+						ForceModern: false,
 					},
 					User: "user",
 					Port: intPtr(2201),
@@ -608,9 +619,9 @@ legacyMode: true
 sshBastionPassword: "not_secure_password_bastion"
 `, "192.168.0.1", "192.168.0.2")
 
-				path := tst.tmpDir.writeFile(t, config, "connection-config")
+				configPath := tst.tmpDir.writeFile(t, config, "connection-config")
 
-				tst.arguments = append(tst.arguments, fmt.Sprintf("--connection-config=%s", path))
+				tst.arguments = append(tst.arguments, fmt.Sprintf("--connection-config=%s", configPath))
 
 				tst.expected.Config.PrivateKeys = validPrivateKeys
 			},
@@ -620,8 +631,8 @@ sshBastionPassword: "not_secure_password_bastion"
 			expected: &ConnectionConfig{
 				Config: &Config{
 					Mode: Mode{
-						ForceLegacy:     true,
-						ForceModernMode: false,
+						ForceLegacy: true,
+						ForceModern: false,
 					},
 					User: "ubuntu",
 					Port: intPtr(2221),
@@ -756,8 +767,8 @@ sshBastionPassword: "not_secure_password_bastion"
 			passwords: nil,
 			arguments: []string{},
 			before: func(t *testing.T, tst *test, logger log.Logger) {
-				path := tst.tmpDir.createSubDir(t, "connection-config-dir")
-				tst.arguments = append(tst.arguments, fmt.Sprintf("--connection-config=%s", path))
+				configPath := tst.tmpDir.createSubDir(t, "connection-config-dir")
+				tst.arguments = append(tst.arguments, fmt.Sprintf("--connection-config=%s", configPath))
 			},
 			hasErrorContains: "should be regular file",
 		},
@@ -788,7 +799,7 @@ sshBastionPassword: "not_secure_password_bastion"
 
 			before: func(t *testing.T, tst *test, logger log.Logger) {
 				defaultPassword := []byte(tst.privateKeys[0].expectedPassword)
-				tst.privateKeyExtractor = func(path string, logger log.Logger) (string, string, error) {
+				tst.privateKeyExtractor = func(path string, logger log.Logger) (string, error) {
 					return terminalPrivateKeyPasswordExtractor(path, defaultPassword, logger)
 				}
 				beforeAddPrivateKeys(t, tst, logger)
@@ -1193,16 +1204,17 @@ func defaultArgsForParseFlagsAndExtractConfig(t *testing.T, name string, overrid
 	expected := &ConnectionConfig{
 		Config: &Config{
 			Mode: Mode{
-				ForceLegacy:     false,
-				ForceModernMode: true,
+				ForceLegacy: false,
+				ForceModern: true,
 			},
 			User: "user",
 			Port: intPtr(2201),
 
 			PrivateKeys: []AgentPrivateKey{
 				{
-					Key:        key.content,
+					Key:        key.path,
 					Passphrase: "",
+					IsPath:     true,
 				},
 			},
 
@@ -1326,10 +1338,10 @@ func (k *testPrivateKeys) create(t *testing.T) {
 
 		keyID := GenerateID(k.name, fmt.Sprintf("%d", i))
 
-		path := k.writeFile(t, keyContent, fmt.Sprintf("id_rsa.%s", keyID))
-		k.logger.InfoF("Private key %s written", path)
+		keyPath := k.writeFile(t, keyContent, fmt.Sprintf("id_rsa.%s", keyID))
+		k.logger.InfoF("Private key %s written", keyPath)
 
-		key.path = path
+		key.path = keyPath
 		key.password = password
 		key.content = keyContent
 		if key.expectedPassword == "" {

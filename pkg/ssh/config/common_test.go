@@ -87,6 +87,7 @@ func assertConnectionConfig(t *testing.T, params connectionConfigAssertParams) {
 			trimmedKeys = append(trimmedKeys, AgentPrivateKey{
 				Key:        strings.TrimRight(key.Key, "\n"),
 				Passphrase: key.Passphrase,
+				IsPath:     key.IsPath,
 			})
 		}
 

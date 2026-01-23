@@ -17,6 +17,7 @@ package config
 type AgentPrivateKey struct {
 	Key        string `json:"key"`
 	Passphrase string `json:"passphrase,omitempty"`
+	IsPath     bool   `json:"-"`
 }
 
 type Host struct {
@@ -24,8 +25,8 @@ type Host struct {
 }
 
 type Mode struct {
-	ForceLegacy     bool `json:"legacyMode,omitempty"`
-	ForceModernMode bool `json:"modernMode,omitempty"`
+	ForceLegacy bool `json:"legacyMode,omitempty"`
+	ForceModern bool `json:"modernMode,omitempty"`
 }
 
 type Config struct {

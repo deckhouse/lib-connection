@@ -160,7 +160,7 @@ func (f *Flags) RewriteFromEnvs() error {
 	f.envExtractor.String(ConnectionConfigEnv, &f.ConnectionConfigPath)
 
 	f.envExtractor.Bool(LegacyModeEnv, &f.ForceLegacy)
-	f.envExtractor.Bool(ModernModeEnv, &f.ForceModernMode)
+	f.envExtractor.Bool(ModernModeEnv, &f.ForceModern)
 
 	f.envExtractor.Bool(AskBastionPasswordEnv, &f.AskBastionPass)
 	f.envExtractor.Bool(AskSudoPasswordEnv, &f.AskSudoPass)
@@ -213,7 +213,7 @@ func (f *Flags) userExtractor() func() (string, error) {
 type (
 	AskPasswordFunc         func(promt string) ([]byte, error)
 	EnvsLookupFunc          func(name string) (string, bool)
-	PrivateKeyExtractorFunc func(path string, logger log.Logger) (content string, password string, err error)
+	PrivateKeyExtractorFunc func(path string, logger log.Logger) (password string, err error)
 )
 
 type FlagsParser struct {
@@ -241,7 +241,7 @@ func NewFlagsParser(sett settings.Settings) *FlagsParser {
 		sett: sett,
 	}
 
-	terminalPrivateKeyPasswordExtractorWithoutDefault := func(path string, logger log.Logger) (string, string, error) {
+	terminalPrivateKeyPasswordExtractorWithoutDefault := func(path string, logger log.Logger) (string, error) {
 		return terminalPrivateKeyPasswordExtractor(path, make([]byte, 0), logger)
 	}
 
@@ -408,7 +408,7 @@ func (p *FlagsParser) InitFlags(set *flag.FlagSet) (*Flags, error) {
 	)
 
 	set.BoolVar(
-		&flags.ForceModernMode,
+		&flags.ForceModern,
 		modernModeFlag,
 		false,
 		extractorFromEnv.AddEnvToUsage(
@@ -501,7 +501,7 @@ func (p *FlagsParser) ExtractConfigAfterParse(flags *Flags, opts ...ValidateOpti
 		return nil, err
 	}
 
-	if flags.ForceLegacy && flags.ForceModernMode {
+	if flags.ForceLegacy && flags.ForceModern {
 		return nil, fmt.Errorf("--%s and --%s cannot be use both", legacyModeFlag, modernModeFlag)
 	}
 
@@ -519,8 +519,8 @@ func (p *FlagsParser) ExtractConfigAfterParse(flags *Flags, opts ...ValidateOpti
 	return &ConnectionConfig{
 		Config: &Config{
 			Mode: Mode{
-				ForceLegacy:     flags.ForceLegacy,
-				ForceModernMode: flags.ForceModernMode,
+				ForceLegacy: flags.ForceLegacy,
+				ForceModern: flags.ForceModern,
 			},
 
 			User: flags.User,
@@ -587,15 +587,16 @@ func (p *FlagsParser) readPrivateKeysFromFlags(flags *Flags, logger log.Logger) 
 
 		pathsParsed[path] = struct{}{}
 
-		content, keysPassword, err := p.extractPrivateKey(path, logger)
+		keysPassword, err := p.extractPrivateKey(path, logger)
 		if err != nil {
 			parseErr = multierror.Append(parseErr, fmt.Errorf("cannot parse private key file %s: %w", path, err))
 			continue
 		}
 
 		res = append(res, AgentPrivateKey{
-			Key:        content,
+			Key:        path,
 			Passphrase: keysPassword,
+			IsPath:     true,
 		})
 	}
 
@@ -805,10 +806,10 @@ func (e *envExtractor) Bool(name string, destination *bool) {
 	*destination = value
 }
 
-func terminalPrivateKeyPasswordExtractor(path string, defaultPassword []byte, logger log.Logger) (string, string, error) {
+func terminalPrivateKeyPasswordExtractor(path string, defaultPassword []byte, logger log.Logger) (string, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {
-		return "", "", fmt.Errorf("Cannot read private key %s: %w", path, err)
+		return "", fmt.Errorf("Cannot read private key %s: %w", path, err)
 	}
 
 	_, password, err := utils.ParseSSHPrivateKey(
@@ -817,7 +818,7 @@ func terminalPrivateKeyPasswordExtractor(path string, defaultPassword []byte, lo
 		utils.NewTerminalPassphraseConsumer(logger, defaultPassword),
 	)
 
-	return string(content), password, err
+	return password, err
 }
 
 type passwordsFromUser struct {
