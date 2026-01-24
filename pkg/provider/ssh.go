@@ -16,7 +16,6 @@ package provider
 
 import (
 	"context"
-	"crypto/sha256"
 	"fmt"
 	mathrand "math/rand"
 	"os"
@@ -35,35 +34,51 @@ import (
 	"github.com/deckhouse/lib-connection/pkg/ssh/session"
 )
 
+type SSHClientOptions struct {
+	InitializeNewAgent bool
+}
+
+type SSHClientOption func(options *SSHClientOptions)
+
+func SSHClientWithInitializeNewAgent() SSHClientOption {
+	return func(options *SSHClientOptions) {
+		options.InitializeNewAgent = true
+	}
+}
+
 type DefaultSSHProvider struct {
 	mu sync.Mutex
 
-	defaultConfig *sshconfig.ConnectionConfig
+	sett    settings.Settings
+	options SSHClientOptions
 
-	currentClient     connection.SSHClient
+	defaultConfig *sshconfig.ConnectionConfig
+	currentClient connection.SSHClient
+
 	additionalClients []connection.SSHClient
 
-	sett settings.Settings
-
-	privateKeysTmp      string
-	writtenPrivateKeys  []alreadyWrittenKey
-	privateKeysPrepared bool
+	privateKeysTmp              string
+	writtenPrivateKeys          []session.AgentPrivateKey
+	defaultPrivateKeysWithPaths []session.AgentPrivateKey
+	privateKeysPrepared         bool
 
 	cleaned bool
 }
 
-func NewDefaultSSHProvider(sett settings.Settings, config *sshconfig.ConnectionConfig) *DefaultSSHProvider {
+func NewDefaultSSHProvider(sett settings.Settings, config *sshconfig.ConnectionConfig, opts ...SSHClientOption) *DefaultSSHProvider {
 	clonedConfig := config.Config.Clone().FillDefaults()
 	clonedConnectionConfig := &sshconfig.ConnectionConfig{
 		Hosts:  config.Hosts,
 		Config: clonedConfig,
 	}
 
-	return &DefaultSSHProvider{
+	provider := &DefaultSSHProvider{
 		defaultConfig:      clonedConnectionConfig,
 		sett:               sett,
-		writtenPrivateKeys: make([]alreadyWrittenKey, 0, 2),
+		writtenPrivateKeys: make([]session.AgentPrivateKey, 0, 2),
 	}
+
+	return provider.WithOptions(opts...)
 }
 
 func NewDefaultSSHProviderFromFlags(sett settings.Settings, flags *sshconfig.Flags, opts ...sshconfig.ValidateOption) (*DefaultSSHProvider, error) {
@@ -76,8 +91,11 @@ func NewDefaultSSHProviderFromFlags(sett settings.Settings, flags *sshconfig.Fla
 	return NewDefaultSSHProvider(sett, config), nil
 }
 
-func (p *DefaultSSHProvider) NewClient(ctx context.Context, opts ...connection.SSHClientOption) (connection.SSHClient, error) {
-	client, err := p.createClient(ctx, nil, nil, opts...)
+func (p *DefaultSSHProvider) NewClient(ctx context.Context) (connection.SSHClient, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	client, err := p.createClient(ctx, nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -86,22 +104,17 @@ func (p *DefaultSSHProvider) NewClient(ctx context.Context, opts ...connection.S
 	return client, nil
 }
 
-func (p *DefaultSSHProvider) Client(ctx context.Context, opts ...connection.SSHClientOption) (connection.SSHClient, error) {
-	if !govalue.Nil(p.currentClient) {
-		return p.currentClient, nil
-	}
+func (p *DefaultSSHProvider) Client(ctx context.Context) (connection.SSHClient, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 
-	client, err := p.createClient(ctx, nil, nil, opts...)
-	if err != nil {
-		return nil, err
-	}
-
-	p.currentClient = client
-
-	return client, nil
+	return p.doGetCurrentClient(ctx)
 }
 
 func (p *DefaultSSHProvider) SwitchClient(ctx context.Context, sess *session.Session, privateKeys []session.AgentPrivateKey) (connection.SSHClient, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
 	p.debug("Start switch to new client %s", sess.String())
 
 	p.stopCurrentClientIfNeed()
@@ -119,12 +132,16 @@ func (p *DefaultSSHProvider) SwitchClient(ctx context.Context, sess *session.Ses
 }
 
 func (p *DefaultSSHProvider) SwitchToDefault(ctx context.Context) (connection.SSHClient, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
 	p.debug("Start switch to default settings client")
 
 	p.stopCurrentClientIfNeed()
 
-	// can use Client because stopCurrentClientIfNeed set currentClient to nil
-	client, err := p.Client(ctx)
+	// can use doGetCurrentClient because stopCurrentClientIfNeed set currentClient to nil
+	// do not use Client because Client acquire lock
+	client, err := p.doGetCurrentClient(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -167,7 +184,37 @@ func (p *DefaultSSHProvider) Cleanup(context.Context) error {
 	return errs.ErrorOrNil()
 }
 
-func (p *DefaultSSHProvider) createClient(ctx context.Context, parent *session.Session, inputPrivateKeys []session.AgentPrivateKey, opts ...connection.SSHClientOption) (connection.SSHClient, error) {
+func (p *DefaultSSHProvider) WithOptions(opts ...SSHClientOption) *DefaultSSHProvider {
+	options := SSHClientOptions{}
+	for _, opt := range opts {
+		opt(&options)
+	}
+
+	p.options = options
+
+	return p
+}
+
+func (p *DefaultSSHProvider) doGetCurrentClient(ctx context.Context) (connection.SSHClient, error) {
+	if !govalue.Nil(p.currentClient) {
+		return p.currentClient, nil
+	}
+
+	client, err := p.createClient(ctx, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	p.currentClient = client
+
+	return client, nil
+}
+
+func (p *DefaultSSHProvider) createClient(ctx context.Context, parent *session.Session, inputPrivateKeys []session.AgentPrivateKey) (connection.SSHClient, error) {
+	if !p.defaultConfig.Config.HaveAuthMethods() {
+		return nil, fmt.Errorf("Did not any auth methods provided")
+	}
+
 	if err := p.prepareConfigPrivateKeys(); err != nil {
 		return nil, fmt.Errorf("Cannot prepare private keys: %w", err)
 	}
@@ -178,12 +225,7 @@ func (p *DefaultSSHProvider) createClient(ctx context.Context, parent *session.S
 		return gossh.NewClient(ctx, p.sett, sess, privateKeys), nil
 	}
 
-	options := connection.SSHClientOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
-
-	return clissh.NewClient(p.sett, sess, privateKeys, options.InitializeNewAgent), nil
+	return clissh.NewClient(p.sett, sess, privateKeys, p.options.InitializeNewAgent), nil
 }
 
 func (p *DefaultSSHProvider) stopCurrentClientIfNeed() {
@@ -263,8 +305,13 @@ func (p *DefaultSSHProvider) newSession(parent *session.Session, privateKeys []s
 	// add keys from config because we can use bastion and bastion key
 	// presents only in config if switch client
 	for _, writtenKey := range p.writtenPrivateKeys {
-		if _, ok := privateKeysInSession[writtenKey.key.Key]; !ok {
-			resPrivateKeys = append(resPrivateKeys, writtenKey.key)
+		if _, ok := privateKeysInSession[writtenKey.Key]; !ok {
+			resPrivateKeys = append(resPrivateKeys, writtenKey)
+		}
+	}
+	for _, keysWithPath := range p.defaultPrivateKeysWithPaths {
+		if _, ok := privateKeysInSession[keysWithPath.Key]; !ok {
+			resPrivateKeys = append(resPrivateKeys, keysWithPath)
 		}
 	}
 
@@ -300,18 +347,14 @@ func (p *DefaultSSHProvider) prepareConfigPrivateKeys() error {
 		return nil
 	}
 
-	var res []session.AgentPrivateKey
-
 	var keysToWrite []sshconfig.AgentPrivateKey
 	for _, key := range p.defaultConfig.Config.PrivateKeys {
 		if !key.IsPath {
-			keysToWrite = p.appendKeyToWrite(key, keysToWrite)
+			keysToWrite = append(keysToWrite, key)
 			continue
 		}
 
-		var err error
-		res, err = p.appendPrivateKeyPath(key, res)
-		if err != nil {
+		if err := p.appendPrivateKeyPath(key); err != nil {
 			return err
 		}
 	}
@@ -325,9 +368,7 @@ func (p *DefaultSSHProvider) prepareConfigPrivateKeys() error {
 	}
 
 	for _, key := range keysToWrite {
-		var err error
-		res, err = p.writeKey(key, res)
-		if err != nil {
+		if err := p.writeKey(key); err != nil {
 			return err
 		}
 	}
@@ -337,51 +378,34 @@ func (p *DefaultSSHProvider) prepareConfigPrivateKeys() error {
 	return nil
 }
 
-func (p *DefaultSSHProvider) appendKeyToWrite(key sshconfig.AgentPrivateKey, keysToWrite []sshconfig.AgentPrivateKey) []sshconfig.AgentPrivateKey {
-	isWritten := false
-	for _, w := range p.writtenPrivateKeys {
-		if key.Key == w.key.Key {
-			continue
-		}
-
-		isWritten = w.contentSum == shaSum([]byte(key.Key))
-	}
-
-	if !isWritten {
-		keysToWrite = append(keysToWrite, key)
-	}
-
-	return keysToWrite
-}
-
-func (p *DefaultSSHProvider) appendPrivateKeyPath(key sshconfig.AgentPrivateKey, res []session.AgentPrivateKey) ([]session.AgentPrivateKey, error) {
+func (p *DefaultSSHProvider) appendPrivateKeyPath(key sshconfig.AgentPrivateKey) error {
 	path := key.Key
 
 	exists, err := fileExists(path)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	if !exists {
-		return nil, fmt.Errorf("private key %s does not exist", path)
+		return fmt.Errorf("private key %s does not exist", path)
 	}
 
-	res = append(res, session.AgentPrivateKey{
+	p.defaultPrivateKeysWithPaths = append(p.defaultPrivateKeysWithPaths, session.AgentPrivateKey{
 		Key:        key.Key,
 		Passphrase: key.Passphrase,
 	})
 
-	return res, nil
+	return nil
 }
 
-func (p *DefaultSSHProvider) writeKey(key sshconfig.AgentPrivateKey, res []session.AgentPrivateKey) ([]session.AgentPrivateKey, error) {
+func (p *DefaultSSHProvider) writeKey(key sshconfig.AgentPrivateKey) error {
 	if p.privateKeysTmp == "" {
-		return nil, fmt.Errorf("internal error: tmp dir for private keys did not created")
+		return fmt.Errorf("internal error: tmp dir for private keys did not created")
 	}
 
 	keyFullPath, err := p.keyPath()
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	p.debug("Writing private key %s", keyFullPath)
@@ -389,25 +413,17 @@ func (p *DefaultSSHProvider) writeKey(key sshconfig.AgentPrivateKey, res []sessi
 	content := []byte(key.Key)
 
 	if err := os.WriteFile(keyFullPath, content, 0600); err != nil {
-		return nil, fmt.Errorf("cannot write private key to file %s: %w", keyFullPath, err)
+		return fmt.Errorf("cannot write private key to file %s: %w", keyFullPath, err)
 	}
 
-	writtenAgentKey := session.AgentPrivateKey{
+	p.writtenPrivateKeys = append(p.writtenPrivateKeys, session.AgentPrivateKey{
 		Key:        keyFullPath,
 		Passphrase: key.Passphrase,
-	}
-
-	writtenKey := alreadyWrittenKey{
-		key:        writtenAgentKey,
-		contentSum: shaSum(content),
-	}
-
-	p.writtenPrivateKeys = append(p.writtenPrivateKeys, writtenKey)
-	res = append(res, writtenAgentKey)
+	})
 
 	p.debug("Private key written to %s", keyFullPath)
 
-	return res, nil
+	return nil
 }
 
 func (p *DefaultSSHProvider) createPrivateKeysDir() error {
@@ -457,19 +473,6 @@ func (p *DefaultSSHProvider) debug(format string, args ...any) {
 	p.sett.Logger().DebugF(format, args...)
 }
 
-type alreadyWrittenKey struct {
-	key        session.AgentPrivateKey
-	contentSum string
-}
-
-func shaSum(input []byte) string {
-	hasher := sha256.New()
-
-	hasher.Write(input)
-
-	return fmt.Sprintf("%x", hasher.Sum(nil))
-}
-
 func randString() string {
 	randomizer := mathrand.New(mathrand.NewSource(time.Now().UnixNano()))
 	return fmt.Sprintf("%d", randomizer.Uint32())
@@ -485,8 +488,8 @@ func fileExists(path string) (bool, error) {
 		return false, fmt.Errorf("Cannot stat path %s: %w", path, err)
 	}
 
-	if stat.IsDir() {
-		return false, fmt.Errorf("Path %s is a directory", path)
+	if stat.IsDir() || !stat.Mode().IsRegular() {
+		return false, fmt.Errorf("path %s not regular file", path)
 	}
 
 	return true, nil

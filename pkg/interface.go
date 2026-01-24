@@ -23,26 +23,14 @@ import (
 	"github.com/deckhouse/lib-connection/pkg/ssh/session"
 )
 
-type SSHClientOptions struct {
-	InitializeNewAgent bool
-}
-
-type SSHClientOption func(options *SSHClientOptions)
-
-func SSHClientWithInitializeNewAgent() SSHClientOption {
-	return func(options *SSHClientOptions) {
-		options.InitializeNewAgent = true
-	}
-}
-
 type SSHProvider interface {
 	// NewClient
-	// initialize new client for defaults
-	NewClient(ctx context.Context, opts ...SSHClientOption) (SSHClient, error)
+	// initialize new client from default configuration
+	NewClient(ctx context.Context) (SSHClient, error)
 
 	// Client
 	// get current client or initialize from defaults
-	Client(ctx context.Context, opts ...SSHClientOption) (SSHClient, error)
+	Client(ctx context.Context) (SSHClient, error)
 
 	// SwitchClient
 	// switch current client with new client with provided settings
