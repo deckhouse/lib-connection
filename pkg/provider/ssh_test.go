@@ -36,6 +36,19 @@ import (
 
 func TestSSHProviderClient(t *testing.T) {
 	t.Run("Client", func(t *testing.T) {
+		assertClientAndMultipleClientCall := func(t *testing.T, params assertParams) {
+			ctx := context.TODO()
+
+			client, err := params.provider.Client(ctx)
+			assertClient(t, params, client, err)
+			assertWritePrivateKeys(t, params)
+
+			anotherClient, err := params.provider.Client(ctx)
+			assertClient(t, params, anotherClient, err)
+			require.True(t, client == anotherClient, "client should be the same")
+			assertWritePrivateKeys(t, params)
+		}
+
 		t.Run("Fill defaults", func(t *testing.T) {
 			sett := testSettings(t)
 			config := testCreateSSHConnectionConfigWithPrivateKeyPaths(t, connectionConfigParams{
@@ -57,19 +70,6 @@ func TestSSHProviderClient(t *testing.T) {
 			assertPrivateKeysAddedInSession(t, client, config.Config.PrivateKeys)
 		})
 
-		assertClientAndMultipleClientCall := func(t *testing.T, params assertParams) {
-			ctx := context.TODO()
-
-			client, err := params.provider.Client(ctx)
-			assertClient(t, params, client, err)
-			assertWritePrivateKeys(t, params)
-
-			anotherClient, err := params.provider.Client(ctx)
-			assertClient(t, params, anotherClient, err)
-			require.True(t, client == anotherClient, "client should be the same")
-			assertWritePrivateKeys(t, params)
-		}
-
 		t.Run("private keys paths force cli-ssh no write", func(t *testing.T) {
 			sett := testSettings(t)
 			config := testCreateSSHConnectionConfigWithPrivateKeyPaths(t, connectionConfigParams{
@@ -87,6 +87,12 @@ func TestSSHProviderClient(t *testing.T) {
 				shouldContainError: "",
 				config:             config,
 			})
+
+			assertLogMessage(
+				t,
+				sett,
+				"Use cli-ssh by default",
+			)
 		})
 
 		t.Run("private keys contents force cli-ssh write one time", func(t *testing.T) {
@@ -128,6 +134,12 @@ func TestSSHProviderClient(t *testing.T) {
 				shouldContainError: "",
 				config:             config,
 			})
+
+			assertLogMessage(
+				t,
+				sett,
+				"Force cli-ssh from client settings",
+			)
 		})
 
 		t.Run("password auth force go-ssh no write keys", func(t *testing.T) {
@@ -174,6 +186,12 @@ func TestSSHProviderClient(t *testing.T) {
 				shouldContainError: "",
 				config:             config,
 			})
+
+			assertLogMessage(
+				t,
+				sett,
+				"Force go-ssh client from client settings",
+			)
 		})
 
 		t.Run("auth methods did not provided", func(t *testing.T) {

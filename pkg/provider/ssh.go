@@ -49,8 +49,9 @@ func SSHClientWithInitializeNewAgent() SSHClientOption {
 type DefaultSSHProvider struct {
 	mu sync.Mutex
 
-	sett    settings.Settings
-	options SSHClientOptions
+	sett          settings.Settings
+	options       SSHClientOptions
+	goSSHStopWait time.Duration
 
 	defaultConfig *sshconfig.ConnectionConfig
 	currentClient connection.SSHClient
@@ -76,6 +77,7 @@ func NewDefaultSSHProvider(sett settings.Settings, config *sshconfig.ConnectionC
 		defaultConfig:      clonedConnectionConfig,
 		sett:               sett,
 		writtenPrivateKeys: make([]session.AgentPrivateKey, 0, 2),
+		goSSHStopWait:      10 * time.Second,
 	}
 
 	return provider.WithOptions(opts...)
@@ -246,11 +248,10 @@ func (p *DefaultSSHProvider) stopCurrentClientIfNeed() {
 	p.debug("Stopping old SSH Client: %-v\n", p.currentClient)
 	p.currentClient.Stop()
 
-	sleep := 10 * time.Second
-	p.debug("Waiting for '%s' for stopped old SSH client\n", sleep)
+	p.debug("Waiting for '%s' for stopped old SSH client\n", p.goSSHStopWait.String())
 	// todo ugly solution we need to add waiting function after stop in clients
 	// wait for keep-alive goroutine will exit
-	time.Sleep(sleep)
+	time.Sleep(p.goSSHStopWait)
 }
 
 func (p *DefaultSSHProvider) newSession(parent *session.Session, privateKeys []session.AgentPrivateKey) (*session.Session, []session.AgentPrivateKey) {
@@ -322,12 +323,12 @@ func (p *DefaultSSHProvider) useGoSSH() bool {
 	config := p.defaultConfig.Config
 
 	if config.ForceModern {
-		p.debug("Force go-ssh client from client")
+		p.debug("Force go-ssh client from client settings")
 		return true
 	}
 
 	if config.ForceLegacy {
-		p.debug("Force cli-ssh from client")
+		p.debug("Force cli-ssh from client settings")
 		return false
 	}
 
