@@ -93,7 +93,14 @@ func NewDefaultSSHProviderFromFlags(sett settings.Settings, flags *sshconfig.Fla
 	return NewDefaultSSHProvider(sett, config), nil
 }
 
-func (p *DefaultSSHProvider) NewClient(ctx context.Context) (connection.SSHClient, error) {
+func (p *DefaultSSHProvider) Client(ctx context.Context) (connection.SSHClient, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	return p.doGetCurrentClient(ctx)
+}
+
+func (p *DefaultSSHProvider) NewAdditionalClient(ctx context.Context) (connection.SSHClient, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -104,13 +111,6 @@ func (p *DefaultSSHProvider) NewClient(ctx context.Context) (connection.SSHClien
 
 	p.additionalClients = append(p.additionalClients, client)
 	return client, nil
-}
-
-func (p *DefaultSSHProvider) Client(ctx context.Context) (connection.SSHClient, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	return p.doGetCurrentClient(ctx)
 }
 
 func (p *DefaultSSHProvider) SwitchClient(ctx context.Context, sess *session.Session, privateKeys []session.AgentPrivateKey) (connection.SSHClient, error) {

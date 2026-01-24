@@ -277,6 +277,113 @@ func TestSSHProviderClient(t *testing.T) {
 			})
 		})
 	})
+
+	t.Run("NewAdditionalClient", func(t *testing.T) {
+		assertAdditionalClients := func(t *testing.T, provider *DefaultSSHProvider, additionalClients ...connection.SSHClient) {
+			defaultClient, err := provider.Client(context.TODO())
+			require.NoError(t, err, "default client should provided")
+
+			clientsType := &gossh.Client{}
+			require.IsType(t, clientsType, defaultClient, "default client should have valid type")
+
+			require.Len(t, provider.additionalClients, len(additionalClients), "all additional client should stored")
+			for _, client := range additionalClients {
+				require.False(t, defaultClient == client, "additional client should not be default client")
+				require.IsType(t, clientsType, client, "additional client should have valid type")
+
+				defaultClientSess := defaultClient.Session()
+				require.NotNil(t, defaultClientSess, "default client should have valid session")
+
+				additionalClientSess := client.Session()
+				require.NotNil(t, defaultClientSess, "additional client should have valid session")
+
+				require.Equal(t, defaultClientSess, additionalClientSess, "additional be same as in default")
+
+				expectedAnothers := len(provider.additionalClients) - 1
+				anotherClients := make([]connection.SSHClient, 0, expectedAnothers)
+				for _, cc := range provider.additionalClients {
+					if cc != client {
+						anotherClients = append(anotherClients, cc)
+					}
+				}
+
+				require.Len(t, anotherClients, expectedAnothers, "additional clients should be different")
+			}
+
+			firstClient := additionalClients[0]
+			firstClient.Session().ChoiceNewHost()
+			firstClient.Session().ChoiceNewHost()
+
+			require.NotEqual(
+				t,
+				defaultClient.Session(),
+				firstClient.Session(),
+				"change additional client session does not affect default",
+			)
+
+			for _, cc := range provider.additionalClients[1:] {
+				require.NotEqual(
+					t,
+					cc.Session(),
+					firstClient.Session(),
+					"change one of additional client session does not affect another",
+				)
+			}
+		}
+
+		t.Run("after get default", func(t *testing.T) {
+			sett := testSettings(t)
+			config := testCreateSSHConnectionConfigWithPrivateKeyPaths(t, connectionConfigParams{
+				mode: sshconfig.Mode{
+					ForceModern: true,
+				},
+				sett:        sett,
+				bastionPort: nil,
+				port:        nil,
+			})
+
+			ctx := context.TODO()
+
+			provider := NewDefaultSSHProvider(sett, config)
+			_, err := provider.Client(ctx)
+			require.NoError(t, err, "default client should provided")
+
+			firstAdditionalClient, err := provider.NewAdditionalClient(ctx)
+			require.NoError(t, err, "additional client should provided")
+
+			secondAdditionalClient, err := provider.NewAdditionalClient(ctx)
+			require.NoError(t, err, "additional client should provided")
+
+			thirdAdditionalClient, err := provider.NewAdditionalClient(ctx)
+			require.NoError(t, err, "additional client should provided")
+
+			assertAdditionalClients(t, provider, firstAdditionalClient, secondAdditionalClient, thirdAdditionalClient)
+		})
+
+		t.Run("default client not provided", func(t *testing.T) {
+			sett := testSettings(t)
+			config := testCreateSSHConnectionConfigWithPrivateKeyPaths(t, connectionConfigParams{
+				mode: sshconfig.Mode{
+					ForceModern: true,
+				},
+				sett:        sett,
+				bastionPort: nil,
+				port:        nil,
+			})
+
+			ctx := context.TODO()
+
+			provider := NewDefaultSSHProvider(sett, config)
+
+			firstAdditionalClient, err := provider.NewAdditionalClient(ctx)
+			require.NoError(t, err, "additional client should provided")
+
+			require.Len(t, provider.additionalClients, 1, "additional client should stored")
+			require.True(t, firstAdditionalClient == provider.additionalClients[0], "additional client should stored")
+
+			require.True(t, govalue.Nil(provider.defaultConfig), "additional client should not store as default")
+		})
+	})
 }
 
 type connectionConfigParams struct {
@@ -364,6 +471,14 @@ func defaultConnectionConfig(params connectionConfigParams, keys []sshconfig.Age
 		Hosts: []sshconfig.Host{
 			{
 				Host: "192.168.0.1",
+			},
+
+			{
+				Host: "192.168.0.2",
+			},
+
+			{
+				Host: "192.168.0.3",
 			},
 		},
 	}

@@ -24,13 +24,14 @@ import (
 )
 
 type SSHProvider interface {
-	// NewClient
-	// initialize new client from default configuration
-	NewClient(ctx context.Context) (SSHClient, error)
-
 	// Client
 	// get current client or initialize from defaults
 	Client(ctx context.Context) (SSHClient, error)
+
+	// NewAdditionalClient
+	// initialize new client from default configuration
+	// current client does not affect
+	NewAdditionalClient(ctx context.Context) (SSHClient, error)
 
 	// SwitchClient
 	// switch current client with new client with provided settings
