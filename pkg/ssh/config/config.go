@@ -95,6 +95,14 @@ func (c *Config) Clone() *Config {
 	}
 }
 
+func (c *Config) HaveAuthMethods() bool {
+	if len(c.PrivateKeys) > 0 || c.SudoPassword != "" {
+		return true
+	}
+
+	return false
+}
+
 type ConnectionConfig struct {
 	Config *Config
 	Hosts  []Host

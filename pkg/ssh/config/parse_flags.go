@@ -48,13 +48,17 @@ const (
 	ModernModeEnv         = "SSH_MODERN_MODE"
 	AskBastionPasswordEnv = "ASK_BASTION_PASS"
 	AskSudoPasswordEnv    = "ASK_BECOME_PASS"
+	ForceNoPrivateKeysEnv = "FORCE_NO_PRIVATE_KEYS"
 )
 
 const (
-	sshHostsFlag         = "ssh-host"
-	legacyModeFlag       = "ssh-legacy-mode"
-	modernModeFlag       = "ssh-modern-mode"
-	connectionConfigFlag = "connection-config"
+	sshHostsFlag           = "ssh-host"
+	legacyModeFlag         = "ssh-legacy-mode"
+	modernModeFlag         = "ssh-modern-mode"
+	connectionConfigFlag   = "connection-config"
+	askSudoPasswordFlag    = "ask-become-pass"
+	privateKeysFlag        = "ssh-agent-private-keys"
+	forceNoPrivateKeysFlag = "force-no-private-keys"
 )
 
 type Flags struct {
@@ -76,6 +80,8 @@ type Flags struct {
 
 	AskBastionPass bool
 	AskSudoPass    bool
+
+	forceNoPrivateKeys bool
 
 	flagSet      *flag.FlagSet
 	envExtractor *envExtractor
@@ -99,7 +105,7 @@ func (f *Flags) IsConflictBetweenFlags() error {
 }
 
 func (f *Flags) FillDefaults() error {
-	if len(f.PrivateKeysPaths) == 0 {
+	if len(f.PrivateKeysPaths) == 0 && !f.forceNoPrivateKeys {
 		home, err := getHomeDir(f.envExtractor)
 		if err != nil {
 			return err
@@ -133,6 +139,11 @@ func (f *Flags) FillDefaults() error {
 		f.Port = DefaultPort
 	}
 
+	// if not use private keys force ask sudo pass
+	if f.forceNoPrivateKeys && !f.AskSudoPass {
+		f.AskSudoPass = true
+	}
+
 	return nil
 }
 
@@ -141,17 +152,25 @@ func (f *Flags) RewriteFromEnvs() error {
 		return notInitializedError("envExtractor")
 	}
 
-	f.envExtractor.Strings(AgentPrivateKeysEnv, &f.PrivateKeysPaths)
+	f.envExtractor.Bool(ForceNoPrivateKeysEnv, &f.forceNoPrivateKeys)
+
+	if !f.forceNoPrivateKeys {
+		isSet := f.envExtractor.Strings(AgentPrivateKeysEnv, &f.PrivateKeysPaths)
+
+		if isSet && len(f.PrivateKeysPaths) == 0 {
+			f.forceNoPrivateKeys = true
+		}
+	}
 
 	f.envExtractor.String(BastionHostEnv, &f.BastionHost)
 	f.envExtractor.String(BastionUserEnv, &f.BastionUser)
-	if err := f.envExtractor.Int(BastionPortEnv, &f.BastionPort); err != nil {
+	if _, err := f.envExtractor.Int(BastionPortEnv, &f.BastionPort); err != nil {
 		return err
 	}
 
 	f.envExtractor.String(UserEnv, &f.User)
 	f.envExtractor.Strings(HostsEnv, &f.Hosts)
-	if err := f.envExtractor.Int(PortEnv, &f.Port); err != nil {
+	if _, err := f.envExtractor.Int(PortEnv, &f.Port); err != nil {
 		return err
 	}
 
@@ -309,7 +328,7 @@ func (p *FlagsParser) InitFlags(set *flag.FlagSet) (*Flags, error) {
 
 	set.StringSliceVar(
 		&flags.PrivateKeysPaths,
-		"ssh-agent-private-keys",
+		privateKeysFlag,
 		make([]string, 0),
 		extractorFromEnv.AddEnvToUsage(
 			"Paths to private keys. Those keys will be used to connect to servers and to the bastion. Can be specified multiple times (default: '~/.ssh/id_rsa').",
@@ -429,12 +448,22 @@ func (p *FlagsParser) InitFlags(set *flag.FlagSet) (*Flags, error) {
 
 	set.BoolVarP(
 		&flags.AskSudoPass,
-		"ask-become-pass",
+		askSudoPasswordFlag,
 		"K",
 		false,
 		extractorFromEnv.AddEnvToUsage(
 			"Ask for sudo password before the installation process.",
 			AskSudoPasswordEnv,
+		),
+	)
+
+	set.BoolVar(
+		&flags.forceNoPrivateKeys,
+		forceNoPrivateKeysFlag,
+		false,
+		extractorFromEnv.AddEnvToUsage(
+			"Do not use private keys.",
+			ForceNoPrivateKeysEnv,
 		),
 	)
 
@@ -516,7 +545,7 @@ func (p *FlagsParser) ExtractConfigAfterParse(flags *Flags, opts ...ValidateOpti
 		return nil, err
 	}
 
-	return &ConnectionConfig{
+	res := &ConnectionConfig{
 		Config: &Config{
 			Mode: Mode{
 				ForceLegacy: flags.ForceLegacy,
@@ -538,7 +567,19 @@ func (p *FlagsParser) ExtractConfigAfterParse(flags *Flags, opts ...ValidateOpti
 			SudoPassword: passwords.Sudo,
 		},
 		Hosts: hosts,
-	}, nil
+	}
+
+	if !res.Config.HaveAuthMethods() {
+		return nil, fmt.Errorf(
+			"No auth methods configured. Please pass --%s and/or --%s or --%s and --%s",
+			privateKeysFlag,
+			askSudoPasswordFlag,
+			forceNoPrivateKeysFlag,
+			askSudoPasswordFlag,
+		)
+	}
+
+	return res, nil
 }
 
 // ParseFlagsAndExtractConfig
@@ -745,44 +786,48 @@ func (e *envExtractor) VarWithoutPrefix(name string) (string, bool) {
 	return e.lookupFunc(name)
 }
 
-func (e *envExtractor) Int(name string, destination *int) error {
+func (e *envExtractor) Int(name string, destination *int) (bool, error) {
 	strVar, ok := e.Var(name)
 	if !ok {
-		return nil
+		return false, nil
 	}
 
 	value, err := strconv.Atoi(strVar)
 	if err != nil {
-		return fmt.Errorf("Cannot convert '%s' to int for %s: %w", strVar, e.NameWithPrefix(name), err)
+		return false, fmt.Errorf("Cannot convert '%s' to int for %s: %w", strVar, e.NameWithPrefix(name), err)
 	}
 
 	*destination = value
 
-	return nil
+	return true, nil
 }
 
-func (e *envExtractor) StringWithoutPrefix(name string, destination *string) {
+func (e *envExtractor) StringWithoutPrefix(name string, destination *string) bool {
 	strVar, ok := e.VarWithoutPrefix(name)
 	if !ok {
-		return
+		return false
 	}
 
 	*destination = strVar
+
+	return true
 }
 
-func (e *envExtractor) String(name string, destination *string) {
+func (e *envExtractor) String(name string, destination *string) bool {
 	strVar, ok := e.Var(name)
 	if !ok {
-		return
+		return false
 	}
 
 	*destination = strVar
+
+	return true
 }
 
-func (e *envExtractor) Strings(name string, destination *[]string) {
+func (e *envExtractor) Strings(name string, destination *[]string) bool {
 	valsStr, ok := e.Var(name)
 	if !ok {
-		return
+		return false
 	}
 
 	valsSplit := strings.Split(valsStr, ",")
@@ -794,16 +839,22 @@ func (e *envExtractor) Strings(name string, destination *[]string) {
 	}
 
 	*destination = vals
+
+	return true
 }
 
-func (e *envExtractor) Bool(name string, destination *bool) {
+// Bool
+// returns that env is set
+func (e *envExtractor) Bool(name string, destination *bool) bool {
 	strVar, ok := e.Var(name)
 	if !ok {
-		return
+		return false
 	}
 	value := strVar != ""
 
 	*destination = value
+
+	return true
 }
 
 func terminalPrivateKeyPasswordExtractor(path string, defaultPassword []byte, logger log.Logger) (string, error) {

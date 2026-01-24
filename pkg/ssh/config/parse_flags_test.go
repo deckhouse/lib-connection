@@ -152,7 +152,7 @@ func TestParseFlagsHelp(t *testing.T) {
 	out = strings.TrimPrefix(out, usagePrefix)
 	out = strings.TrimSuffix(out, "\n")
 
-	expectedFlags := 13
+	expectedFlags := 14
 
 	lines := strings.Split(out, "\n")
 	linesCount := len(lines)
@@ -256,6 +256,12 @@ func TestParseFlags(t *testing.T) {
 				return pathToPassword[path], nil
 			}
 		}
+	}
+
+	beforeSetSudoPasswordToExpected := func(t *testing.T, tst *test, logger log.Logger) {
+		require.NotNil(t, tst.passwords, "passwords should not be nil")
+		require.NotNil(t, tst.expected, "expected should not be nil")
+		tst.expected.Config.SudoPassword = tst.passwords.Sudo
 	}
 
 	tests := []test{
@@ -593,6 +599,114 @@ func TestParseFlags(t *testing.T) {
 		},
 
 		{
+			name: "use password auth with set empty private keys env",
+			passwords: &passwordsFromUser{
+				Sudo: RandPassword(10),
+			},
+
+			arguments: []string{
+				"--ask-become-pass",
+			},
+
+			envsPrefix: "NO_KEYS",
+			envs: map[string]string{
+				"NO_KEYS_SSH_AGENT_PRIVATE_KEYS": "",
+			},
+
+			hasErrorContains: "",
+
+			privateKeyExtractor: defaultPrivateKeyExtractor(currentHomeDir),
+
+			before: beforeSetSudoPasswordToExpected,
+
+			expected: &ConnectionConfig{
+				Config: &Config{
+					Mode: Mode{
+						ForceLegacy: false,
+						ForceModern: false,
+					},
+					User: currentUserName,
+					Port: intPtr(22),
+
+					PrivateKeys: make([]AgentPrivateKey, 0),
+
+					BastionUser: currentUserName,
+					BastionPort: intPtr(22),
+				},
+				Hosts: make([]Host, 0),
+			},
+		},
+
+		{
+			name: "force no private keys",
+			passwords: &passwordsFromUser{
+				Sudo: RandPassword(10),
+			},
+
+			arguments: []string{
+				"--force-no-private-keys",
+				"--ask-become-pass",
+			},
+
+			hasErrorContains: "",
+
+			privateKeyExtractor: defaultPrivateKeyExtractor(currentHomeDir),
+
+			before: beforeSetSudoPasswordToExpected,
+
+			expected: &ConnectionConfig{
+				Config: &Config{
+					Mode: Mode{
+						ForceLegacy: false,
+						ForceModern: false,
+					},
+					User: currentUserName,
+					Port: intPtr(22),
+
+					PrivateKeys: make([]AgentPrivateKey, 0),
+
+					BastionUser: currentUserName,
+					BastionPort: intPtr(22),
+				},
+				Hosts: make([]Host, 0),
+			},
+		},
+
+		{
+			name: "force no private keys force sudo password",
+			passwords: &passwordsFromUser{
+				Sudo: RandPassword(10),
+			},
+
+			arguments: []string{
+				"--force-no-private-keys",
+			},
+
+			hasErrorContains: "",
+
+			privateKeyExtractor: defaultPrivateKeyExtractor(currentHomeDir),
+
+			before: beforeSetSudoPasswordToExpected,
+
+			expected: &ConnectionConfig{
+				Config: &Config{
+					Mode: Mode{
+						ForceLegacy: false,
+						ForceModern: false,
+					},
+					User: currentUserName,
+					Port: intPtr(22),
+
+					PrivateKeys: make([]AgentPrivateKey, 0),
+
+					BastionUser: currentUserName,
+					BastionPort: intPtr(22),
+				},
+				Hosts: make([]Host, 0),
+			},
+		},
+
+		{
 			name: "connection config",
 
 			arguments: []string{},
@@ -875,6 +989,21 @@ sshBastionPassword: "not_secure_password_bastion"
 			// because test stdin is not terminal and we do not emulate it in fast way
 			// we check that in tests we got error
 			hasErrorContains: "stdin is not a terminal, error reading password",
+		},
+
+		{
+			name: "force no private keys no sudo password",
+			passwords: &passwordsFromUser{
+				Sudo: "",
+			},
+
+			arguments: []string{
+				"--force-no-private-keys",
+			},
+
+			hasErrorContains: "No auth methods configured. Please pass --ssh-agent-private-keys and/or --ask-become-pass or --force-no-private-keys and --ask-become-pass",
+
+			privateKeyExtractor: defaultPrivateKeyExtractor(currentHomeDir),
 		},
 	}
 
