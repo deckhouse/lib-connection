@@ -42,7 +42,7 @@ jobs:
 
       - name: Cleanup after failed
         if: failure()
-        run: clean/test
+        run: make clean/test
 
   license_validation:
     name: "Validate that license added to all files"
