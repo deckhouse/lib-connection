@@ -1,3 +1,17 @@
+// Copyright 2026 Flant JSC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package config
 
 import (
@@ -131,9 +145,9 @@ host: "{{ . }}"
 
 func generateConfigWithKeys(t *testing.T, keys []AgentPrivateKey, additionalFields string, hosts ...string) string {
 	var keysMap []map[string]string
-	keysJson, err := json.Marshal(keys)
+	keysJSON, err := json.Marshal(keys)
 	require.NoError(t, err)
-	err = json.Unmarshal(keysJson, &keysMap)
+	err = json.Unmarshal(keysJSON, &keysMap)
 	require.NoError(t, err)
 
 	if additionalFields == "" {
@@ -162,7 +176,7 @@ func init() {
 	testConfigTemplateEngine, err = template.New("test_connection_config").Funcs(template.FuncMap{
 		"indent": func(spaces int, v string) string {
 			pad := strings.Repeat(" ", spaces)
-			return pad + strings.Replace(v, "\n", "\n"+pad, -1)
+			return pad + strings.ReplaceAll(v, "\n", "\n"+pad)
 		},
 	}).Parse(testConfigTemplate)
 

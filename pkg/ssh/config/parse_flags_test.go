@@ -201,7 +201,7 @@ func TestParseFlags(t *testing.T) {
 	// by default, we have ~/.ssh/id_rsa key
 	// it can be protected with password with local development env
 	defaultPrivateKeyExtractor := func(homePath string) PrivateKeyExtractorFunc {
-		return func(path string, logger log.Logger) (password string, err error) {
+		return func(path string, logger log.Logger) (string, error) {
 			expected := filepath.Join(homePath, ".ssh", "id_rsa")
 			if path != expected {
 				return "", fmt.Errorf("expected %s, got %s", homePath, path)
@@ -230,7 +230,7 @@ func TestParseFlags(t *testing.T) {
 		defaultAsk            bool
 	}
 
-	beforeAddPrivateKeys := func(t *testing.T, tst *test, logger log.Logger) {
+	beforeAddPrivateKeys := func(_ *testing.T, tst *test, _ log.Logger) {
 		pathToPassword := make(map[string]string)
 
 		for _, privateKey := range tst.privateKeys {
@@ -1032,10 +1032,10 @@ sshBastionPassword: "not_secure_password_bastion"
 						return nil, fmt.Errorf("no passwords set")
 					}
 
-					switch true {
-					case promt == "[bastion] Password: ":
+					switch promt {
+					case "[bastion] Password: ":
 						return []byte(tst.passwords.Bastion), nil
-					case promt == "[sudo] Password: ":
+					case "[sudo] Password: ":
 						return []byte(tst.passwords.Sudo), nil
 					default:
 						return nil, fmt.Errorf("unknown prompt")
@@ -1252,7 +1252,8 @@ func TestParseFlagsAndExtractConfigNoArgs(t *testing.T) {
 		params.arguments[0],
 	}
 
-	os.Args = append(withAdditional, testArgs...)
+	withAdditional = append(withAdditional, testArgs...)
+	os.Args = withAdditional
 
 	// should extract from os.Args
 	params.arguments = nil

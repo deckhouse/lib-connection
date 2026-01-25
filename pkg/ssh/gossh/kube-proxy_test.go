@@ -68,7 +68,7 @@ func checkKubeProxy(t *testing.T, test *sshtesting.Test, localServerPort string,
 	url := fmt.Sprintf("http://127.0.0.1:%s/api/v1/nodes", localServerPort)
 
 	requestLoop := retry.NewEmptyParams(
-		retry.WithName(fmt.Sprintf("Check kube proxy available by %s", url)),
+		retry.WithName("Check kube proxy available by %s", url),
 		retry.WithAttempts(10),
 		retry.WithWait(500*time.Millisecond),
 		retry.WithLogger(test.Logger),

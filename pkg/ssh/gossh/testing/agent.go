@@ -206,7 +206,7 @@ func (a *Agent) RegisterCleanup(t *testing.T) {
 
 		a.Stop()
 		leaveSocket := retry.NewEmptyParams(
-			retry.WithName(fmt.Sprintf("Wait socket %s leave", socket)),
+			retry.WithName("Wait socket %s leave", socket),
 			retry.WithWait(2*time.Second),
 			retry.WithAttempts(10),
 			retry.WithLogger(a.logger),

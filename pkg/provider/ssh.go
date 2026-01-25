@@ -332,12 +332,12 @@ func (p *DefaultSSHProvider) newSession(parent *session.Session, privateKeys []s
 }
 
 func (p *DefaultSSHProvider) useGoSSH(shouldLog bool) bool {
-	logDebug := func(format string, v ...any) {
+	logDebug := func(format string) {
 		if !shouldLog {
 			return
 		}
 
-		p.debug(format, v...)
+		p.debug(format)
 	}
 
 	if p.options.ForceGoSSH {

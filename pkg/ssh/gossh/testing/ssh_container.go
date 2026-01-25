@@ -703,7 +703,7 @@ func (c *SSHContainer) defaultRetryParams(name string) retry.Params {
 	logger := c.ContainerSettings().Test.Logger
 
 	return retry.NewEmptyParams(
-		retry.WithName(name),
+		retry.WithName("%s", name),
 		retry.WithAttempts(5),
 		retry.WithWait(3*time.Second),
 		retry.WithLogger(logger),

@@ -150,7 +150,7 @@ func (s *HTTPServer) Start(waitStart bool) error {
 	url := fmt.Sprintf("http://%s%s", s.address, HealthzPath)
 
 	loop := retry.NewEmptyParams(
-		retry.WithName(fmt.Sprintf("Check HTTP server %s started", s.logger.prefix)),
+		retry.WithName("Check HTTP server %s started", s.logger.prefix),
 		retry.WithAttempts(10),
 		retry.WithWait(500*time.Millisecond),
 		retry.WithLogger(s.logger.Logger),

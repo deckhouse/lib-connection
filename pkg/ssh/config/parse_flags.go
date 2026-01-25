@@ -885,7 +885,8 @@ func intPtr(i int) *int {
 }
 
 func (h notUniqueHosts) flagsError() error {
-	var errs []string
+	errs := make([]string, 0)
+
 	if h.noHosts {
 		errs = append(errs, fmt.Sprintf("SSH hosts for connection is required. Please pass hosts for connection via --%s flag", sshHostsFlag))
 	}

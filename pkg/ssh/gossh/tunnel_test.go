@@ -203,7 +203,7 @@ func checkLocalTunnel(t *testing.T, test *sshtesting.Test, localServerPort int, 
 	url := fmt.Sprintf("http://127.0.0.1:%d", localServerPort)
 
 	requestLoop := retry.NewEmptyParams(
-		retry.WithName(fmt.Sprintf("Check local tunnel available by %s", url)),
+		retry.WithName("Check local tunnel available by %s", url),
 		retry.WithAttempts(10),
 		retry.WithWait(500*time.Millisecond),
 		retry.WithLogger(test.Logger),

@@ -17,10 +17,11 @@ package provider
 import (
 	"context"
 
+	"github.com/hashicorp/go-multierror"
+
 	connection "github.com/deckhouse/lib-connection/pkg"
 	"github.com/deckhouse/lib-connection/pkg/settings"
 	sshconfig "github.com/deckhouse/lib-connection/pkg/ssh/config"
-	"github.com/hashicorp/go-multierror"
 )
 
 type DefaultProvider struct {

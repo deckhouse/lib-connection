@@ -394,7 +394,7 @@ func TestSSHProviderClient(t *testing.T) {
 			assertSwitchClient(t, params, defaultClient)
 		}
 
-		getProvider := func(sett settings.Settings, config *sshconfig.ConnectionConfig, opts ...SSHClientOption) *DefaultSSHProvider {
+		getProvider := func(sett settings.Settings, config *sshconfig.ConnectionConfig) *DefaultSSHProvider {
 			provider := NewDefaultSSHProvider(sett, config)
 			provider.goSSHStopWait = 3 * time.Second
 			return provider
@@ -994,7 +994,7 @@ func assertClientStopped(t *testing.T, client connection.SSHClient, shouldStop b
 
 func assertSwitchClient(t *testing.T, params assertSwitchClientParams, defaultClient connection.SSHClient) connection.SSHClient {
 	switchClientSession := defaultSession(params.host, params.port)
-	var privateKeys []session.AgentPrivateKey
+	privateKeys := make([]session.AgentPrivateKey, 0, len(params.additionalPrivateKeys))
 	for _, key := range params.additionalPrivateKeys {
 		privateKeys = append(privateKeys, session.AgentPrivateKey{
 			Key:        key.Key,
