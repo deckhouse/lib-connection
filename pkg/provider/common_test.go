@@ -74,7 +74,7 @@ func testSettings(t *testing.T) settings.Settings {
 	})
 }
 
-func assertLogMessage(t *testing.T, sett settings.Settings, msgInLog string) {
+func findLogMsg(t *testing.T, sett settings.Settings, msgInLog string) string {
 	loggerInterface := sett.Logger()
 
 	logger, ok := loggerInterface.(*log.InMemoryLogger)
@@ -87,7 +87,18 @@ func assertLogMessage(t *testing.T, sett settings.Settings, msgInLog string) {
 	})
 
 	require.NoError(t, err, "failed to find match in log")
+
+	return getMatch
+}
+
+func assertLogMessage(t *testing.T, sett settings.Settings, msgInLog string) {
+	getMatch := findLogMsg(t, sett, msgInLog)
 	require.Contains(t, getMatch, msgInLog, "should contain %s", msgInLog)
+}
+
+func assertNoLogMessage(t *testing.T, sett settings.Settings, msgInLog string) {
+	getMatch := findLogMsg(t, sett, msgInLog)
+	require.Empty(t, getMatch, "should not find log msg %s", msgInLog)
 }
 
 // TODO move to test helpers packet

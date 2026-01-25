@@ -69,8 +69,6 @@ type DefaultSSHProvider struct {
 	writtenPrivateKeys          []session.AgentPrivateKey
 	defaultPrivateKeysWithPaths []session.AgentPrivateKey
 	privateKeysPrepared         bool
-
-	cleaned bool
 }
 
 func NewDefaultSSHProvider(sett settings.Settings, config *sshconfig.ConnectionConfig, opts ...SSHClientOption) *DefaultSSHProvider {
@@ -182,6 +180,7 @@ func (p *DefaultSSHProvider) Cleanup(context.Context) error {
 	privateKeysTmp := p.privateKeysTmp
 
 	if privateKeysTmp != "" {
+		p.debug("Remove private keys dir %s", privateKeysTmp)
 		if err := os.RemoveAll(privateKeysTmp); err != nil {
 			errs = multierror.Append(
 				errs,
@@ -189,6 +188,9 @@ func (p *DefaultSSHProvider) Cleanup(context.Context) error {
 			)
 		}
 	}
+
+	p.privateKeysTmp = ""
+	p.privateKeysPrepared = false
 
 	return errs.ErrorOrNil()
 }

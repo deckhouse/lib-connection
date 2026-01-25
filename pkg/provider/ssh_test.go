@@ -734,6 +734,12 @@ func TestSSHProviderClient(t *testing.T) {
 			client, err := provider.Client(ctx)
 			require.NoError(t, err, "should get client")
 			require.IsType(t, &gossh.Client{}, client, "client should be go client")
+
+			assertLogMessage(
+				t,
+				sett,
+				"Force go-ssh client from provider options",
+			)
 		})
 
 		t.Run("pass init agent to cli-ssh", func(t *testing.T) {
@@ -768,6 +774,201 @@ func TestSSHProviderClient(t *testing.T) {
 
 			providerWithoutAgent := NewDefaultSSHProvider(sett, config)
 			assertInitNewAgent(t, providerWithoutAgent, false)
+		})
+	})
+
+	t.Run("Cleanup", func(t *testing.T) {
+		assertRemovePrivateKeysDir := func(t *testing.T, sett settings.Settings, provider *DefaultSSHProvider, rootPresent bool) {
+			assertLog := assertNoLogMessage
+			if rootPresent {
+				assertLog = assertLogMessage
+			}
+
+			assertLog(t, sett, "Remove private keys dir")
+
+			const rootDir = "lib-connection-ssh"
+			var pathsInRoot []string
+			rootPath := filepath.Join(sett.TmpDir(), rootDir)
+			err := filepath.Walk(rootPath, func(path string, info os.FileInfo, err error) error {
+				if err != nil {
+					return err
+				}
+
+				if info.Name() == rootDir {
+					return nil
+				}
+
+				pathsInRoot = append(pathsInRoot, path)
+				return nil
+			})
+
+			if !rootPresent {
+				require.Error(t, err, "walk should fail")
+				require.ErrorIs(t, err, os.ErrNotExist, "root should not exist")
+				return
+			}
+
+			require.NoError(t, err, "should walk")
+			require.Len(t, pathsInRoot, 0, "should remove all private keys")
+
+			require.Empty(t, provider.privateKeysTmp, "drop private key tmp")
+		}
+
+		type assertCleanupParams struct {
+			sett        settings.Settings
+			provider    *DefaultSSHProvider
+			allClients  []connection.SSHClient
+			rootPresent bool
+		}
+
+		assertCleanup := func(t *testing.T, params assertCleanupParams) {
+			provider := params.provider
+
+			var err error
+			doCleanup := func() {
+				err = provider.Cleanup(context.TODO())
+			}
+
+			require.NotPanics(t, doCleanup, "cleanup should not panics")
+			require.NoError(t, err, "should cleanup")
+
+			require.True(t, govalue.Nil(provider.currentClient), "should drop current client")
+			require.Len(t, provider.additionalClients, 0, "should drop all additional clients")
+
+			for i, client := range params.allClients {
+				require.True(t, client.IsStopped(), "should stop all clients current client %d", i)
+			}
+
+			assertRemovePrivateKeysDir(t, params.sett, provider, params.rootPresent)
+
+			require.False(t, provider.privateKeysPrepared, "drop private key prepared")
+		}
+
+		getProvider := func(t *testing.T) (settings.Settings, *DefaultSSHProvider, *sshconfig.ConnectionConfig) {
+			sett := testSettings(t)
+			config := testCreateSSHConnectionConfigWithPrivateKeyContent(t, connectionConfigParams{
+				mode: sshconfig.Mode{
+					ForceLegacy: true,
+				},
+				sett:        sett,
+				bastionPort: nil,
+				port:        nil,
+			})
+
+			provider := NewDefaultSSHProvider(sett, config)
+
+			return sett, provider, config
+		}
+
+		t.Run("stop all clients remove keys and set clients to nil", func(t *testing.T) {
+			sett, provider, config := getProvider(t)
+
+			ctx := context.TODO()
+
+			allClients := make([]connection.SSHClient, 0, 3)
+
+			defaultClient, err := provider.Client(ctx)
+			require.NoError(t, err, "should get client")
+			allClients = append(allClients, defaultClient)
+
+			firstAdditionalClient, err := provider.NewAdditionalClient(ctx)
+			require.NoError(t, err, "should create additional client")
+			allClients = append(allClients, firstAdditionalClient)
+
+			secondAdditionalClient, err := provider.NewAdditionalClient(ctx)
+			require.NoError(t, err, "should create additional client")
+			allClients = append(allClients, secondAdditionalClient)
+
+			assertWritePrivateKeys(t, assertParams{
+				sett:      sett,
+				writeKeys: true,
+				config:    config,
+			})
+
+			require.False(t, govalue.Nil(provider.currentClient), "current client should not be nil")
+			require.Len(t, provider.additionalClients, 2, "should store all additional clients")
+			require.True(t, firstAdditionalClient == provider.additionalClients[0], "should store additional client")
+			require.True(t, secondAdditionalClient == provider.additionalClients[1], "should store additional client")
+
+			assertCleanup(t, assertCleanupParams{
+				sett:        sett,
+				provider:    provider,
+				allClients:  allClients,
+				rootPresent: true,
+			})
+		})
+
+		t.Run("without current client", func(t *testing.T) {
+			sett, provider, config := getProvider(t)
+
+			ctx := context.TODO()
+
+			firstAdditionalClient, err := provider.NewAdditionalClient(ctx)
+			require.NoError(t, err, "should create additional client")
+
+			assertWritePrivateKeys(t, assertParams{
+				sett:      sett,
+				writeKeys: true,
+				config:    config,
+			})
+
+			assertCleanup(t, assertCleanupParams{
+				sett:        sett,
+				provider:    provider,
+				allClients:  []connection.SSHClient{firstAdditionalClient},
+				rootPresent: true,
+			})
+		})
+
+		t.Run("without all", func(t *testing.T) {
+			sett, provider, config := getProvider(t)
+
+			assertWritePrivateKeys(t, assertParams{
+				sett:      sett,
+				writeKeys: false,
+				config:    config,
+			})
+
+			assertCleanup(t, assertCleanupParams{
+				sett:        sett,
+				provider:    provider,
+				rootPresent: false,
+			})
+		})
+
+		t.Run("safe use provider after cleanup", func(t *testing.T) {
+			sett, provider, config := getProvider(t)
+
+			ctx := context.TODO()
+
+			client, err := provider.Client(ctx)
+			require.NoError(t, err, "should get client")
+
+			privateKeyPathBeforeCleanup := provider.privateKeysTmp
+
+			assertWritePrivateKeys(t, assertParams{
+				sett:      sett,
+				writeKeys: true,
+				config:    config,
+			})
+
+			assertCleanup(t, assertCleanupParams{
+				sett:        sett,
+				provider:    provider,
+				allClients:  []connection.SSHClient{client},
+				rootPresent: true,
+			})
+
+			_, err = provider.Client(ctx)
+			require.NoError(t, err, "should get client")
+
+			assertWritePrivateKeys(t, assertParams{
+				sett:      sett,
+				writeKeys: true,
+				config:    config,
+			})
+
+			require.NotEqual(t, privateKeyPathBeforeCleanup, provider.privateKeysTmp, "should create new tmp dir")
 		})
 	})
 }
