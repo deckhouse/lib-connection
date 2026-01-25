@@ -47,7 +47,7 @@ func SSHClientWithInitializeNewAgent() SSHClientOption {
 	}
 }
 
-func SSHClientForceGoSSH() SSHClientOption {
+func SSHClientWithForceGoSSH() SSHClientOption {
 	return func(options *SSHClientOptions) {
 		options.ForceGoSSH = true
 	}

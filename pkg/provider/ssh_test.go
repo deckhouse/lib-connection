@@ -691,8 +691,8 @@ func TestSSHProviderClient(t *testing.T) {
 					ForceLegacy: true,
 				},
 				sett:        sett,
-				bastionPort: nil,
-				port:        nil,
+				bastionPort: intPtr(22202),
+				port:        intPtr(22203),
 			})
 
 			provider := NewDefaultSSHProvider(sett, config)
@@ -713,6 +713,61 @@ func TestSSHProviderClient(t *testing.T) {
 			require.True(t, defaultClient == client, "switch to default client should set current")
 
 			require.Len(t, provider.additionalClients, 0, "should not store additional client")
+		})
+	})
+
+	t.Run("Options", func(t *testing.T) {
+		t.Run("force go-ssh but client pass force cli", func(t *testing.T) {
+			sett := testSettings(t)
+			config := testCreateSSHConnectionConfigWithPrivateKeyPaths(t, connectionConfigParams{
+				mode: sshconfig.Mode{
+					ForceLegacy: true,
+				},
+				sett:        sett,
+				bastionPort: nil,
+				port:        nil,
+			})
+
+			provider := NewDefaultSSHProvider(sett, config).WithOptions(SSHClientWithForceGoSSH())
+			ctx := context.TODO()
+
+			client, err := provider.Client(ctx)
+			require.NoError(t, err, "should get client")
+			require.IsType(t, &gossh.Client{}, client, "client should be go client")
+		})
+
+		t.Run("pass init agent to cli-ssh", func(t *testing.T) {
+			sett := testSettings(t)
+			config := testCreateSSHConnectionConfigWithPrivateKeyPaths(t, connectionConfigParams{
+				mode: sshconfig.Mode{
+					ForceLegacy: true,
+				},
+				sett:        sett,
+				bastionPort: nil,
+				port:        nil,
+			})
+
+			assertInitNewAgent := func(t *testing.T, provider *DefaultSSHProvider, shouldInit bool) {
+				ctx := context.TODO()
+
+				client, err := provider.Client(ctx)
+				require.NoError(t, err, "should get client")
+				cliClient, ok := client.(*clissh.Client)
+				require.True(t, ok, "client should be cli client")
+
+				assertInitAgent := require.False
+				if shouldInit {
+					assertInitAgent = require.True
+				}
+
+				assertInitAgent(t, cliClient.InitializeNewAgent, "should pass init new agent to client")
+			}
+
+			providerWithAgent := NewDefaultSSHProvider(sett, config).WithOptions(SSHClientWithInitializeNewAgent())
+			assertInitNewAgent(t, providerWithAgent, true)
+
+			providerWithoutAgent := NewDefaultSSHProvider(sett, config)
+			assertInitNewAgent(t, providerWithoutAgent, false)
 		})
 	})
 }
