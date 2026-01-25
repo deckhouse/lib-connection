@@ -22,6 +22,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/name212/govalue"
 	"github.com/stretchr/testify/require"
@@ -49,7 +50,7 @@ func TestSSHProviderClient(t *testing.T) {
 			assertWritePrivateKeys(t, params)
 		}
 
-		t.Run("Fill defaults", func(t *testing.T) {
+		t.Run("fill defaults", func(t *testing.T) {
 			sett := testSettings(t)
 			config := testCreateSSHConnectionConfigWithPrivateKeyPaths(t, connectionConfigParams{
 				sett:        sett,
@@ -381,7 +382,267 @@ func TestSSHProviderClient(t *testing.T) {
 			require.Len(t, provider.additionalClients, 1, "additional client should stored")
 			require.True(t, firstAdditionalClient == provider.additionalClients[0], "additional client should stored")
 
-			require.True(t, govalue.Nil(provider.defaultConfig), "additional client should not store as default")
+			require.True(t, govalue.Nil(provider.currentClient), "additional client should not store as default")
+		})
+	})
+
+	t.Run("SwitchClient", func(t *testing.T) {
+		type assertSwitchClientParams struct {
+			sett                  settings.Settings
+			provider              *DefaultSSHProvider
+			defaultConfig         *sshconfig.ConnectionConfig
+			host                  string
+			port                  int
+			shouldStopDefault     bool
+			additionalPrivateKeys []sshconfig.AgentPrivateKey
+		}
+
+		assertSwitchClient := func(t *testing.T, params assertSwitchClientParams, defaultClient connection.SSHClient) {
+			switchClientSession := defaultSession(params.host, params.port)
+			var privateKeys []session.AgentPrivateKey
+			for _, key := range params.additionalPrivateKeys {
+				privateKeys = append(privateKeys, session.AgentPrivateKey{
+					Key:        key.Key,
+					Passphrase: key.Passphrase,
+				})
+			}
+
+			provider := params.provider
+			ctx := context.TODO()
+
+			switchedClient, err := provider.SwitchClient(ctx, switchClientSession, privateKeys)
+
+			require.NoError(t, err, "should provide client")
+
+			if !govalue.Nil(defaultClient) {
+				require.False(t, defaultClient == switchedClient, "should return a new client")
+
+				assertStopped := require.False
+				if params.shouldStopDefault {
+					assertStopped = require.True
+				}
+
+				assertStopped(t, defaultClient.IsStopped(), "default client stopped check failed")
+			}
+
+			expectedKeysInSession := append(make([]sshconfig.AgentPrivateKey, 0), params.additionalPrivateKeys...)
+			expectedKeysInSession = append(expectedKeysInSession, params.defaultConfig.Config.PrivateKeys...)
+			assertPrivateKeysAddedInSession(t, switchedClient, expectedKeysInSession)
+			require.Equal(t, switchClientSession, switchedClient.Session(), "should set correct session")
+
+			defaultClientAfterSwitch, err := provider.Client(ctx)
+			require.NoError(t, err, "should provide client")
+			require.True(t, defaultClientAfterSwitch == switchedClient, "switch client should stored as default new client")
+
+			require.Len(t, provider.additionalClients, 0, "should not store additional client")
+		}
+
+		assertSwitchClientWithGetDefault := func(t *testing.T, params assertSwitchClientParams) {
+			defaultClient, err := params.provider.Client(context.TODO())
+			require.NoError(t, err, "default client should provided")
+
+			assertSwitchClient(t, params, defaultClient)
+		}
+
+		getProvider := func(sett settings.Settings, config *sshconfig.ConnectionConfig, opts ...SSHClientOption) *DefaultSSHProvider {
+			provider := NewDefaultSSHProvider(sett, config)
+			provider.goSSHStopWait = 3 * time.Second
+			return provider
+		}
+
+		t.Run("go-ssh without additional private keys", func(t *testing.T) {
+			sett := testSettings(t)
+			config := testCreateSSHConnectionConfigWithPrivateKeyPaths(t, connectionConfigParams{
+				mode: sshconfig.Mode{
+					ForceModern: true,
+				},
+				sett:        sett,
+				bastionPort: nil,
+				port:        nil,
+			})
+
+			provider := getProvider(sett, config)
+
+			// first switch
+			assertSwitchClientWithGetDefault(t, assertSwitchClientParams{
+				sett:              sett,
+				provider:          provider,
+				defaultConfig:     config,
+				host:              "192.168.1.1",
+				port:              22023,
+				shouldStopDefault: true,
+			})
+
+			// second switch
+			assertSwitchClientWithGetDefault(t, assertSwitchClientParams{
+				sett:              sett,
+				provider:          provider,
+				defaultConfig:     config,
+				host:              "192.168.1.2",
+				port:              22024,
+				shouldStopDefault: true,
+			})
+		})
+
+		t.Run("go-ssh with additional private keys", func(t *testing.T) {
+			sett := testSettings(t)
+			config := testCreateSSHConnectionConfigWithPrivateKeyPaths(t, connectionConfigParams{
+				mode: sshconfig.Mode{
+					ForceModern: true,
+				},
+				sett:        sett,
+				bastionPort: nil,
+				port:        nil,
+			})
+
+			provider := getProvider(sett, config)
+
+			params := connectionConfigParams{sett: sett}
+
+			// first switch
+			firstSwitchPrivateKeys := testCreateSSHConnectionConfigWithPrivateKeyPaths(t, params).Config.PrivateKeys
+			assertSwitchClientWithGetDefault(t, assertSwitchClientParams{
+				sett:                  sett,
+				provider:              provider,
+				defaultConfig:         config,
+				host:                  "192.168.1.1",
+				port:                  22023,
+				shouldStopDefault:     true,
+				additionalPrivateKeys: firstSwitchPrivateKeys,
+			})
+
+			// second switch
+			secondSwitchPrivateKeys := testCreateSSHConnectionConfigWithPrivateKeyPaths(t, params).Config.PrivateKeys
+			assertSwitchClientWithGetDefault(t, assertSwitchClientParams{
+				sett:                  sett,
+				provider:              provider,
+				defaultConfig:         config,
+				host:                  "192.168.1.2",
+				port:                  22024,
+				shouldStopDefault:     true,
+				additionalPrivateKeys: secondSwitchPrivateKeys,
+			})
+		})
+
+		t.Run("cli-ssh should not stop", func(t *testing.T) {
+			sett := testSettings(t)
+			config := testCreateSSHConnectionConfigWithPrivateKeyPaths(t, connectionConfigParams{
+				mode: sshconfig.Mode{
+					ForceLegacy: true,
+				},
+				sett:        sett,
+				bastionPort: nil,
+				port:        nil,
+			})
+
+			provider := getProvider(sett, config)
+
+			params := connectionConfigParams{sett: sett}
+
+			// first switch
+			firstSwitchPrivateKeys := testCreateSSHConnectionConfigWithPrivateKeyPaths(t, params).Config.PrivateKeys
+			assertSwitchClientWithGetDefault(t, assertSwitchClientParams{
+				sett:                  sett,
+				provider:              provider,
+				defaultConfig:         config,
+				host:                  "192.168.1.1",
+				port:                  22023,
+				shouldStopDefault:     false,
+				additionalPrivateKeys: firstSwitchPrivateKeys,
+			})
+
+			// second switch
+			assertSwitchClientWithGetDefault(t, assertSwitchClientParams{
+				sett:              sett,
+				provider:          provider,
+				defaultConfig:     config,
+				host:              "192.168.1.2",
+				port:              22024,
+				shouldStopDefault: false,
+			})
+		})
+
+		t.Run("keys with content from default should added also", func(t *testing.T) {
+			sett := testSettings(t)
+			config := testCreateSSHConnectionConfigWithPrivateKeyContent(t, connectionConfigParams{
+				mode: sshconfig.Mode{
+					ForceLegacy: true,
+				},
+				sett:        sett,
+				bastionPort: nil,
+				port:        nil,
+			})
+
+			provider := getProvider(sett, config)
+
+			params := connectionConfigParams{sett: sett}
+
+			// first switch
+			firstSwitchPrivateKeys := testCreateSSHConnectionConfigWithPrivateKeyPaths(t, params).Config.PrivateKeys
+			assertSwitchClientWithGetDefault(t, assertSwitchClientParams{
+				sett:                  sett,
+				provider:              provider,
+				defaultConfig:         config,
+				host:                  "192.168.1.1",
+				port:                  22023,
+				shouldStopDefault:     false,
+				additionalPrivateKeys: firstSwitchPrivateKeys,
+			})
+
+			// second switch
+			assertSwitchClientWithGetDefault(t, assertSwitchClientParams{
+				sett:              sett,
+				provider:          provider,
+				defaultConfig:     config,
+				host:              "192.168.1.2",
+				port:              22024,
+				shouldStopDefault: false,
+			})
+		})
+
+		t.Run("switch client without default safe", func(t *testing.T) {
+			sett := testSettings(t)
+			config := testCreateSSHConnectionConfigWithPrivateKeyPaths(t, connectionConfigParams{
+				mode: sshconfig.Mode{
+					ForceLegacy: true,
+				},
+				sett:        sett,
+				bastionPort: nil,
+				port:        nil,
+			})
+
+			provider := NewDefaultSSHProvider(sett, config)
+			provider.goSSHStopWait = 3 * time.Second
+
+			params := connectionConfigParams{sett: sett}
+
+			// first switch
+			firstSwitchPrivateKeys := testCreateSSHConnectionConfigWithPrivateKeyPaths(t, params).Config.PrivateKeys
+			assertSwitchClient(t, assertSwitchClientParams{
+				sett:                  sett,
+				provider:              provider,
+				defaultConfig:         config,
+				host:                  "192.168.1.1",
+				port:                  22023,
+				shouldStopDefault:     false,
+				additionalPrivateKeys: firstSwitchPrivateKeys,
+			}, nil)
+
+			assertLogMessage(
+				t,
+				sett,
+				"CurrentClient is nil, skipping stop current client",
+			)
+
+			// second switch
+			assertSwitchClientWithGetDefault(t, assertSwitchClientParams{
+				sett:              sett,
+				provider:          provider,
+				defaultConfig:     config,
+				host:              "192.168.1.2",
+				port:              22024,
+				shouldStopDefault: false,
+			})
 		})
 	})
 }
@@ -393,29 +654,31 @@ type connectionConfigParams struct {
 	port        *int
 }
 
-func testCreateSSHConnectionConfigWithPrivateKeyPaths(t *testing.T, params connectionConfigParams) *sshconfig.ConnectionConfig {
-	writePrivateKey := func(t *testing.T, password string) string {
-		tmpDir := params.sett.TmpDir()
+func writePrivateKey(t *testing.T, params connectionConfigParams, password string) string {
+	require.False(t, govalue.Nil(params.sett), "settings should be passed")
 
-		key := generateKey(t, password)
+	tmpDir := params.sett.TmpDir()
 
-		name := "pre-created-no-pass.id.rsa"
-		if password != "" {
-			name = "pre-created-pass.id.rsa"
-		}
+	key := generateKey(t, password)
 
-		id := GenerateID(name)
-		path := filepath.Join(tmpDir, fmt.Sprintf("%s.%s", name, id))
-
-		err := os.WriteFile(path, []byte(key), 0600)
-		require.NoError(t, err, "private key should have been created")
-
-		return path
+	name := "pre-created-no-pass.id.rsa"
+	if password != "" {
+		name = "pre-created-pass.id.rsa"
 	}
 
-	keyWithoutPasswordPath := writePrivateKey(t, "")
+	id := GenerateID(name)
+	path := filepath.Join(tmpDir, fmt.Sprintf("%s.%s", name, id))
+
+	err := os.WriteFile(path, []byte(key), 0600)
+	require.NoError(t, err, "private key should have been created")
+
+	return path
+}
+
+func testCreateSSHConnectionConfigWithPrivateKeyPaths(t *testing.T, params connectionConfigParams) *sshconfig.ConnectionConfig {
+	keyWithoutPasswordPath := writePrivateKey(t, params, "")
 	password := RandPassword(12)
-	keyWithPasswordPath := writePrivateKey(t, password)
+	keyWithPasswordPath := writePrivateKey(t, params, password)
 
 	return defaultConnectionConfig(params, []sshconfig.AgentPrivateKey{
 		{
@@ -606,6 +869,20 @@ func assertWritePrivateKeys(t *testing.T, params assertParams) {
 		expectedKeysCount,
 		"should contain all keys to write got keys: %v", keys,
 	)
+}
+
+func defaultSession(host string, port int) *session.Session {
+	return session.NewSession(session.Input{
+		User:       "user",
+		Port:       fmt.Sprintf("%d", port),
+		BecomePass: RandPassword(12),
+		AvailableHosts: []session.Host{
+			{
+				Host: host,
+				Name: host,
+			},
+		},
+	})
 }
 
 func intPtr(i int) *int {

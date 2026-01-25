@@ -240,7 +240,7 @@ func (c *Client) Start() error {
 		return fmt.Errorf("Possible bug in ssh client: session should be created before start")
 	}
 
-	if c.isStopped() {
+	if c.IsStopped() {
 		return fmt.Errorf("Possible bug in ssh client: client stopped")
 	}
 
@@ -342,7 +342,7 @@ func (c *Client) checkClient() error {
 	if c.SessionSettings == nil {
 		errs = append(errs, "Settings is nil")
 	}
-	if c.isStopped() {
+	if c.IsStopped() {
 		errs = append(errs, "Already stopped")
 	}
 	if !c.isStarted() {
@@ -391,7 +391,7 @@ func (c *Client) Check() connection.Check {
 
 // Stop the client
 func (c *Client) Stop() {
-	if c.isStopped() {
+	if c.IsStopped() {
 		return
 	}
 
@@ -454,7 +454,7 @@ func (c *Client) isStarted() bool {
 	return c.started
 }
 
-func (c *Client) isStopped() bool {
+func (c *Client) IsStopped() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 

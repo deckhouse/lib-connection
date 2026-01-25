@@ -44,6 +44,8 @@ type Client struct {
 	InitializeNewAgent bool
 
 	kubeProxies []*KubeProxy
+
+	stopped bool
 }
 
 func (s *Client) OnlyPreparePrivateKeys() error {
@@ -121,6 +123,8 @@ func (s *Client) Stop() {
 		p.StopAll()
 	}
 	s.kubeProxies = nil
+
+	s.stopped = true
 }
 
 func (s *Client) Session() *session.Session {
@@ -155,4 +159,8 @@ func (s *Client) Loop(fn connection.SSHLoopHandler) error {
 	}
 
 	return nil
+}
+
+func (s *Client) IsStopped() bool {
+	return s.stopped
 }

@@ -101,7 +101,8 @@ type Client struct {
 	agentClient     agent.ExtendedAgent
 	agentConnection net.Conn
 
-	silent bool
+	silent  bool
+	stopped bool
 }
 
 func (s *Client) WithLoopsParams(p ClientLoopsParams) *Client {
@@ -156,6 +157,7 @@ func (s *Client) Check() connection.Check {
 // Stop the client
 func (s *Client) Stop() {
 	s.stopAllAndLogErrors("call Stop()")
+	s.stopped = true
 	s.debug("SSH client is stopped")
 }
 
@@ -241,6 +243,10 @@ func (s *Client) UnregisterSession(sess *gossh.Session) {
 	if num < len(s.sshSessionsList) {
 		s.sshSessionsList = slices.Delete(s.sshSessionsList, num, num+1)
 	}
+}
+
+func (s *Client) IsStopped() bool {
+	return s.stopped
 }
 
 func (s *Client) stopAfterStartFailed(cause string, err error) error {

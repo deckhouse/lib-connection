@@ -182,4 +182,6 @@ type SSHClient interface {
 	PrivateKeys() []session.AgentPrivateKey
 
 	RefreshPrivateKeys() error
+
+	IsStopped() bool
 }

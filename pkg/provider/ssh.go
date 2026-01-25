@@ -36,6 +36,7 @@ import (
 
 type SSHClientOptions struct {
 	InitializeNewAgent bool
+	ForceGoSSH         bool
 }
 
 type SSHClientOption func(options *SSHClientOptions)
@@ -43,6 +44,12 @@ type SSHClientOption func(options *SSHClientOptions)
 func SSHClientWithInitializeNewAgent() SSHClientOption {
 	return func(options *SSHClientOptions) {
 		options.InitializeNewAgent = true
+	}
+}
+
+func SSHClientForceGoSSH() SSHClientOption {
+	return func(options *SSHClientOptions) {
+		options.ForceGoSSH = true
 	}
 }
 
@@ -187,6 +194,9 @@ func (p *DefaultSSHProvider) Cleanup(context.Context) error {
 }
 
 func (p *DefaultSSHProvider) WithOptions(opts ...SSHClientOption) *DefaultSSHProvider {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
 	options := SSHClientOptions{}
 	for _, opt := range opts {
 		opt(&options)
@@ -223,7 +233,7 @@ func (p *DefaultSSHProvider) createClient(ctx context.Context, parent *session.S
 
 	sess, privateKeys := p.newSession(parent, inputPrivateKeys)
 
-	if p.useGoSSH() {
+	if p.useGoSSH(true) {
 		return gossh.NewClient(ctx, p.sett, sess, privateKeys), nil
 	}
 
@@ -231,24 +241,24 @@ func (p *DefaultSSHProvider) createClient(ctx context.Context, parent *session.S
 }
 
 func (p *DefaultSSHProvider) stopCurrentClientIfNeed() {
+	defer func() {
+		p.currentClient = nil
+	}()
+
 	if govalue.Nil(p.currentClient) {
 		p.debug("CurrentClient is nil, skipping stop current client")
 		return
 	}
 
-	defer func() {
-		p.currentClient = nil
-	}()
-
-	if !p.useGoSSH() {
+	if !p.useGoSSH(false) {
 		// do not need cli-ssh
 		return
 	}
 
-	p.debug("Stopping old SSH Client: %-v\n", p.currentClient)
+	p.debug("Stopping old SSH Client: %s", p.currentClient.Session().String())
 	p.currentClient.Stop()
 
-	p.debug("Waiting for '%s' for stopped old SSH client\n", p.goSSHStopWait.String())
+	p.debug("Waiting for '%s' for stopped old SSH client", p.goSSHStopWait.String())
 	// todo ugly solution we need to add waiting function after stop in clients
 	// wait for keep-alive goroutine will exit
 	time.Sleep(p.goSSHStopWait)
@@ -319,27 +329,40 @@ func (p *DefaultSSHProvider) newSession(parent *session.Session, privateKeys []s
 	return session.NewSession(input), resPrivateKeys
 }
 
-func (p *DefaultSSHProvider) useGoSSH() bool {
+func (p *DefaultSSHProvider) useGoSSH(shouldLog bool) bool {
+	logDebug := func(format string, v ...any) {
+		if !shouldLog {
+			return
+		}
+
+		p.debug(format, v...)
+	}
+
+	if p.options.ForceGoSSH {
+		logDebug("Force go-ssh client from provider options")
+		return true
+	}
+
 	config := p.defaultConfig.Config
 
 	if config.ForceModern {
-		p.debug("Force go-ssh client from client settings")
+		logDebug("Force go-ssh client from client settings")
 		return true
 	}
 
 	if config.ForceLegacy {
-		p.debug("Force cli-ssh from client settings")
+		logDebug("Force cli-ssh from client settings")
 		return false
 	}
 
 	// if passed private keys force cli
 	// if use password auth use gossh
 	if len(config.PrivateKeys) == 0 {
-		p.debug("Force go-ssh client because use password auth. cli-ssh does not support password auth")
+		logDebug("Force go-ssh client because use password auth. cli-ssh does not support password auth")
 		return true
 	}
 
-	p.debug("Use cli-ssh by default")
+	logDebug("Use cli-ssh by default")
 	return false
 }
 
