@@ -14,6 +14,8 @@
 
 package config
 
+import "fmt"
+
 type AgentPrivateKey struct {
 	Key        string `json:"key"`
 	Passphrase string `json:"passphrase,omitempty"`
@@ -93,6 +95,22 @@ func (c *Config) Clone() *Config {
 
 		ExtraArgs: c.ExtraArgs,
 	}
+}
+
+func (c *Config) PortString() string {
+	if c.Port == nil {
+		return ""
+	}
+
+	return fmt.Sprintf("%d", *c.Port)
+}
+
+func (c *Config) BastionPortString() string {
+	if c.BastionPort == nil {
+		return ""
+	}
+
+	return fmt.Sprintf("%d", *c.BastionPort)
 }
 
 func (c *Config) HaveAuthMethods() bool {

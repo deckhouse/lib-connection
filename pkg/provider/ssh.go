@@ -144,7 +144,7 @@ func (p *DefaultSSHProvider) SwitchToDefault(ctx context.Context) (connection.SS
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	p.debug("Start switch to default settings client")
+	p.debug("Start switch client to default settings client")
 
 	p.stopCurrentClientIfNeed()
 
@@ -284,12 +284,12 @@ func (p *DefaultSSHProvider) newSession(parent *session.Session, privateKeys []s
 
 		input.User = config.User
 		// port not nil here, default config prepared
-		input.Port = fmt.Sprint(*config.Port)
+		input.Port = config.PortString()
 		input.BecomePass = config.SudoPassword
 
 		input.BastionHost = config.BastionHost
 		// bastion port not nil here, default config prepared
-		input.BastionPort = fmt.Sprint(*config.BastionPort)
+		input.BastionPort = config.BastionPortString()
 		input.BastionUser = config.BastionUser
 		input.BastionPassword = config.BastionPassword
 		input.ExtraArgs = config.ExtraArgs

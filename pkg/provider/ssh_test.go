@@ -387,56 +387,6 @@ func TestSSHProviderClient(t *testing.T) {
 	})
 
 	t.Run("SwitchClient", func(t *testing.T) {
-		type assertSwitchClientParams struct {
-			sett                  settings.Settings
-			provider              *DefaultSSHProvider
-			defaultConfig         *sshconfig.ConnectionConfig
-			host                  string
-			port                  int
-			shouldStopDefault     bool
-			additionalPrivateKeys []sshconfig.AgentPrivateKey
-		}
-
-		assertSwitchClient := func(t *testing.T, params assertSwitchClientParams, defaultClient connection.SSHClient) {
-			switchClientSession := defaultSession(params.host, params.port)
-			var privateKeys []session.AgentPrivateKey
-			for _, key := range params.additionalPrivateKeys {
-				privateKeys = append(privateKeys, session.AgentPrivateKey{
-					Key:        key.Key,
-					Passphrase: key.Passphrase,
-				})
-			}
-
-			provider := params.provider
-			ctx := context.TODO()
-
-			switchedClient, err := provider.SwitchClient(ctx, switchClientSession, privateKeys)
-
-			require.NoError(t, err, "should provide client")
-
-			if !govalue.Nil(defaultClient) {
-				require.False(t, defaultClient == switchedClient, "should return a new client")
-
-				assertStopped := require.False
-				if params.shouldStopDefault {
-					assertStopped = require.True
-				}
-
-				assertStopped(t, defaultClient.IsStopped(), "default client stopped check failed")
-			}
-
-			expectedKeysInSession := append(make([]sshconfig.AgentPrivateKey, 0), params.additionalPrivateKeys...)
-			expectedKeysInSession = append(expectedKeysInSession, params.defaultConfig.Config.PrivateKeys...)
-			assertPrivateKeysAddedInSession(t, switchedClient, expectedKeysInSession)
-			require.Equal(t, switchClientSession, switchedClient.Session(), "should set correct session")
-
-			defaultClientAfterSwitch, err := provider.Client(ctx)
-			require.NoError(t, err, "should provide client")
-			require.True(t, defaultClientAfterSwitch == switchedClient, "switch client should stored as default new client")
-
-			require.Len(t, provider.additionalClients, 0, "should not store additional client")
-		}
-
 		assertSwitchClientWithGetDefault := func(t *testing.T, params assertSwitchClientParams) {
 			defaultClient, err := params.provider.Client(context.TODO())
 			require.NoError(t, err, "default client should provided")
@@ -611,8 +561,7 @@ func TestSSHProviderClient(t *testing.T) {
 				port:        nil,
 			})
 
-			provider := NewDefaultSSHProvider(sett, config)
-			provider.goSSHStopWait = 3 * time.Second
+			provider := getProvider(sett, config)
 
 			params := connectionConfigParams{sett: sett}
 
@@ -645,6 +594,182 @@ func TestSSHProviderClient(t *testing.T) {
 			})
 		})
 	})
+
+	t.Run("SwitchToDefault", func(t *testing.T) {
+		type assertSwitchToDefaultParams struct {
+			provider       *DefaultSSHProvider
+			defaultSession *session.Session
+			defaultClient  connection.SSHClient
+			switchedClient connection.SSHClient
+			shouldStop     bool
+		}
+
+		assertSwitchToDefault := func(t *testing.T, params assertSwitchToDefaultParams) {
+			provider := params.provider
+			ctx := context.TODO()
+
+			assertClientStopped(t, params.defaultClient, params.shouldStop)
+
+			newDefaultClient, err := provider.SwitchToDefault(ctx)
+			require.NoError(t, err, "should switch to default after switch client")
+
+			assertClientStopped(t, params.switchedClient, params.shouldStop)
+
+			require.False(t, params.defaultClient == newDefaultClient, "default client should be different after switches")
+			require.False(t, params.switchedClient == newDefaultClient, "new default client should be different after switches")
+			require.Equal(t, params.defaultSession, newDefaultClient.Session(), "new default client session should be same after switches")
+
+			afterSwitchToDefaultClient, err := provider.Client(ctx)
+			require.NoError(t, err, "should get client")
+			require.True(t, newDefaultClient == afterSwitchToDefaultClient, "new default client should be same after switches")
+
+			require.Len(t, provider.additionalClients, 0, "should not add to additional clients")
+		}
+
+		assertSwitchToDefaultViaSwitchToNew := func(t *testing.T, sett settings.Settings, config *sshconfig.ConnectionConfig, shouldStop bool) {
+			provider := NewDefaultSSHProvider(sett, config)
+			provider.goSSHStopWait = 3 * time.Second
+			ctx := context.TODO()
+
+			defaultClient, err := provider.Client(ctx)
+			require.NoError(t, err, "default client should be created")
+
+			defaultClientSession := defaultClient.Session()
+
+			switchedClient := assertSwitchClient(t, assertSwitchClientParams{
+				sett:              sett,
+				provider:          provider,
+				defaultConfig:     config,
+				host:              "192.168.1.2",
+				port:              22024,
+				shouldStopDefault: shouldStop,
+			}, defaultClient)
+
+			assertSwitchToDefault(t, assertSwitchToDefaultParams{
+				provider:       provider,
+				defaultSession: defaultClientSession,
+				defaultClient:  defaultClient,
+				switchedClient: switchedClient,
+				shouldStop:     shouldStop,
+			})
+		}
+
+		t.Run("switch to default after switch to new client", func(t *testing.T) {
+			t.Run("go-ssh should stop clients", func(t *testing.T) {
+				sett := testSettings(t)
+				config := testCreateSSHConnectionConfigWithPrivateKeyPaths(t, connectionConfigParams{
+					mode: sshconfig.Mode{
+						ForceModern: true,
+					},
+					sett:        sett,
+					bastionPort: nil,
+					port:        nil,
+				})
+
+				assertSwitchToDefaultViaSwitchToNew(t, sett, config, true)
+			})
+
+			t.Run("cli-ssh should not stop clients", func(t *testing.T) {
+				sett := testSettings(t)
+				config := testCreateSSHConnectionConfigWithPrivateKeyPaths(t, connectionConfigParams{
+					mode: sshconfig.Mode{
+						ForceLegacy: true,
+					},
+					sett:        sett,
+					bastionPort: nil,
+					port:        nil,
+				})
+
+				assertSwitchToDefaultViaSwitchToNew(t, sett, config, false)
+			})
+		})
+
+		t.Run("switch to default safe without get default before", func(t *testing.T) {
+			sett := testSettings(t)
+			config := testCreateSSHConnectionConfigWithPrivateKeyPaths(t, connectionConfigParams{
+				mode: sshconfig.Mode{
+					ForceLegacy: true,
+				},
+				sett:        sett,
+				bastionPort: nil,
+				port:        nil,
+			})
+
+			provider := NewDefaultSSHProvider(sett, config)
+			ctx := context.TODO()
+
+			client, err := provider.SwitchToDefault(ctx)
+			assertClient(t, assertParams{
+				sett:               sett,
+				writeKeys:          false,
+				provider:           provider,
+				clientType:         &clissh.Client{},
+				shouldContainError: "",
+				config:             config,
+			}, client, err)
+
+			defaultClient, err := provider.Client(ctx)
+			require.NoError(t, err, "should get client")
+			require.True(t, defaultClient == client, "switch to default client should set current")
+
+			require.Len(t, provider.additionalClients, 0, "should not store additional client")
+		})
+	})
+}
+
+type assertSwitchClientParams struct {
+	sett                  settings.Settings
+	provider              *DefaultSSHProvider
+	defaultConfig         *sshconfig.ConnectionConfig
+	host                  string
+	port                  int
+	shouldStopDefault     bool
+	additionalPrivateKeys []sshconfig.AgentPrivateKey
+}
+
+func assertClientStopped(t *testing.T, client connection.SSHClient, shouldStop bool) {
+	assertStopped := require.False
+	if shouldStop {
+		assertStopped = require.True
+	}
+
+	assertStopped(t, client.IsStopped(), "default client stopped check failed")
+}
+
+func assertSwitchClient(t *testing.T, params assertSwitchClientParams, defaultClient connection.SSHClient) connection.SSHClient {
+	switchClientSession := defaultSession(params.host, params.port)
+	var privateKeys []session.AgentPrivateKey
+	for _, key := range params.additionalPrivateKeys {
+		privateKeys = append(privateKeys, session.AgentPrivateKey{
+			Key:        key.Key,
+			Passphrase: key.Passphrase,
+		})
+	}
+
+	provider := params.provider
+	ctx := context.TODO()
+
+	switchedClient, err := provider.SwitchClient(ctx, switchClientSession, privateKeys)
+
+	require.NoError(t, err, "should provide client")
+
+	if !govalue.Nil(defaultClient) {
+		require.False(t, defaultClient == switchedClient, "should return a new client")
+		assertClientStopped(t, defaultClient, params.shouldStopDefault)
+	}
+
+	expectedKeysInSession := append(make([]sshconfig.AgentPrivateKey, 0), params.additionalPrivateKeys...)
+	expectedKeysInSession = append(expectedKeysInSession, params.defaultConfig.Config.PrivateKeys...)
+	assertPrivateKeysAddedInSession(t, switchedClient, expectedKeysInSession)
+	require.Equal(t, switchClientSession, switchedClient.Session(), "should set correct session")
+
+	defaultClientAfterSwitch, err := provider.Client(ctx)
+	require.NoError(t, err, "should provide client")
+	require.True(t, defaultClientAfterSwitch == switchedClient, "switch client should stored as default new client")
+
+	require.Len(t, provider.additionalClients, 0, "should not store additional client")
+
+	return switchedClient
 }
 
 type connectionConfigParams struct {
@@ -812,7 +937,30 @@ func assertClient(t *testing.T, params assertParams, client connection.SSHClient
 	require.False(t, govalue.Nil(client), "client should have been created")
 	require.IsType(t, params.clientType, client, "client should have valid type")
 
+	config := params.config.Config.Clone().FillDefaults()
+	clientSession := client.Session()
+
+	sessionHosts := make(map[string]struct{})
+	for _, host := range clientSession.AvailableHosts() {
+		sessionHosts[host.Host] = struct{}{}
+	}
+	require.Len(t, sessionHosts, len(params.config.Hosts), "should have all hosts")
+	for _, host := range params.config.Hosts {
+		require.Contains(t, sessionHosts, host.Host, "host should be present in session %s", host.Host)
+	}
+
 	assertPrivateKeysAddedInSession(t, client, params.config.Config.PrivateKeys)
+
+	require.Equal(t, config.PortString(), clientSession.Port, "port should be correctly")
+	require.Equal(t, config.SudoPassword, clientSession.BecomePass, "sudo password correctly")
+	require.Equal(t, config.User, clientSession.User, "user should be correct")
+
+	require.Equal(t, config.BastionPassword, clientSession.BastionPassword, "bastion password correctly")
+	require.Equal(t, config.BastionUser, clientSession.BastionUser, "bastion user password correctly")
+	require.Equal(t, config.BastionPortString(), clientSession.BastionPort, "bastion port should be correctly")
+	require.Equal(t, config.BastionHost, clientSession.BastionHost, "bastion port should be correctly")
+
+	require.Equal(t, config.ExtraArgs, clientSession.ExtraArgs, "extra args should be correct")
 }
 
 var privateKeyPattern = regexp.MustCompile(`^pk\.[0-9]+$`)
