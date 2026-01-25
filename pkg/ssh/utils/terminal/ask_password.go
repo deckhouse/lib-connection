@@ -31,7 +31,7 @@ func AskPassword(logger log.Logger, prompt string) ([]byte, error) {
 
 	logger.InfoF(prompt)
 	data, err := terminal.ReadPassword(fd)
-	logger.InfoLn()
+	logger.InfoF("")
 
 	if err != nil {
 		return nil, fmt.Errorf("read secret: %w", err)

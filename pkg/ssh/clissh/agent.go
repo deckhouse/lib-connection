@@ -103,13 +103,13 @@ func (a *Agent) Start() error {
 
 	logger := a.sshSettings.Logger()
 
-	logger.DebugLn("agent: start ssh-agent")
+	logger.DebugF("agent: start ssh-agent")
 	err := a.agent.Start()
 	if err != nil {
 		return fmt.Errorf("Start ssh-agent: %v", err)
 	}
 
-	logger.DebugLn("agent: run ssh-add for keys")
+	logger.DebugF("agent: run ssh-add for keys")
 	err = a.AddKeys(a.agentSettings.PrivateKeys)
 	if err != nil {
 		return fmt.Errorf("Agent error: %v", err)
@@ -128,7 +128,7 @@ func (a *Agent) AddKeys(keys []session.AgentPrivateKey) error {
 	logger := a.sshSettings.Logger()
 
 	if a.sshSettings.IsDebug() {
-		logger.DebugLn("list added keys")
+		logger.DebugF("list added keys")
 		listCmd := cmd.NewSSHAdd(a.sshSettings, a.agentSettings).ListCmd()
 
 		output, err := listCmd.CombinedOutput()
@@ -163,11 +163,8 @@ func (a *Agent) addKeys(authSock string, keys []session.AgentPrivateKey) error {
 
 	agentClient := agent.NewClient(conn)
 
-	for i, key := range keys {
-		privateKey, _, err := utils.ParseSSHPrivateKey(
-			[]byte(key.Key),
-			fmt.Sprintf("index %d", i),
-			utils.NewDefaultPassphraseOnlyConsumer(key.Passphrase))
+	for _, key := range keys {
+		privateKey, _, err := utils.ParseSSHPrivateKeyFile(key.Key, key.Passphrase, a.sshSettings.Logger())
 		if err != nil {
 			return err
 		}

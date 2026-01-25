@@ -80,7 +80,7 @@ func (s *SSHAdd) AddKeys(keys []string) error {
 	}
 
 	if s.settings.IsDebug() {
-		logger.DebugLn("list added keys")
+		logger.DebugF("List added keys")
 		env := []string{
 			s.AgentSettings.AuthSockEnv(),
 		}

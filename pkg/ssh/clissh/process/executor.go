@@ -329,8 +329,8 @@ func (e *Executor) SetupStreamHandlers() error {
 			return
 		}
 
-		logger.DebugLn("Start reading from stderr pipe")
-		defer logger.DebugLn("Stop reading from stderr pipe")
+		logger.DebugF("Start reading from stderr pipe")
+		defer logger.DebugF("Stop reading from stderr pipe")
 
 		buf := make([]byte, 16)
 		for {
@@ -367,7 +367,7 @@ func (e *Executor) SetupStreamHandlers() error {
 func (e *Executor) readFromStreams(stdoutReadPipe io.Reader, stdoutHandlerWritePipe io.Writer) {
 	logger := e.settings.Logger()
 
-	defer logger.DebugLn("stop readFromStreams")
+	defer logger.DebugF("stop readFromStreams")
 
 	if stdoutReadPipe == nil || reflect.ValueOf(stdoutReadPipe).IsNil() {
 		return
@@ -430,7 +430,7 @@ func (e *Executor) readFromStreams(stdoutReadPipe io.Reader, stdoutHandlerWriteP
 		}
 
 		if err == io.EOF {
-			logger.DebugLn("readFromStreams: EOF")
+			logger.DebugF("readFromStreams: EOF")
 			break
 		}
 	}
@@ -537,8 +537,8 @@ func (e *Executor) ProcessWait() {
 func (e *Executor) closePipes() {
 	logger := e.settings.Logger()
 
-	logger.DebugLn("Starting close piped")
-	defer logger.DebugLn("Stop close piped")
+	logger.DebugF("Starting close piped")
+	defer logger.DebugF("Stop close piped")
 
 	e.pipesMutex.Lock()
 	defer e.pipesMutex.Unlock()

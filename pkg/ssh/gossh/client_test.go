@@ -274,7 +274,7 @@ func TestClientStart(t *testing.T) {
 
 			if !c.wantErr {
 				require.NoError(t, err)
-				test.Logger.DebugLn("client started successfully")
+				test.Logger.DebugF("client started successfully")
 				return
 			}
 

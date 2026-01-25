@@ -318,6 +318,6 @@ func bundleOutputHandler(
 		}
 
 		stepLogs = append(stepLogs, l)
-		logger.DebugLn(l)
+		logger.DebugF(l)
 	}
 }

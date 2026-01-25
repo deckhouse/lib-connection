@@ -227,7 +227,7 @@ func (t *ReverseTunnel) StartHealthMonitor(ctx context.Context, checker connecti
 	}
 
 	go func() {
-		logger.DebugLn("Start health monitor")
+		logger.DebugF("Start health monitor")
 		// we need chan for restarting because between restarting we can get stop signal
 		restartCh := make(chan int, 1024)
 		id := -1
@@ -244,7 +244,7 @@ func (t *ReverseTunnel) StartHealthMonitor(ctx context.Context, checker connecti
 
 			select {
 			case <-t.stopCh:
-				logger.DebugLn("Stop health monitor")
+				logger.DebugF("Stop health monitor")
 				return
 			case oldId := <-restartCh:
 				restartsCount++

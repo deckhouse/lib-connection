@@ -402,7 +402,7 @@ func (c *SSHCommand) Sudo(ctx context.Context) {
 				passSent = true
 			} else {
 				// Second prompt is error!
-				logger.ErrorLn("Bad sudo password.")
+				logger.ErrorF("Bad sudo password.")
 			}
 			return "reset"
 		}

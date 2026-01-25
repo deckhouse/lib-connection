@@ -858,16 +858,7 @@ func (e *envExtractor) Bool(name string, destination *bool) bool {
 }
 
 func terminalPrivateKeyPasswordExtractor(path string, defaultPassword []byte, logger log.Logger) (string, error) {
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return "", fmt.Errorf("Cannot read private key %s: %w", path, err)
-	}
-
-	_, password, err := utils.ParseSSHPrivateKey(
-		content,
-		path,
-		utils.NewTerminalPassphraseConsumer(logger, defaultPassword),
-	)
+	_, password, err := utils.ParseSSHPrivateKeyFile(path, string(defaultPassword), logger)
 
 	return password, err
 }

@@ -39,8 +39,8 @@ func NewNodeInterface(sett settings.Settings) *NodeInterface {
 func (n *NodeInterface) Command(name string, args ...string) connection.Command {
 	logger := n.settings.Logger()
 
-	logger.DebugLn("Starting NodeInterface.Command")
-	defer logger.DebugLn("Stop NodeInterface.Command")
+	logger.DebugF("Starting NodeInterface.Command")
+	defer logger.DebugF("Stop NodeInterface.Command")
 
 	return NewCommand(n.settings, name, args...)
 }
@@ -52,8 +52,8 @@ func (n *NodeInterface) File() connection.File {
 func (n *NodeInterface) UploadScript(scriptPath string, args ...string) connection.Script {
 	logger := n.settings.Logger()
 
-	logger.DebugLn("Starting NodeInterface.UploadScript")
-	defer logger.DebugLn("Stop NodeInterface.UploadScript")
+	logger.DebugF("Starting NodeInterface.UploadScript")
+	defer logger.DebugF("Stop NodeInterface.UploadScript")
 
 	return NewScript(n.settings, scriptPath, args...)
 }

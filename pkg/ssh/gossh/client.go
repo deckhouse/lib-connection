@@ -675,17 +675,13 @@ func (s *Client) dialContext(ctx context.Context, network, addr string, config *
 
 func (s *Client) initSigners() error {
 	if len(s.signers) > 0 {
-		s.settings.Logger().DebugLn("Signers already initialized")
+		s.settings.Logger().DebugF("Signers already initialized")
 		return nil
 	}
 
 	signers := make([]gossh.Signer, 0, len(s.privateKeys))
-	for i, keypath := range s.privateKeys {
-		key, _, err := utils.ParseSSHPrivateKey(
-			[]byte(keypath.Key),
-			fmt.Sprintf("index %d", i),
-			utils.NewDefaultPassphraseOnlyConsumer(keypath.Passphrase),
-		)
+	for _, keypath := range s.privateKeys {
+		key, _, err := utils.ParseSSHPrivateKeyFile(keypath.Key, keypath.Passphrase, s.settings.Logger())
 		if err != nil {
 			return err
 		}

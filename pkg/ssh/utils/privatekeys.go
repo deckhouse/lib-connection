@@ -73,13 +73,20 @@ func (c *DefaultPassphraseOnlyConsumer) AskPassword(prompt string) ([]byte, erro
 	return nil, fmt.Errorf("%s. AskPassword not allow for DefaultPassphraseOnlyConsumer", prompt)
 }
 
-func ParseSSHPrivateKeyFile(path string, logger log.Logger) (any, string, error) {
+func ParseSSHPrivateKeyFile(path string, password string, logger log.Logger) (any, string, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {
-		return nil, "", fmt.Errorf("cannot read private key file %s: %w", path, err)
+		return nil, "", fmt.Errorf("Cannot read private key file %s: %w", path, err)
 	}
 
-	return ParseSSHPrivateKey(content, path, NewTerminalPassphraseConsumer(logger, make([]byte, 0)))
+	return ParseSSHPrivateKey(
+		content,
+		path,
+		NewTerminalPassphraseConsumer(
+			logger,
+			[]byte(password),
+		),
+	)
 }
 
 func ParseSSHPrivateKey(keyData []byte, keyName string, passphraseConsumer PassphraseConsumer) (any, string, error) {

@@ -121,12 +121,12 @@ func (c *Command) Sudo(ctx context.Context) {
 			}
 			if !passSent {
 				// send pass through stdin
-				logger.DebugLn("Send become pass to cmd")
+				logger.DebugF("Send become pass to cmd")
 				_, _ = c.Executor.Stdin.Write([]byte(becomePass + "\n"))
 				passSent = true
 			} else {
 				// Second prompt is error!
-				logger.ErrorLn("Bad sudo password")
+				logger.ErrorF("Bad sudo password")
 				// sending wrong password again will raise an error in process.Run()
 				_, _ = c.Executor.Stdin.Write([]byte(becomePass + "\n"))
 				// os.Exit(1)
@@ -134,7 +134,7 @@ func (c *Command) Sudo(ctx context.Context) {
 			return "reset"
 		}
 		if pattern == "SUDO-SUCCESS" {
-			logger.DebugLn("Got SUCCESS")
+			logger.DebugF("Got SUCCESS")
 			if c.onCommandStart != nil {
 				c.onCommandStart()
 			}
