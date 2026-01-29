@@ -30,7 +30,7 @@ import (
 )
 
 func TestFileUpload(t *testing.T) {
-	test := sshtesting.ShouldNewTest(t, "TestCommandOutput")
+	test := sshtesting.ShouldNewTest(t, "TestFileUpload")
 
 	const uploadDir = "upload_dir"
 	const testFileContent = "Hello World"

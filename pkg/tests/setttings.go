@@ -23,8 +23,15 @@ import (
 	"github.com/deckhouse/lib-connection/pkg/ssh/session"
 )
 
-func TestLogger(isDebug bool) *log.InMemoryLogger {
-	return log.NewInMemoryLoggerWithParent(log.NewPrettyLogger(log.LoggerOptions{IsDebug: isDebug}))
+func TestLogger(opts ...TestOpt) *log.InMemoryLogger {
+	options := applyTestOpts(opts...)
+
+	loggerOptions := log.LoggerOptions{IsDebug: options.isDebug}
+	if options.logBuffer != nil {
+		loggerOptions.OutStream = options.logBuffer
+	}
+
+	return log.NewInMemoryLoggerWithParent(log.NewPrettyLogger(loggerOptions))
 }
 
 func getDefaultParams(test *Test) settings.ProviderParams {

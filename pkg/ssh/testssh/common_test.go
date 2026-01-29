@@ -16,6 +16,7 @@ package testssh
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -93,7 +94,7 @@ func startTwoContainersWithClients(t *testing.T, test *tests.Test, createDeckhou
 	ctx := context.Background()
 	sess := tests.Session(container)
 	keys := container.AgentPrivateKeys()
-	sshSettings := tests.CreateTestSettingNoDebug(test)
+	sshSettings := test.Settings()
 	goSSHClient := gossh.NewClient(ctx, sshSettings, sess, keys).
 		WithLoopsParams(newSessionTestLoopParams())
 	err := goSSHClient.Start()
@@ -138,7 +139,10 @@ func prepareScp(t *testing.T) {
 	err := os.MkdirAll(path, 0o777)
 	require.NoError(t, err)
 	err = os.Symlink("/usr/bin/ssh", filepath.Join(path, "ssh"))
-	require.NoError(t, err)
+	if err != nil && !errors.Is(err, os.ErrExist) {
+		require.NoError(t, err)
+	}
+
 	t.Cleanup(func() {
 		os.RemoveAll(path)
 	})

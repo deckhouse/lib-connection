@@ -86,7 +86,7 @@ func StartAgent(sockDir string, logger log.Logger, keysPath ...PrivateKey) (*Age
 	sockPath := filepath.Join(sockDir, fmt.Sprintf("test-ssh-agent-%s.sock", id))
 
 	if govalue.Nil(logger) {
-		logger = TestLogger(false)
+		logger = TestLogger(TestWithDebug(false))
 	}
 
 	agent := &Agent{

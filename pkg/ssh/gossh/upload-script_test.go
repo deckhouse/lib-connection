@@ -15,6 +15,7 @@
 package gossh
 
 import (
+	"bytes"
 	"context"
 	"testing"
 	"time"
@@ -133,7 +134,13 @@ fi
 }
 
 func TestUploadScriptExecuteBundle(t *testing.T) {
-	test := tests.ShouldNewTest(t, "TestUploadScriptExecuteBundle")
+	loggerBuf := bytes.NewBuffer(nil)
+	test := tests.ShouldNewTest(
+		t,
+		"TestUploadScriptExecuteBundle",
+		tests.TestWithLoggerBuffer(loggerBuf),
+		tests.TestWithPrettyLogger(true),
+	)
 
 	sshClient, container := startContainerAndClientWithContainer(t, test, tests.WithNoWriteSSHDConfig())
 	sshClient.WithLoopsParams(ClientLoopsParams{
@@ -153,27 +160,30 @@ func TestUploadScriptExecuteBundle(t *testing.T) {
 
 	t.Run("Upload and execute bundle to container via existing ssh client", func(t *testing.T) {
 		cases := []struct {
-			title       string
-			scriptArgs  []string
-			parentDir   string
-			bundleDir   string
-			prepareFunc func() error
-			wantErr     bool
-			err         string
+			title           string
+			scriptArgs      []string
+			parentDir       string
+			bundleDir       string
+			prepareFunc     func() error
+			wantErr         bool
+			err             string
+			loggerOutAssert func(t *testing.T, buf *bytes.Buffer)
 		}{
 			{
-				title:      "Happy case",
-				scriptArgs: []string{},
-				parentDir:  testDir,
-				bundleDir:  "bashible",
-				wantErr:    false,
+				title:           "Happy case",
+				scriptArgs:      []string{},
+				parentDir:       testDir,
+				bundleDir:       "bashible",
+				wantErr:         false,
+				loggerOutAssert: tests.AssertLogBufferNoErrorBundle,
 			},
 			{
-				title:      "Bundle error",
-				scriptArgs: []string{"--add-failure"},
-				parentDir:  testDir,
-				bundleDir:  "bashible",
-				wantErr:    true,
+				title:           "Bundle error",
+				scriptArgs:      []string{"--add-failure"},
+				parentDir:       testDir,
+				bundleDir:       "bashible",
+				wantErr:         true,
+				loggerOutAssert: tests.AssertLogBufferWithErrorBundle,
 			},
 			{
 				title:      "Wrong bundle directory",
@@ -205,7 +215,14 @@ func TestUploadScriptExecuteBundle(t *testing.T) {
 					require.NoError(t, err)
 				}
 
+				loggerBuf.Reset()
+
 				_, err := s.ExecuteBundle(context.Background(), c.parentDir, c.bundleDir)
+
+				if c.loggerOutAssert != nil {
+					c.loggerOutAssert(t, loggerBuf)
+				}
+
 				if c.wantErr {
 					require.Error(t, err)
 					require.Contains(t, err.Error(), c.err)

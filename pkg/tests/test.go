@@ -15,6 +15,7 @@
 package tests
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -34,14 +35,28 @@ const (
 )
 
 type testOpts struct {
-	isDebug     bool
-	parallelRun bool
+	isDebug      bool
+	parallelRun  bool
+	logBuffer    *bytes.Buffer
+	prettyLogger bool
 }
 type TestOpt func(opts *testOpts)
 
 func TestWithDebug(isDebug bool) TestOpt {
 	return func(opts *testOpts) {
 		opts.isDebug = isDebug
+	}
+}
+
+func TestWithLoggerBuffer(b *bytes.Buffer) TestOpt {
+	return func(opts *testOpts) {
+		opts.logBuffer = b
+	}
+}
+
+func TestWithPrettyLogger(f bool) TestOpt {
+	return func(opts *testOpts) {
+		opts.prettyLogger = f
 	}
 }
 
@@ -106,7 +121,7 @@ func NewTest(testName string, opts ...TestOpt) (*Test, error) {
 	}
 
 	if govalue.Nil(resTest.Logger) {
-		resTest.Logger = TestLogger(options.isDebug)
+		resTest.Logger = TestLogger(opts...)
 	}
 
 	localTmpDirStr := filepath.Join(os.TempDir(), tmpGlobalDirName, id)

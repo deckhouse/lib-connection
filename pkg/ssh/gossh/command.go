@@ -551,6 +551,7 @@ func (c *SSHCommand) WithEnv(env map[string]string) {
 		c.Env = append(c.Env, fmt.Sprintf("%s=%s", k, v))
 	}
 }
+
 func (c *SSHCommand) CaptureStdout(buf *bytes.Buffer) *SSHCommand {
 	if buf != nil {
 		c.out = buf

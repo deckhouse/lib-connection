@@ -22,8 +22,8 @@ github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/deckhouse/deckhouse/pkg/log v0.1.1-0.20251230144142-2bad7c3d1edf h1:4HrDzRZcLpREJ+2cSGNmxHVQlxXRcH2r5TGmTcoTZiU=
 github.com/deckhouse/deckhouse/pkg/log v0.1.1-0.20251230144142-2bad7c3d1edf/go.mod h1:pbAxTSDcPmwyl3wwKDcEB3qdxHnRxqTV+J0K+sha8bw=
-github.com/deckhouse/lib-dhctl v0.12.0 h1:qo/kPlhkBaurWRVNmLdQm7109dU5Ziw5Ruf8pqKS2DU=
-github.com/deckhouse/lib-dhctl v0.12.0/go.mod h1:RCthjbhLf0CtgdltTmFHk+lRyjRai8BlAO7SocAYR+E=
+github.com/deckhouse/lib-dhctl v0.13.0 h1:Xh7G30seic4Aa8MdXOH2ecGvO0zsn6PBGBHbJ4YNnZM=
+github.com/deckhouse/lib-dhctl v0.13.0/go.mod h1:RCthjbhLf0CtgdltTmFHk+lRyjRai8BlAO7SocAYR+E=
 github.com/deckhouse/lib-gossh v0.3.0 h1:FUAlF8+fLnBCII9hXSNx+arZ4PH3H/6fzp5LBlnmlps=
 github.com/deckhouse/lib-gossh v0.3.0/go.mod h1:6bT8jf2fkBPEhYBU35+vMBr5YscliTiS+Vr8v06C+70=
 github.com/docker/go-units v0.3.3/go.mod h1:fgPhTUdO+D/Jk86RDLlptpiXQzgHJF7gydDDbaIK4Dk=

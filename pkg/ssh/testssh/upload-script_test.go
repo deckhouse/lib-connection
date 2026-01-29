@@ -15,12 +15,13 @@
 package testssh
 
 import (
+	"bytes"
 	"context"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/deckhouse/lib-connection/pkg"
+	connection "github.com/deckhouse/lib-connection/pkg"
 	"github.com/deckhouse/lib-connection/pkg/tests"
 )
 
@@ -97,7 +98,7 @@ fi
 
 		for _, c := range cases {
 			t.Run(c.title, func(t *testing.T) {
-				var s, s2 pkg.Script
+				var s, s2 connection.Script
 				s = goSSHClient.UploadScript(c.scriptPath, c.scriptArgs...)
 				s.WithCleanupAfterExec(true)
 
@@ -133,7 +134,14 @@ fi
 }
 
 func TestUploadScriptExecuteBundle(t *testing.T) {
-	test := tests.ShouldNewTest(t, "TestUploadScriptExecuteBundle")
+	loggerBuf := bytes.NewBuffer(nil)
+
+	test := tests.ShouldNewTest(
+		t,
+		"TestUploadScriptExecuteBundle",
+		tests.TestWithLoggerBuffer(loggerBuf),
+		tests.TestWithPrettyLogger(true),
+	)
 
 	goSSHClient, cliSSHClient, _, err := startTwoContainersWithClients(t, test, true)
 	require.NoError(t, err)
@@ -147,28 +155,33 @@ func TestUploadScriptExecuteBundle(t *testing.T) {
 	testDir := tests.PrepareFakeBashibleBundle(t, test, entrypoint, "bashible")
 
 	t.Run("Upload and execute bundle to container via existing ssh client", func(t *testing.T) {
-		cases := []struct {
-			title       string
-			scriptArgs  []string
-			parentDir   string
-			bundleDir   string
-			prepareFunc func() error
-			wantErr     bool
-			err         string
-		}{
+		type testCase struct {
+			title           string
+			scriptArgs      []string
+			parentDir       string
+			bundleDir       string
+			prepareFunc     func() error
+			wantErr         bool
+			err             string
+			loggerOutAssert func(t *testing.T, buf *bytes.Buffer)
+		}
+
+		cases := []testCase{
 			{
-				title:      "Happy case",
-				scriptArgs: []string{},
-				parentDir:  testDir,
-				bundleDir:  "bashible",
-				wantErr:    false,
+				title:           "Happy case",
+				scriptArgs:      []string{},
+				parentDir:       testDir,
+				bundleDir:       "bashible",
+				wantErr:         false,
+				loggerOutAssert: tests.AssertLogBufferNoErrorBundle,
 			},
 			{
-				title:      "Bundle error",
-				scriptArgs: []string{"--add-failure"},
-				parentDir:  testDir,
-				bundleDir:  "bashible",
-				wantErr:    true,
+				title:           "Bundle error",
+				scriptArgs:      []string{"--add-failure"},
+				parentDir:       testDir,
+				bundleDir:       "bashible",
+				wantErr:         true,
+				loggerOutAssert: tests.AssertLogBufferWithErrorBundle,
 			},
 			{
 				title:      "Wrong bundle directory",
@@ -195,26 +208,35 @@ func TestUploadScriptExecuteBundle(t *testing.T) {
 		}
 
 		for _, c := range cases {
+			assertExecuteBundle := func(t *testing.T, cs testCase, s connection.Script) {
+				loggerBuf.Reset()
+
+				_, err := s.ExecuteBundle(context.Background(), c.parentDir, c.bundleDir)
+
+				if c.wantErr {
+					require.Error(t, err)
+					require.Contains(t, err.Error(), c.err)
+					return
+				}
+
+				require.NoError(t, err)
+
+				if c.loggerOutAssert != nil {
+					c.loggerOutAssert(t, loggerBuf)
+				}
+			}
+
 			t.Run(c.title, func(t *testing.T) {
-				s := goSSHClient.UploadScript(entrypoint, c.scriptArgs...)
-				s2 := cliSSHClient.UploadScript(entrypoint, c.scriptArgs...)
+				goScript := goSSHClient.UploadScript(entrypoint, c.scriptArgs...)
+				cliScript := cliSSHClient.UploadScript(entrypoint, c.scriptArgs...)
+
 				if c.prepareFunc != nil {
 					err = c.prepareFunc()
 					require.NoError(t, err)
 				}
 
-				_, err := s.ExecuteBundle(context.Background(), c.parentDir, c.bundleDir)
-				_, err2 := s2.ExecuteBundle(context.Background(), c.parentDir, c.bundleDir)
-				if c.wantErr {
-					require.Error(t, err)
-					require.Contains(t, err.Error(), c.err)
-					require.Error(t, err2)
-					require.Contains(t, err2.Error(), c.err)
-					return
-				}
-
-				require.NoError(t, err)
-				require.NoError(t, err2)
+				assertExecuteBundle(t, c, goScript)
+				assertExecuteBundle(t, c, cliScript)
 			})
 		}
 	})
