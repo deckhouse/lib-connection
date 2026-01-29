@@ -30,7 +30,12 @@ import (
 	gossh "github.com/deckhouse/lib-gossh"
 	"github.com/name212/govalue"
 
+	connection "github.com/deckhouse/lib-connection/pkg"
 	"github.com/deckhouse/lib-connection/pkg/ssh/utils"
+)
+
+var (
+	_ connection.Command = &SSHCommand{}
 )
 
 type SSHCommand struct {

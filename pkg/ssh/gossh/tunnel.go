@@ -26,6 +26,12 @@ import (
 
 	"github.com/name212/govalue"
 	"github.com/pkg/errors"
+
+	connection "github.com/deckhouse/lib-connection/pkg"
+)
+
+var (
+	_ connection.Tunnel = &Tunnel{}
 )
 
 type Tunnel struct {

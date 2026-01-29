@@ -24,6 +24,10 @@ import (
 	sshconfig "github.com/deckhouse/lib-connection/pkg/ssh/config"
 )
 
+var (
+	_ connection.Provider = &DefaultProvider{}
+)
+
 type DefaultProvider struct {
 	sshProvider connection.SSHProvider
 }

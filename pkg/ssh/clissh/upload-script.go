@@ -28,10 +28,15 @@ import (
 	"al.essio.dev/pkg/shellescape"
 	"github.com/deckhouse/lib-dhctl/pkg/log"
 
+	connection "github.com/deckhouse/lib-connection/pkg"
 	"github.com/deckhouse/lib-connection/pkg/settings"
 	"github.com/deckhouse/lib-connection/pkg/ssh/session"
 	genssh "github.com/deckhouse/lib-connection/pkg/ssh/utils"
 	"github.com/deckhouse/lib-connection/pkg/ssh/utils/tar"
+)
+
+var (
+	_ connection.Script = &UploadScript{}
 )
 
 type UploadScript struct {

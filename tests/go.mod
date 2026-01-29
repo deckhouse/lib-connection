@@ -11,7 +11,7 @@ require (
 	github.com/asaskevich/govalidator v0.0.0-20200428143746-21a406dcc535 // indirect
 	github.com/avelino/slugify v0.0.0-20180501145920-855f152bd774 // indirect
 	github.com/deckhouse/deckhouse/pkg/log v0.1.1-0.20251230144142-2bad7c3d1edf // indirect
-	github.com/deckhouse/lib-dhctl v0.11.0 // indirect
+	github.com/deckhouse/lib-dhctl v0.12.0 // indirect
 	github.com/deckhouse/lib-gossh v0.3.0 // indirect
 	github.com/go-logr/logr v1.4.1 // indirect
 	github.com/go-openapi/analysis v0.19.10 // indirect

@@ -30,6 +30,10 @@ import (
 	"github.com/deckhouse/lib-connection/pkg/ssh/utils"
 )
 
+var (
+	_ connection.ReverseTunnel = &ReverseTunnel{}
+)
+
 type tunnelWaitResult struct {
 	id  int
 	err error

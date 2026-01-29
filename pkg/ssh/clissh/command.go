@@ -23,11 +23,16 @@ import (
 	"strings"
 	"time"
 
+	connection "github.com/deckhouse/lib-connection/pkg"
 	"github.com/deckhouse/lib-connection/pkg/settings"
 	"github.com/deckhouse/lib-connection/pkg/ssh/clissh/cmd"
 	"github.com/deckhouse/lib-connection/pkg/ssh/clissh/process"
 	"github.com/deckhouse/lib-connection/pkg/ssh/session"
 	"github.com/deckhouse/lib-connection/pkg/ssh/utils"
+)
+
+var (
+	_ connection.Command = &Command{}
 )
 
 type Command struct {

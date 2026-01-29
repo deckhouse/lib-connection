@@ -35,6 +35,17 @@ import (
 	"github.com/deckhouse/lib-connection/pkg/ssh/utils"
 )
 
+var (
+	_ connection.SSHProvider   = &SSHProvider{}
+	_ connection.SSHClient     = &Client{}
+	_ connection.Command       = &Command{}
+	_ connection.File          = &File{}
+	_ connection.Script        = &Script{}
+	_ connection.Tunnel        = &tunnel{}
+	_ connection.ReverseTunnel = &reverseTunnel{}
+	_ connection.KubeProxy     = &kubeProxy{}
+)
+
 type (
 	Bastion struct {
 		Host string
@@ -144,6 +155,23 @@ func (p *SSHProvider) NewAdditionalClient(context.Context) (connection.SSHClient
 	return p.newClient(sess, keys)
 }
 
+func (p *SSHProvider) NewStandaloneClient(ctx context.Context, sess *session.Session, privateKeys []session.AgentPrivateKey, opts ...connection.StandaloneClientOpt) (connection.SSHClient, error) {
+	sessCopy := sess.Copy()
+	// copy reset current host
+	sessCopy.ChoiceNewHost()
+
+	if err := p.fillDefaults(sessCopy, opts...); err != nil {
+		return nil, err
+	}
+
+	client, err := p.newClient(sess, privateKeys)
+	if err != nil {
+		return nil, err
+	}
+
+	return client, nil
+}
+
 func (p *SSHProvider) SwitchClient(_ context.Context, sess *session.Session, privateKeys []session.AgentPrivateKey) (connection.SSHClient, error) {
 	privateKeysCpy := make([]session.AgentPrivateKey, len(privateKeys))
 	copy(privateKeysCpy, privateKeys)
@@ -193,6 +221,57 @@ func (p *SSHProvider) InitSession() *session.Session {
 	c.ChoiceNewHost()
 
 	return c
+}
+
+func (p *SSHProvider) fillDefaults(input *session.Session, opts ...connection.StandaloneClientOpt) error {
+	options := connection.StandaloneClientOpts{}
+	for _, o := range opts {
+		o(&options)
+	}
+
+	if !options.SetSettingsFromDefaultsIfNeeded {
+		return nil
+	}
+
+	if p.initSession == nil {
+		return fmt.Errorf("Init session is nil")
+	}
+
+	init := p.initSession
+
+	if input.Port == "" {
+		input.Port = init.Port
+	}
+
+	if input.User == "" {
+		input.User = init.User
+	}
+
+	if input.BecomePass == "" {
+		input.BecomePass = init.BecomePass
+	}
+
+	if input.BastionHost == "" {
+		input.BastionHost = init.BastionHost
+	}
+
+	if input.BastionUser == "" {
+		input.BastionUser = init.BastionUser
+	}
+
+	if input.BastionPort == "" {
+		input.BastionPort = init.BastionPort
+	}
+
+	if input.BastionPassword == "" {
+		input.BastionPassword = init.BastionPassword
+	}
+
+	if input.ExtraArgs == "" {
+		input.ExtraArgs = init.ExtraArgs
+	}
+
+	return nil
 }
 
 func (p *SSHProvider) newClient(session *session.Session, k []session.AgentPrivateKey) (*Client, error) {

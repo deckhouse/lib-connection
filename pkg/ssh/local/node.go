@@ -19,6 +19,10 @@ import (
 	"github.com/deckhouse/lib-connection/pkg/settings"
 )
 
+var (
+	_ connection.Interface = &NodeInterface{}
+)
+
 type NodeInterface struct {
 	settings settings.Settings
 }

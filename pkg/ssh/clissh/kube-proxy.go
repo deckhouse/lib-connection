@@ -22,8 +22,13 @@ import (
 	"regexp"
 	"time"
 
+	connection "github.com/deckhouse/lib-connection/pkg"
 	"github.com/deckhouse/lib-connection/pkg/settings"
 	"github.com/deckhouse/lib-connection/pkg/ssh/session"
+)
+
+var (
+	_ connection.KubeProxy = &KubeProxy{}
 )
 
 const DefaultLocalAPIPort = 22322

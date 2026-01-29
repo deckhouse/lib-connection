@@ -28,7 +28,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	connection "github.com/deckhouse/lib-connection/pkg"
 	"github.com/deckhouse/lib-connection/pkg/settings"
+)
+
+var (
+	_ connection.Command = &Command{}
 )
 
 type Command struct {

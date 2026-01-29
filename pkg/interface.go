@@ -40,6 +40,7 @@ type SSHProvider interface {
 	// get current client or initialize from defaults
 	// after SwitchClient and SwitchToDefault Client will return client initialized
 	// in SwitchClient and SwitchToDefault method
+	// SSHProvider can start client after creation if has option for it
 	Client(ctx context.Context) (SSHClient, error)
 
 	// NewAdditionalClient
@@ -50,6 +51,7 @@ type SSHProvider interface {
 	// create clients for session and private keys passed from SwitchClient
 	// implementations can store all created clients with NewAdditionalClient
 	// for stopping in Cleanup
+	// SSHProvider can start client after creation if has option for it
 	NewAdditionalClient(ctx context.Context) (SSHClient, error)
 
 	// NewStandaloneClient
@@ -58,16 +60,19 @@ type SSHProvider interface {
 	// private keys from default config also passes to new client with privateKeys
 	// implementations can store all created clients with NewAdditionalClient
 	// for stopping in Cleanup
+	// SSHProvider can start client after creation if has option for it
 	NewStandaloneClient(ctx context.Context, sess *session.Session, privateKeys []session.AgentPrivateKey, opts ...StandaloneClientOpt) (SSHClient, error)
 
 	// SwitchClient
 	// switch current client with new client with provided settings
 	// method will stop current client but not stop clients created with NewAdditionalClient
+	// SSHProvider can start client after creation if has option for it
 	SwitchClient(ctx context.Context, sess *session.Session, privateKeys []session.AgentPrivateKey) (SSHClient, error)
 
 	// SwitchToDefault
 	// switch current client to client with default settings
 	// method will stop current client but not stop clients created with NewAdditionalClient
+	// SSHProvider can start client after creation if has option for it
 	SwitchToDefault(ctx context.Context) (SSHClient, error)
 
 	// Cleanup

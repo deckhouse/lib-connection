@@ -35,6 +35,11 @@ import (
 	"github.com/deckhouse/lib-connection/pkg/ssh/utils"
 )
 
+var (
+	_ connection.SSHClient = &Client{}
+	_ connection.Interface = &Client{}
+)
+
 func NewClient(ctx context.Context, sett settings.Settings, session *session.Session, privKeys []session.AgentPrivateKey) *Client {
 	return &Client{
 		sessionClient:   session,

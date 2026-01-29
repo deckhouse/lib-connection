@@ -31,7 +31,12 @@ import (
 	gossh "github.com/deckhouse/lib-gossh"
 	"github.com/google/uuid"
 
+	connection "github.com/deckhouse/lib-connection/pkg"
 	"github.com/deckhouse/lib-connection/pkg/settings"
+)
+
+var (
+	_ connection.File = &SSHFile{}
 )
 
 type SSHFile struct {

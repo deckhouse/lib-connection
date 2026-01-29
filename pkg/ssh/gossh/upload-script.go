@@ -28,9 +28,14 @@ import (
 	"github.com/deckhouse/lib-dhctl/pkg/log"
 	gossh "github.com/deckhouse/lib-gossh"
 
+	connection "github.com/deckhouse/lib-connection/pkg"
 	"github.com/deckhouse/lib-connection/pkg/settings"
 	"github.com/deckhouse/lib-connection/pkg/ssh/utils"
 	"github.com/deckhouse/lib-connection/pkg/ssh/utils/tar"
+)
+
+var (
+	_ connection.Script = &SSHUploadScript{}
 )
 
 type SSHUploadScript struct {

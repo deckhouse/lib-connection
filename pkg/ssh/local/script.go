@@ -23,7 +23,12 @@ import (
 	"path/filepath"
 	"time"
 
+	connection "github.com/deckhouse/lib-connection/pkg"
 	"github.com/deckhouse/lib-connection/pkg/settings"
+)
+
+var (
+	_ connection.Script = &Script{}
 )
 
 type Script struct {

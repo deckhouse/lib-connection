@@ -34,6 +34,10 @@ import (
 	"github.com/deckhouse/lib-connection/pkg/ssh/session"
 )
 
+var (
+	_ connection.SSHProvider = &DefaultSSHProvider{}
+)
+
 type SSHClientOptions struct {
 	InitializeNewAgent bool
 	ForceGoSSH         bool

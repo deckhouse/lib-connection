@@ -19,6 +19,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+
+	connection "github.com/deckhouse/lib-connection/pkg"
+)
+
+var (
+	_ connection.File = &File{}
 )
 
 type File struct{}

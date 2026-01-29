@@ -22,9 +22,14 @@ import (
 
 	uuid "github.com/google/uuid"
 
+	connection "github.com/deckhouse/lib-connection/pkg"
 	"github.com/deckhouse/lib-connection/pkg/settings"
 	"github.com/deckhouse/lib-connection/pkg/ssh/clissh/cmd"
 	"github.com/deckhouse/lib-connection/pkg/ssh/session"
+)
+
+var (
+	_ connection.File = &File{}
 )
 
 type File struct {
