@@ -1408,6 +1408,22 @@ func TestSSHProviderClient(t *testing.T) {
 			require.NoError(t, err, "should create additional client")
 			allClients = append(allClients, secondAdditionalClient)
 
+			sess := session.NewSession(session.Input{
+				User:       "uuser",
+				Port:       "22013",
+				BecomePass: "not secure standalone",
+				AvailableHosts: []session.Host{
+					{
+						Host: "192.168.101.3",
+						Name: "192.168.101.3",
+					},
+				},
+			})
+
+			standaloneClient, err := provider.NewStandaloneClient(ctx, sess, nil)
+			require.NoError(t, err, "should create standalone client")
+			allClients = append(allClients, standaloneClient)
+
 			assertWritePrivateKeys(t, assertParams{
 				sett:      sett,
 				writeKeys: true,
@@ -1415,9 +1431,10 @@ func TestSSHProviderClient(t *testing.T) {
 			})
 
 			require.False(t, govalue.Nil(provider.currentClient), "current client should not be nil")
-			require.Len(t, provider.additionalClients, 2, "should store all additional clients")
+			require.Len(t, provider.additionalClients, 3, "should store all additional clients")
 			require.True(t, firstAdditionalClient == provider.additionalClients[0], "should store additional client")
 			require.True(t, secondAdditionalClient == provider.additionalClients[1], "should store additional client")
+			require.True(t, standaloneClient == provider.additionalClients[2], "should store standalone client")
 
 			assertCleanup(t, assertCleanupParams{
 				sett:        sett,

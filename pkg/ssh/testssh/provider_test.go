@@ -119,6 +119,76 @@ func TestSSHProviderClientConnect(t *testing.T) {
 		}
 	})
 
+	t.Run("NewStandaloneClient", func(t *testing.T) {
+		for _, tst := range runTests {
+			t.Run(tst.name, func(t *testing.T) {
+				test := newTest(t, tst)
+
+				tstNoPrivateKey := tst
+				tstNoPrivateKey.noUsePrivateKey = true
+				main := startContainerWithAnother(t, startContainerWithAnotherParams{
+					test:             test,
+					containerName:    "main",
+					rt:               tstNoPrivateKey,
+					anotherContainer: nil,
+				})
+
+				additionalContainer := startContainerWithAnother(t, startContainerWithAnotherParams{
+					test:             test,
+					containerName:    "additional",
+					rt:               tst,
+					anotherContainer: main.container,
+				})
+
+				ctx := context.TODO()
+
+				p := getProvider(test, main.config)
+
+				registerCleanup(t, test, p)
+
+				mainAssertParams := func(c connection.SSHClient) assertRunScriptParams {
+					return assertRunScriptParams{
+						client:      c,
+						expectedOut: main.out,
+						executePath: main.remote,
+						test:        test,
+					}
+				}
+
+				additionalAssertParams := func(c connection.SSHClient) assertRunScriptParams {
+					return assertRunScriptParams{
+						client:      c,
+						expectedOut: additionalContainer.out,
+						executePath: additionalContainer.remote,
+						test:        test,
+					}
+				}
+
+				client, err := p.Client(ctx)
+				require.NoError(t, err)
+
+				assertRunScript(t, mainAssertParams(client))
+
+				sess, privateKeys := sessionForConnectionConfig(additionalContainer.config)
+
+				standaloneClient, err := p.NewStandaloneClient(ctx, sess, privateKeys)
+				require.NoError(t, err, "should create standalone client")
+
+				assertRunScript(t, additionalAssertParams(standaloneClient))
+
+				// check invalid run to different containers
+				incorrectRunAsserts := []assertRunScriptParams{
+					additionalAssertParams(client).shouldError(),
+					mainAssertParams(standaloneClient).shouldError(),
+				}
+
+				for _, incorrectAssert := range incorrectRunAsserts {
+					assertRunScript(t, incorrectAssert)
+				}
+			})
+		}
+	})
+
 	t.Run("SwitchClient and SwitchToDefault", func(t *testing.T) {
 		for _, tst := range runTests {
 			t.Run(tst.name, func(t *testing.T) {
