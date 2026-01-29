@@ -268,6 +268,16 @@ val: 1
 		},
 
 		{
+			name: "forget yaml documents separator",
+			input: generateConfigWithKeys(t, validPrivateKeys, "", "127.0.0.1") + `
+apiVersion: dhctl.deckhouse.io/v1
+kind: SSHHost
+host: "192.168.0.1"
+`,
+			hasErrorContains: `DocumentKindValidationFailed: multiple apiVersion keys found`,
+		},
+
+		{
 			name: "with hosts: multiple docs with same host",
 			input: generateConfigWithKeys(
 				t,
