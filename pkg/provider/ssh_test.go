@@ -505,6 +505,30 @@ func TestSSHProviderClient(t *testing.T) {
 				shouldStopDefault: false,
 			})
 		})
+
+		t.Run("no hosts in session", func(t *testing.T) {
+			test := newTest(t)
+			config := testCreateSSHConnectionConfigWithPrivateKeyPaths(t, connectionConfigParams{
+				mode: sshconfig.Mode{
+					ForceLegacy: true,
+				},
+				test:        test,
+				bastionPort: nil,
+				port:        nil,
+			})
+
+			sett := test.Settings()
+			provider := newTestProvider(sett, config)
+
+			incorrectSession := session.NewSession(session.Input{
+				User:       "user",
+				Port:       "23001",
+				BecomePass: tests.RandPassword(12),
+			})
+
+			_, err := provider.SwitchClient(context.TODO(), incorrectSession, nil)
+			require.Error(t, err, "should return an error")
+		})
 	})
 
 	t.Run("SwitchToDefault", func(t *testing.T) {
@@ -932,6 +956,8 @@ func TestSSHProviderClient(t *testing.T) {
 					privateKeys: standalonePrivateKeys,
 				})
 			}
+
+			require.Len(t, provider.additionalClients, len(standaloneClients), "should all standalone clients saved")
 
 			sessionForDefault := defaultClient.Session()
 			defaultPrivateKeys := defaultClient.PrivateKeys()
