@@ -139,6 +139,19 @@ func (p *DefaultSSHProvider) NewAdditionalClient(ctx context.Context) (connectio
 	return client, nil
 }
 
+func (p *DefaultSSHProvider) NewStandaloneClient(ctx context.Context, sess *session.Session, privateKeys []session.AgentPrivateKey, opts ...connection.StandaloneClientOpt) (connection.SSHClient, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	client, err := p.createClient(ctx, sess, privateKeys, withStandaloneClientOpts(opts...))
+	if err != nil {
+		return nil, err
+	}
+
+	p.additionalClients = append(p.additionalClients, client)
+	return client, nil
+}
+
 func (p *DefaultSSHProvider) SwitchClient(ctx context.Context, sess *session.Session, privateKeys []session.AgentPrivateKey) (connection.SSHClient, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -250,7 +263,7 @@ func (p *DefaultSSHProvider) doGetCurrentClient(ctx context.Context) (connection
 	return client, nil
 }
 
-func (p *DefaultSSHProvider) createClient(ctx context.Context, parent *session.Session, inputPrivateKeys []session.AgentPrivateKey) (connection.SSHClient, error) {
+func (p *DefaultSSHProvider) createClient(ctx context.Context, parent *session.Session, inputPrivateKeys []session.AgentPrivateKey, opts ...createClientOpt) (connection.SSHClient, error) {
 	if !p.defaultConfig.Config.HaveAuthMethods() {
 		return nil, fmt.Errorf("Did not any auth methods provided")
 	}
@@ -259,7 +272,15 @@ func (p *DefaultSSHProvider) createClient(ctx context.Context, parent *session.S
 		return nil, fmt.Errorf("Cannot prepare private keys: %w", err)
 	}
 
-	sess, privateKeys := p.newSession(parent, inputPrivateKeys)
+	options := createClientOpts{}
+	for _, opt := range opts {
+		opt(&options)
+	}
+
+	sess, privateKeys, err := p.newSession(parent, inputPrivateKeys, options)
+	if err != nil {
+		return nil, err
+	}
 
 	client := p.constructClient(ctx, sess, privateKeys)
 	if govalue.Nil(client) {
@@ -308,9 +329,54 @@ func (p *DefaultSSHProvider) stopCurrentClientIfNeed() {
 	time.Sleep(p.goSSHStopWait)
 }
 
-func (p *DefaultSSHProvider) newSession(parent *session.Session, privateKeys []session.AgentPrivateKey) (*session.Session, []session.AgentPrivateKey) {
+func (p *DefaultSSHProvider) fillDefaults(input *session.Input, options createClientOpts) {
+	if !options.SetSettingsFromDefaultsIfNeeded {
+		return
+	}
+
+	config := p.defaultConfig.Config
+
+	if input.Port == "" {
+		input.Port = config.PortString()
+	}
+
+	if input.User == "" {
+		input.User = config.User
+	}
+
+	if input.BecomePass == "" {
+		input.BecomePass = config.SudoPassword
+	}
+
+	if input.BastionHost == "" {
+		input.BastionHost = config.BastionHost
+	}
+
+	if input.BastionUser == "" {
+		input.BastionUser = config.BastionUser
+	}
+
+	if input.BastionPort == "" {
+		input.BastionPort = config.BastionPortString()
+	}
+
+	if input.BastionPassword == "" {
+		input.BastionPassword = config.BastionPassword
+	}
+
+	if input.ExtraArgs == "" {
+		input.ExtraArgs = config.ExtraArgs
+	}
+}
+
+func (p *DefaultSSHProvider) newSession(parent *session.Session, privateKeys []session.AgentPrivateKey, options createClientOpts) (*session.Session, []session.AgentPrivateKey, error) {
 	input := session.Input{}
 	if parent != nil {
+		hosts := parent.AvailableHosts()
+		if len(hosts) == 0 {
+			return nil, nil, fmt.Errorf("Cannot pass hosts to connection in session")
+		}
+
 		input.User = parent.User
 		input.Port = parent.Port
 		input.BecomePass = parent.BecomePass
@@ -322,7 +388,9 @@ func (p *DefaultSSHProvider) newSession(parent *session.Session, privateKeys []s
 
 		input.ExtraArgs = parent.ExtraArgs
 
-		input.AvailableHosts = parent.AvailableHosts()
+		input.AvailableHosts = hosts
+
+		p.fillDefaults(&input, options)
 	} else {
 		config := p.defaultConfig.Config
 
@@ -371,7 +439,7 @@ func (p *DefaultSSHProvider) newSession(parent *session.Session, privateKeys []s
 		}
 	}
 
-	return session.NewSession(input), resPrivateKeys
+	return session.NewSession(input), resPrivateKeys, nil
 }
 
 func (p *DefaultSSHProvider) useGoSSH(shouldLog bool) bool {
@@ -541,6 +609,23 @@ func (p *DefaultSSHProvider) keyPath() (string, error) {
 
 func (p *DefaultSSHProvider) debug(format string, args ...any) {
 	p.sett.Logger().DebugF(format, args...)
+}
+
+type createClientOpts struct {
+	connection.StandaloneClientOpts
+}
+
+type createClientOpt func(*createClientOpts)
+
+func withStandaloneClientOpts(opts ...connection.StandaloneClientOpt) createClientOpt {
+	return func(create *createClientOpts) {
+		standalone := connection.StandaloneClientOpts{}
+		for _, o := range opts {
+			o(&standalone)
+		}
+
+		create.StandaloneClientOpts = standalone
+	}
 }
 
 func randString() string {

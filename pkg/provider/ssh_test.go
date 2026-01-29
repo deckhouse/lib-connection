@@ -820,14 +820,7 @@ func TestSSHProviderClient(t *testing.T) {
 				},
 			})
 
-			privateKeys := make([]session.AgentPrivateKey, 0, len(switchConfig.PrivateKeys))
-			for _, key := range switchConfig.PrivateKeys {
-				privateKeys = append(privateKeys, session.AgentPrivateKey{
-					Key:        key.Key,
-					Passphrase: key.Passphrase,
-				})
-			}
-
+			privateKeys := connectionPrivateKeysToSessionPrivateKeys(switchConfig)
 			_, err = provider.SwitchClient(ctx, switchSession, privateKeys)
 			require.NoError(t, err, "should switch")
 
@@ -883,6 +876,341 @@ func TestSSHProviderClient(t *testing.T) {
 				expectedSession:           defaultClient.Session(),
 			})
 		})
+	})
+
+	t.Run("NewStandaloneClient", func(t *testing.T) {
+		type assertStandAloneClientParams struct {
+			connectionConfigProvider func(test *tests.Test) *sshconfig.ConnectionConfig
+
+			sessions           []*session.Session
+			sessionPrivateKeys []func(test *tests.Test) []session.AgentPrivateKey
+			expectedSessions   []*session.Session
+
+			opts []connection.StandaloneClientOpt
+
+			createStandaloneError []string
+		}
+
+		assertStandAloneClient := func(t *testing.T, test *tests.Test, params assertStandAloneClientParams) {
+			require.Len(t, params.sessions, len(params.expectedSessions), "should all expected sessions")
+			require.Len(t, params.sessions, len(params.sessionPrivateKeys), "should all private keys")
+			require.Len(t, params.sessions, len(params.createStandaloneError), "should all errors")
+
+			defaultConfig := params.connectionConfigProvider(test)
+
+			ctx := context.TODO()
+			sett := test.Settings()
+
+			provider := newTestProvider(sett, defaultConfig)
+
+			defaultClient, err := provider.Client(ctx)
+			require.NoError(t, err, "default client should provided")
+
+			type standaloneClient struct {
+				client      connection.SSHClient
+				privateKeys []session.AgentPrivateKey
+			}
+
+			standaloneClients := make([]standaloneClient, 0, len(params.sessions))
+
+			for i, sess := range params.sessions {
+				standalonePrivateKeys := params.sessionPrivateKeys[i](test)
+				gotStandaloneClient, err := provider.NewStandaloneClient(ctx, sess, standalonePrivateKeys, params.opts...)
+
+				shouldErr := params.createStandaloneError[i]
+
+				if shouldErr == "" {
+					require.NoError(t, err, "should create standalone client")
+				} else {
+					require.Error(t, err, "should not create standalone")
+					require.Contains(t, err.Error(), shouldErr, "should contains error")
+					continue
+				}
+
+				standaloneClients = append(standaloneClients, standaloneClient{
+					client:      gotStandaloneClient,
+					privateKeys: standalonePrivateKeys,
+				})
+			}
+
+			sessionForDefault := defaultClient.Session()
+			defaultPrivateKeys := defaultClient.PrivateKeys()
+
+			for i, client := range standaloneClients {
+				require.IsType(t, defaultClient, client.client, "standalone client same type as default")
+
+				clientSession := client.client.Session()
+				clientPrivateKeys := client.client.PrivateKeys()
+
+				require.False(t, defaultClient == client.client, "standalone client should not default")
+				require.NotEqual(t, sessionForDefault, clientSession, "standalone client session should not default")
+				require.Equal(t, params.expectedSessions[i], clientSession, "standalone client session should match")
+
+				assertKeysArray := require.NotEqual
+				if client.privateKeys == nil {
+					assertKeysArray = require.Equal
+				}
+
+				assertKeysArray(t, defaultPrivateKeys, clientPrivateKeys, "standalone client pks session and default")
+				for _, defaultPrivateKey := range defaultPrivateKeys {
+					require.Contains(t, clientPrivateKeys, defaultPrivateKey, "standalone client should contain default private key")
+				}
+
+				for _, anotherStandaloneClient := range standaloneClients[i+1:] {
+					require.IsType(t, client.client, anotherStandaloneClient.client, "another standalone client same type as current another")
+
+					require.False(t, anotherStandaloneClient.client == client.client, "another standalone client should not be current standalone")
+					require.NotEqual(t, anotherStandaloneClient.client.Session(), clientSession, "another standalone session should not be current standalone")
+
+					assertAnotherKeysArray := require.NotEqual
+					if client.privateKeys == nil && anotherStandaloneClient.privateKeys == nil {
+						assertAnotherKeysArray = require.Equal
+					}
+
+					assertAnotherKeysArray(t, clientPrivateKeys, anotherStandaloneClient.client.PrivateKeys(), "another standalone pks session and current another")
+				}
+			}
+		}
+
+		sameInputAndExpectedSessions := []*session.Session{
+			session.NewSession(session.Input{
+				User:       "useer",
+				Port:       "22011",
+				BecomePass: tests.RandPassword(12),
+				AvailableHosts: []session.Host{
+					{
+						Host: "192.168.101.3",
+						Name: "192.168.101.3",
+					},
+				},
+			}),
+
+			session.NewSession(session.Input{
+				User:       "another",
+				Port:       "22012",
+				BecomePass: tests.RandPassword(12),
+
+				BastionHost:     "127.0.0.2",
+				BastionPort:     "22013",
+				BastionUser:     "bastion",
+				BastionPassword: tests.RandPassword(10),
+
+				AvailableHosts: []session.Host{
+					{
+						Host: "192.168.101.4",
+						Name: "192.168.101.4",
+					},
+					{
+						Host: "192.168.101.5",
+						Name: "192.168.101.5",
+					},
+				},
+			}),
+		}
+
+		noKeyProvider := func(test *tests.Test) []session.AgentPrivateKey {
+			return nil
+		}
+
+		withKeysProvider := func(test *tests.Test) []session.AgentPrivateKey {
+			firstStandaloneConfig := testCreateSSHConnectionConfigWithPrivateKeyPaths(t, connectionConfigParams{
+				test: test,
+			}).Config
+
+			return connectionPrivateKeysToSessionPrivateKeys(firstStandaloneConfig)
+		}
+
+		cases := []struct {
+			name   string
+			params assertStandAloneClientParams
+		}{
+			{
+				name: "not fill defaults",
+				params: assertStandAloneClientParams{
+					connectionConfigProvider: func(test *tests.Test) *sshconfig.ConnectionConfig {
+						return testCreateSSHConnectionConfigWithPrivateKeyPaths(t, connectionConfigParams{
+							mode: sshconfig.Mode{
+								ForceLegacy: true,
+							},
+							test:        test,
+							bastionPort: nil,
+							port:        nil,
+						})
+					},
+
+					sessions:         sameInputAndExpectedSessions,
+					expectedSessions: sameInputAndExpectedSessions,
+					sessionPrivateKeys: []func(test *tests.Test) []session.AgentPrivateKey{
+						noKeyProvider,
+						withKeysProvider,
+					},
+
+					createStandaloneError: []string{"", ""},
+				},
+			},
+
+			{
+				name: "fill defaults",
+				params: assertStandAloneClientParams{
+					connectionConfigProvider: func(test *tests.Test) *sshconfig.ConnectionConfig {
+						mode := sshconfig.Mode{
+							ForceLegacy: true,
+						}
+
+						privateKeys := testCreateSSHConnectionConfigWithPrivateKeyPaths(t, connectionConfigParams{
+							mode:        mode,
+							test:        test,
+							bastionPort: nil,
+							port:        nil,
+						}).Config.PrivateKeys
+
+						return &sshconfig.ConnectionConfig{
+							Config: &sshconfig.Config{
+								Mode: mode,
+
+								User: "ubuntu",
+								Port: tests.Ptr(24000),
+
+								SudoPassword: "not secure",
+
+								PrivateKeys: privateKeys,
+
+								BastionHost:     "127.0.0.8",
+								BastionPort:     tests.Ptr(24001),
+								BastionUser:     "bastionu",
+								BastionPassword: "not secure bastion",
+							},
+
+							Hosts: []sshconfig.Host{
+								{
+									Host: "192.168.0.1",
+								},
+
+								{
+									Host: "192.168.0.2",
+								},
+
+								{
+									Host: "192.168.0.3",
+								},
+							},
+						}
+					},
+
+					sessions: []*session.Session{
+						session.NewSession(session.Input{
+							User:       "uuser",
+							Port:       "22013",
+							BecomePass: "not secure standalone",
+							AvailableHosts: []session.Host{
+								{
+									Host: "192.168.101.3",
+									Name: "192.168.101.3",
+								},
+							},
+						}),
+
+						session.NewSession(session.Input{
+							BastionHost:     "127.0.0.2",
+							BastionPort:     "22013",
+							BastionUser:     "bastion",
+							BastionPassword: "not secure standalone bastion",
+							AvailableHosts: []session.Host{
+								{
+									Host: "192.168.101.4",
+									Name: "192.168.101.4",
+								},
+							},
+						}),
+					},
+					expectedSessions: []*session.Session{
+						session.NewSession(session.Input{
+							User:       "uuser",
+							Port:       "22013",
+							BecomePass: "not secure standalone",
+
+							BastionHost:     "127.0.0.8",
+							BastionPort:     "24001",
+							BastionUser:     "bastionu",
+							BastionPassword: "not secure bastion",
+
+							AvailableHosts: []session.Host{
+								{
+									Host: "192.168.101.3",
+									Name: "192.168.101.3",
+								},
+							},
+						}),
+
+						session.NewSession(session.Input{
+							User: "ubuntu",
+							Port: "24000",
+
+							BecomePass: "not secure",
+
+							BastionHost:     "127.0.0.2",
+							BastionPort:     "22013",
+							BastionUser:     "bastion",
+							BastionPassword: "not secure standalone bastion",
+
+							AvailableHosts: []session.Host{
+								{
+									Host: "192.168.101.4",
+									Name: "192.168.101.4",
+								},
+							},
+						}),
+					},
+					sessionPrivateKeys: []func(test *tests.Test) []session.AgentPrivateKey{
+						withKeysProvider,
+						noKeyProvider,
+					},
+
+					opts: []connection.StandaloneClientOpt{connection.SSHClientWithSetFromDefaultsIfNeeded()},
+
+					createStandaloneError: []string{"", ""},
+				},
+			},
+
+			{
+				name: "hosts not provided",
+				params: assertStandAloneClientParams{
+					connectionConfigProvider: func(test *tests.Test) *sshconfig.ConnectionConfig {
+						return testCreateSSHConnectionConfigWithPrivateKeyPaths(t, connectionConfigParams{
+							mode: sshconfig.Mode{
+								ForceLegacy: true,
+							},
+							test:        test,
+							bastionPort: nil,
+							port:        nil,
+						})
+					},
+
+					sessions: []*session.Session{
+						session.NewSession(session.Input{
+							User:           "uuser",
+							Port:           "22013",
+							BecomePass:     "not secure standalone",
+							AvailableHosts: []session.Host{},
+						}),
+					},
+					expectedSessions: []*session.Session{nil},
+					sessionPrivateKeys: []func(test *tests.Test) []session.AgentPrivateKey{
+						noKeyProvider,
+					},
+
+					createStandaloneError: []string{"Cannot pass hosts to connection in session"},
+				},
+			},
+		}
+
+		for _, c := range cases {
+			t.Run(c.name, func(t *testing.T) {
+				test := newTest(t)
+
+				assertStandAloneClient(t, test, c.params)
+			})
+		}
 	})
 
 	t.Run("Options", func(t *testing.T) {
@@ -1231,6 +1559,19 @@ func assertSwitchClient(t *testing.T, params assertSwitchClientParams, defaultCl
 	require.Len(t, provider.additionalClients, 0, "should not store additional client")
 
 	return switchedClient
+}
+
+func connectionPrivateKeysToSessionPrivateKeys(config *sshconfig.Config) []session.AgentPrivateKey {
+	privateKeys := make([]session.AgentPrivateKey, 0, len(config.PrivateKeys))
+
+	for _, key := range config.PrivateKeys {
+		privateKeys = append(privateKeys, session.AgentPrivateKey{
+			Key:        key.Key,
+			Passphrase: key.Passphrase,
+		})
+	}
+
+	return privateKeys
 }
 
 type connectionConfigParams struct {

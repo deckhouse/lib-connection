@@ -23,6 +23,18 @@ import (
 	"github.com/deckhouse/lib-connection/pkg/ssh/session"
 )
 
+type StandaloneClientOpts struct {
+	SetSettingsFromDefaultsIfNeeded bool
+}
+
+type StandaloneClientOpt func(*StandaloneClientOpts)
+
+func SSHClientWithSetFromDefaultsIfNeeded() StandaloneClientOpt {
+	return func(opts *StandaloneClientOpts) {
+		opts.SetSettingsFromDefaultsIfNeeded = true
+	}
+}
+
 type SSHProvider interface {
 	// Client
 	// get current client or initialize from defaults
@@ -39,6 +51,14 @@ type SSHProvider interface {
 	// implementations can store all created clients with NewAdditionalClient
 	// for stopping in Cleanup
 	NewAdditionalClient(ctx context.Context) (SSHClient, error)
+
+	// NewStandaloneClient
+	// initialize new client with passed session settings
+	// this method create client from passed session
+	// private keys from default config also passes to new client with privateKeys
+	// implementations can store all created clients with NewAdditionalClient
+	// for stopping in Cleanup
+	NewStandaloneClient(ctx context.Context, sess *session.Session, privateKeys []session.AgentPrivateKey, opts ...StandaloneClientOpt) (SSHClient, error)
 
 	// SwitchClient
 	// switch current client with new client with provided settings
