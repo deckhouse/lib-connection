@@ -101,6 +101,9 @@ test: go-installed docker-installed bin/kind
 	./hack/run_tests.sh
 	$(MAKE) clean/test
 
+test/no-integration:
+	$(MAKE) SKIP_INTEGRATION_TESTS=true test
+
 lint: bin/golangci-lint
 	./bin/golangci-lint run ./... -c .golangci.yaml
 
