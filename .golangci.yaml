@@ -103,8 +103,8 @@ formatters:
       sections:
         - standard
         - default
-        - prefix(github.com/deckhouse/)
+        - prefix(github.com/deckhouse/lib-connection)
         - localmodule
     goimports:
       local-prefixes:
-        - github.com/deckhouse/
+        - github.com/deckhouse/lib-connection
