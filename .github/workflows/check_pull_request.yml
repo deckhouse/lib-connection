@@ -38,8 +38,23 @@ jobs:
         uses: actions/setup-go@v6.1.0
         with:
           go-version: '1.25.x'
+
+      - &labels
+        name: Get PR labels
+        id: pr-labels
+        uses: joerick/pr-labels-action@v1.0.9
+
       - name: Run tests
-        run: make test
+        run: |
+          if [ -n "$GITHUB_PR_LABEL_TEST_NO_INTEGRATION" ]; then
+            echo -e '\033[1;33m!!!\033[0m'
+            echo -e "\033[1;33mIntegration tests were skipped by label 'test/no-integration'\033[0m"
+            echo -e '\033[1;33m!!!\033[0m'
+          
+            make SKIP_INTEGRATION_TESTS=true test
+          else
+            make test
+          fi
 
       - name: Cleanup after failed
         if: failure()
