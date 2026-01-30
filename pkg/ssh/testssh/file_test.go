@@ -26,11 +26,11 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/deckhouse/lib-connection/pkg/ssh/gossh"
-	sshtesting "github.com/deckhouse/lib-connection/pkg/tests"
+	"github.com/deckhouse/lib-connection/pkg/tests"
 )
 
 func TestFileUpload(t *testing.T) {
-	test := sshtesting.ShouldNewTest(t, "TestFileUpload")
+	test := tests.ShouldNewIntegrationTest(t, "TestFileUpload")
 
 	const uploadDir = "upload_dir"
 	const testFileContent = "Hello World"
@@ -201,7 +201,7 @@ func TestFileUpload(t *testing.T) {
 }
 
 func TestFileUploadBytes(t *testing.T) {
-	test := sshtesting.ShouldNewTest(t, "TestSSHFileUploadBytes")
+	test := tests.ShouldNewIntegrationTest(t, "TestSSHFileUploadBytes")
 
 	goSSHClient, cliSSHClient, goSSHClient2, err := startTwoContainersWithClients(t, test, false)
 	require.NoError(t, err)
@@ -232,7 +232,7 @@ func TestFileUploadBytes(t *testing.T) {
 }
 
 func TestFileDownload(t *testing.T) {
-	test := sshtesting.ShouldNewTest(t, "TestSSHFileDownload")
+	test := tests.ShouldNewIntegrationTest(t, "TestSSHFileDownload")
 
 	goSSHClient, cliSSHClient, goSSHClient2, err := startTwoContainersWithClients(t, test, false)
 	require.NoError(t, err)
@@ -434,7 +434,7 @@ func TestFileDownload(t *testing.T) {
 }
 
 func TestFileDownloadBytes(t *testing.T) {
-	test := sshtesting.ShouldNewTest(t, "TestSSHFileDownloadBytes")
+	test := tests.ShouldNewIntegrationTest(t, "TestSSHFileDownloadBytes")
 
 	goSSHClient, cliSSHClient, _, err := startTwoContainersWithClients(t, test, false)
 	require.NoError(t, err)

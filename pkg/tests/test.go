@@ -35,16 +35,23 @@ const (
 )
 
 type testOpts struct {
-	isDebug      bool
-	parallelRun  bool
-	logBuffer    *bytes.Buffer
-	prettyLogger bool
+	isDebug       bool
+	parallelRun   bool
+	logBuffer     *bytes.Buffer
+	prettyLogger  bool
+	isIntegration bool
 }
 type TestOpt func(opts *testOpts)
 
 func TestWithDebug(isDebug bool) TestOpt {
 	return func(opts *testOpts) {
 		opts.isDebug = isDebug
+	}
+}
+
+func TestIsIntegration(yes bool) TestOpt {
+	return func(opts *testOpts) {
+		opts.isIntegration = yes
 	}
 }
 
@@ -88,10 +95,21 @@ type Test struct {
 	settings *settings.BaseProviders
 }
 
+func ShouldNewIntegrationTest(t *testing.T, name string, opts ...TestOpt) *Test {
+	options := append([]TestOpt{}, opts...)
+	options = append(options, TestIsIntegration(true))
+
+	return ShouldNewTest(t, name, options...)
+}
+
 func ShouldNewTest(t *testing.T, testName string, opts ...TestOpt) *Test {
 	CheckSkipSSHTest(t, testName)
 
-	if applyTestOpts(opts...).parallelRun && runParallelFromEnv() {
+	options := applyTestOpts(opts...)
+
+	skipIntegration(t, options)
+
+	if options.parallelRun && runParallelFromEnv() {
 		t.Parallel()
 	}
 
@@ -167,6 +185,28 @@ func runParallelFromEnv() bool {
 	}
 
 	return true
+}
+
+func isSkipIntegrationTestEnv() bool {
+	if v, ok := os.LookupEnv("SKIP_INTEGRATION_TESTS"); ok && v == "true" {
+		return true
+	}
+
+	return false
+}
+
+func skipIntegration(t *testing.T, opts testOpts) {
+	if !opts.isIntegration {
+		return
+	}
+
+	if isSkipIntegrationTestEnv() {
+		t.Skip("Skip integration tests (with use starting containers). SKIP_INTEGRATION_TESTS is set to true")
+	}
+}
+
+func (s *Test) TryToSkipIntegrationTest(t *testing.T) {
+	skipIntegration(t, s.options)
 }
 
 func (s *Test) RunSubTestParallel(t *testing.T) {

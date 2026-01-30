@@ -26,7 +26,7 @@ import (
 )
 
 func TestUploadScriptExecute(t *testing.T) {
-	test := tests.ShouldNewTest(t, "TestUploadScriptExecute")
+	test := tests.ShouldNewIntegrationTest(t, "TestUploadScriptExecute")
 
 	goSSHClient, cliSSHClient, _, err := startTwoContainersWithClients(t, test, true)
 	require.NoError(t, err)
@@ -136,7 +136,7 @@ fi
 func TestUploadScriptExecuteBundle(t *testing.T) {
 	loggerBuf := bytes.NewBuffer(nil)
 
-	test := tests.ShouldNewTest(
+	test := tests.ShouldNewIntegrationTest(
 		t,
 		"TestUploadScriptExecuteBundle",
 		tests.TestWithLoggerBuffer(loggerBuf),

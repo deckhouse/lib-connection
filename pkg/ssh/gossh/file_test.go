@@ -30,7 +30,7 @@ import (
 )
 
 func TestSSHFileUpload(t *testing.T) {
-	test := tests.ShouldNewTest(t, "TestCommandOutput")
+	test := tests.ShouldNewIntegrationTest(t, "TestCommandOutput")
 
 	const uploadDir = "upload_dir"
 	const testFileContent = "Hello World"
@@ -175,7 +175,7 @@ func TestSSHFileUpload(t *testing.T) {
 }
 
 func TestSSHFileUploadBytes(t *testing.T) {
-	test := tests.ShouldNewTest(t, "TestSSHFileUploadBytes")
+	test := tests.ShouldNewIntegrationTest(t, "TestSSHFileUploadBytes")
 
 	sshClient := startContainerAndClient(t, test)
 	err := os.MkdirAll(sshClient.settings.TmpDir(), 0o777)
@@ -237,7 +237,7 @@ func TestCreateEmptyTmpFile(t *testing.T) {
 }
 
 func TestSSHFileDownload(t *testing.T) {
-	test := tests.ShouldNewTest(t, "TestSSHFileDownload")
+	test := tests.ShouldNewIntegrationTest(t, "TestSSHFileDownload")
 
 	sshClient := startContainerAndClient(t, test)
 
@@ -395,7 +395,7 @@ func TestSSHFileDownload(t *testing.T) {
 }
 
 func TestSSHFileDownloadBytes(t *testing.T) {
-	test := tests.ShouldNewTest(t, "TestSSHFileDownloadBytes")
+	test := tests.ShouldNewIntegrationTest(t, "TestSSHFileDownloadBytes")
 
 	sshClient := startContainerAndClient(t, test)
 
@@ -436,7 +436,7 @@ func TestSSHFileDownloadBytes(t *testing.T) {
 					require.Contains(t, err.Error(), c.err)
 				} else {
 					require.NoError(t, err)
-					// out contains a contant of uploaded file, should be equal to testFile contant
+					// щut contains a contant of uploaded file, should be equal to testFile
 					require.Equal(t, expectedFileContent, string(bytes))
 				}
 			})

@@ -27,7 +27,7 @@ import (
 )
 
 func TestUploadScriptExecute(t *testing.T) {
-	test := tests.ShouldNewTest(t, "TestUploadScriptExecute")
+	test := tests.ShouldNewIntegrationTest(t, "TestUploadScriptExecute")
 
 	sshClient, container := startContainerAndClientWithContainer(t, test, tests.WithNoWriteSSHDConfig())
 	sshClient.WithLoopsParams(ClientLoopsParams{
@@ -135,7 +135,7 @@ fi
 
 func TestUploadScriptExecuteBundle(t *testing.T) {
 	loggerBuf := bytes.NewBuffer(nil)
-	test := tests.ShouldNewTest(
+	test := tests.ShouldNewIntegrationTest(
 		t,
 		"TestUploadScriptExecuteBundle",
 		tests.TestWithLoggerBuffer(loggerBuf),

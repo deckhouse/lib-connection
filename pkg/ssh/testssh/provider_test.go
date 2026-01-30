@@ -290,7 +290,7 @@ func newTest(t *testing.T, rt runTest) *tests.Test {
 	name := nameParts[len(nameParts)-2]
 	name = fmt.Sprintf("ProviderConnect%s%sSSH", name, rt.name)
 
-	return tests.ShouldNewTest(
+	return tests.ShouldNewIntegrationTest(
 		t,
 		name,
 		tests.TestWithParallelRun(true),
