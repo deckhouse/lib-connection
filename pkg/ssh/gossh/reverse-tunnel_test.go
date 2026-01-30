@@ -28,7 +28,7 @@ import (
 )
 
 func TestReverseTunnel(t *testing.T) {
-	test := tests.ShouldNewTest(t, "TestReverseTunnel")
+	test := tests.ShouldNewIntegrationTest(t, "TestReverseTunnel")
 
 	sshClient, container := startContainerAndClientWithContainer(t, test)
 

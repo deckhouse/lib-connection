@@ -29,7 +29,7 @@ import (
 )
 
 func TestCommandOutput(t *testing.T) {
-	test := tests.ShouldNewTest(t, "TestCommandOutput")
+	test := tests.ShouldNewIntegrationTest(t, "TestCommandOutput")
 
 	container := tests.NewTestContainerWrapper(t, test)
 	sess := tests.Session(container)
@@ -103,7 +103,7 @@ func TestCommandOutput(t *testing.T) {
 }
 
 func TestCommandCombinedOutput(t *testing.T) {
-	test := tests.ShouldNewTest(t, "TestCommandCombinedOutput")
+	test := tests.ShouldNewIntegrationTest(t, "TestCommandCombinedOutput")
 
 	container := tests.NewTestContainerWrapper(t, test)
 	sess := tests.Session(container)
@@ -180,7 +180,7 @@ func TestCommandCombinedOutput(t *testing.T) {
 }
 
 func TestCommandRun(t *testing.T) {
-	test := tests.ShouldNewTest(t, "TestCommandRun")
+	test := tests.ShouldNewIntegrationTest(t, "TestCommandRun")
 
 	container := tests.NewTestContainerWrapper(t, test)
 	sess := tests.Session(container)
@@ -315,7 +315,7 @@ func TestCommandRun(t *testing.T) {
 }
 
 func TestCommandSudoRun(t *testing.T) {
-	test := tests.ShouldNewTest(t, "TestCommandRunSudo")
+	test := tests.ShouldNewIntegrationTest(t, "TestCommandRunSudo")
 
 	container := tests.NewTestContainerWrapper(t, test, tests.WithNoPassword())
 	keys := container.AgentPrivateKeys()

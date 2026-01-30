@@ -27,7 +27,7 @@ import (
 )
 
 func TestOnlyPreparePrivateKeys(t *testing.T) {
-	test := tests.ShouldNewTest(t, "TestOnlyPreparePrivateKeys")
+	test := tests.ShouldNewIntegrationTest(t, "TestOnlyPreparePrivateKeys", tests.TestIsIntegration(false))
 
 	// genetaring ssh keys
 	keyWithoutPath, _, err := tests.GenerateKeys(test, "")
@@ -108,7 +108,7 @@ func TestOnlyPreparePrivateKeys(t *testing.T) {
 }
 
 func TestClientStart(t *testing.T) {
-	test := tests.ShouldNewTest(t, "TestClientStart")
+	test := tests.ShouldNewIntegrationTest(t, "TestClientStart")
 
 	const bastionUserName = "bastionuser"
 
@@ -293,7 +293,7 @@ func TestClientKeepalive(t *testing.T) {
 	}
 
 	t.Run("keepalive test", func(t *testing.T) {
-		test := tests.ShouldNewTest(t, testName).SetSubTest(t.Name())
+		test := tests.ShouldNewIntegrationTest(t, testName).SetSubTest(t.Name())
 
 		container := tests.NewTestContainerWrapper(t, test)
 		sess := tests.Session(container)
@@ -341,7 +341,7 @@ func TestClientKeepalive(t *testing.T) {
 	})
 
 	t.Run("keepalive with context test", func(t *testing.T) {
-		test := tests.ShouldNewTest(t, testName).SetSubTest(t.Name())
+		test := tests.ShouldNewIntegrationTest(t, testName).SetSubTest(t.Name())
 
 		container := tests.NewTestContainerWrapper(t, test)
 		sess := tests.Session(container)
@@ -367,7 +367,7 @@ func TestClientKeepalive(t *testing.T) {
 	})
 
 	t.Run("client start with context test", func(t *testing.T) {
-		test := tests.ShouldNewTest(t, testName).SetSubTest(t.Name())
+		test := tests.ShouldNewIntegrationTest(t, testName).SetSubTest(t.Name())
 
 		container := tests.NewTestContainerWrapper(t, test)
 		sess := tests.Session(container, tests.OverrideSessionWithIncorrectPort(container))
@@ -390,7 +390,7 @@ func TestClientKeepalive(t *testing.T) {
 }
 
 func TestDialContextVerySmall(t *testing.T) {
-	test := tests.ShouldNewTest(t, "TestDialContextVerySmall")
+	test := tests.ShouldNewIntegrationTest(t, "TestDialContextVerySmall")
 
 	sess := tests.FakeSession()
 	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(10*time.Millisecond))

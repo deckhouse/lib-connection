@@ -28,7 +28,7 @@ import (
 )
 
 func TestTunnel(t *testing.T) {
-	test := tests.ShouldNewTest(t, "TestTunnel")
+	test := tests.ShouldNewIntegrationTest(t, "TestTunnel")
 
 	sshClient, container := startContainerAndClientWithContainer(t, test)
 	sshClient.WithLoopsParams(ClientLoopsParams{

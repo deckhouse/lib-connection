@@ -27,7 +27,7 @@ import (
 )
 
 func TestKubeProxy(t *testing.T) {
-	test := tests.ShouldNewTest(t, "TestKubeProxy")
+	test := tests.ShouldNewIntegrationTest(t, "TestKubeProxy")
 
 	sshClient, container := startContainerAndClientAndKind(t, test)
 

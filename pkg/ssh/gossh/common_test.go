@@ -51,9 +51,18 @@ func startContainerAndClientWithContainer(t *testing.T, test *tests.Test, opts .
 	sess := tests.Session(container)
 	keys := container.AgentPrivateKeys()
 
+	defaultLoop := retry.NewEmptyParams(
+		retry.WithWait(2*time.Second),
+		retry.WithAttempts(7),
+	)
+
 	sshSettings := test.Settings()
 	sshClient := NewClient(context.Background(), sshSettings, sess, keys).WithLoopsParams(ClientLoopsParams{
-		NewSession: tests.GetTestLoopParamsForFailed(),
+		ConnectToBastion:        defaultLoop.Clone(),
+		ConnectToHostViaBastion: defaultLoop.Clone(),
+		ConnectToHostDirectly:   defaultLoop.Clone(),
+		NewSession:              defaultLoop.Clone(),
+		CheckReverseTunnel:      defaultLoop.Clone(),
 	})
 
 	err := sshClient.Start()
