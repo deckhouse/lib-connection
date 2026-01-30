@@ -436,7 +436,7 @@ func TestSSHFileDownloadBytes(t *testing.T) {
 					require.Contains(t, err.Error(), c.err)
 				} else {
 					require.NoError(t, err)
-					// out contains a contant of uploaded file, should be equal to testFile contant
+					// Out contains a contant of uploaded file, should be equal to testFile contant
 					require.Equal(t, expectedFileContent, string(bytes))
 				}
 			})
