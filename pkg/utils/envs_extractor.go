@@ -30,7 +30,7 @@ type (
 )
 
 // SimplifyPrefix
-// This method trim right all _ ang - symbols and spaces left and right
+// This method trim right all _ ang - symbols and spaces left and right.
 func SimplifyPrefix(prefix string) string {
 	prefix = strings.TrimSpace(prefix)
 	prefix = strings.TrimRight(prefix, "_-")
