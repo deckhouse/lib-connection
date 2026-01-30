@@ -21,7 +21,6 @@ import (
 	"os/user"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/deckhouse/lib-dhctl/pkg/log"
@@ -32,6 +31,7 @@ import (
 	"github.com/deckhouse/lib-connection/pkg/settings"
 	"github.com/deckhouse/lib-connection/pkg/ssh/utils"
 	"github.com/deckhouse/lib-connection/pkg/ssh/utils/terminal"
+	connectionutils "github.com/deckhouse/lib-connection/pkg/utils"
 )
 
 const (
@@ -84,7 +84,7 @@ type Flags struct {
 	forceNoPrivateKeys bool
 
 	flagSet      *flag.FlagSet
-	envExtractor *envExtractor
+	envExtractor *connectionutils.EnvExtractor
 }
 
 func (f *Flags) IsConflictBetweenFlags() error {
@@ -231,7 +231,6 @@ func (f *Flags) userExtractor() func() (string, error) {
 
 type (
 	AskPasswordFunc         func(promt string) ([]byte, error)
-	EnvsLookupFunc          func(name string) (string, bool)
 	PrivateKeyExtractorFunc func(path string, logger log.Logger) (password string, err error)
 )
 
@@ -239,7 +238,7 @@ type FlagsParser struct {
 	envsPrefix string
 	ask        AskPasswordFunc
 	sett       settings.Settings
-	envsLookup EnvsLookupFunc
+	envsLookup connectionutils.EnvsLookupFunc
 
 	// extractPrivateKey
 	// custom extract content and password for private key file
@@ -274,9 +273,7 @@ func NewFlagsParser(sett settings.Settings) *FlagsParser {
 // This method trim right all _ ang - symbols and spaces left and right
 // By default parser add _ after prefix for all env vars
 func (p *FlagsParser) WithEnvsPrefix(envsPrefix string) *FlagsParser {
-	envsPrefix = strings.TrimSpace(envsPrefix)
-	envsPrefix = strings.TrimRight(envsPrefix, "_-")
-	p.envsPrefix = envsPrefix
+	p.envsPrefix = connectionutils.SimplifyPrefix(envsPrefix)
 	return p
 }
 
@@ -290,7 +287,7 @@ func (p *FlagsParser) WithAsk(ask AskPasswordFunc) *FlagsParser {
 	return p
 }
 
-func (p *FlagsParser) WithEnvsLookup(lookup EnvsLookupFunc) *FlagsParser {
+func (p *FlagsParser) WithEnvsLookup(lookup connectionutils.EnvsLookupFunc) *FlagsParser {
 	if govalue.Nil(lookup) {
 		p.sett.Logger().WarnF("Envs lookup function is nil. Skip set ask function.")
 		return p
@@ -607,8 +604,8 @@ func (p *FlagsParser) ParseFlagsAndExtractConfig(arguments []string, set *flag.F
 	return p.ExtractConfigAfterParse(flags, opts...)
 }
 
-func (p *FlagsParser) envsExtractor() *envExtractor {
-	return newEnvExtractor(p.envsPrefix, p.envsLookup)
+func (p *FlagsParser) envsExtractor() *connectionutils.EnvExtractor {
+	return connectionutils.NewEnvExtractor(p.envsPrefix, p.envsLookup)
 }
 
 func (p *FlagsParser) readPrivateKeysFromFlags(flags *Flags, logger log.Logger) ([]AgentPrivateKey, error) {
@@ -671,7 +668,7 @@ func (p *FlagsParser) getPasswordsFromUser(flags *Flags) (*passwordsFromUser, er
 	return res, nil
 }
 
-func getHomeDir(extractor *envExtractor) (string, error) {
+func getHomeDir(extractor *connectionutils.EnvExtractor) (string, error) {
 	home := ""
 
 	extractor.StringWithoutPrefix("HOME", &home)
@@ -710,7 +707,7 @@ func getHomeDir(extractor *envExtractor) (string, error) {
 // returns current user name
 // first attempt get user from env
 // can be call multiple times because user.Current() cache user info
-func getCurrentUser(extractor *envExtractor) (string, error) {
+func getCurrentUser(extractor *connectionutils.EnvExtractor) (string, error) {
 	userName := ""
 
 	extractor.StringWithoutPrefix("USER", &userName)
@@ -748,113 +745,6 @@ func fileReader(path string, fileType string) (io.ReadCloser, error) {
 	}
 
 	return os.Open(fullPath)
-}
-
-type envExtractor struct {
-	prefix     string
-	lookupFunc func(string) (string, bool)
-}
-
-func newEnvExtractor(prefix string, lookupFunc EnvsLookupFunc) *envExtractor {
-	return &envExtractor{
-		prefix:     prefix,
-		lookupFunc: lookupFunc,
-	}
-}
-
-func (e *envExtractor) NameWithPrefix(name string) string {
-	if e.prefix != "" {
-		name = fmt.Sprintf("%s_%s", e.prefix, name)
-	}
-
-	return name
-}
-
-func (e *envExtractor) AddEnvToUsage(usage string, envName string) string {
-	if envName == "" {
-		return usage
-	}
-
-	return fmt.Sprintf("%s (Can rewrite with %s env)", usage, e.NameWithPrefix(envName))
-}
-
-func (e *envExtractor) Var(name string) (string, bool) {
-	return e.lookupFunc(e.NameWithPrefix(name))
-}
-
-func (e *envExtractor) VarWithoutPrefix(name string) (string, bool) {
-	return e.lookupFunc(name)
-}
-
-func (e *envExtractor) Int(name string, destination *int) (bool, error) {
-	strVar, ok := e.Var(name)
-	if !ok {
-		return false, nil
-	}
-
-	value, err := strconv.Atoi(strVar)
-	if err != nil {
-		return false, fmt.Errorf("Cannot convert '%s' to int for %s: %w", strVar, e.NameWithPrefix(name), err)
-	}
-
-	*destination = value
-
-	return true, nil
-}
-
-func (e *envExtractor) StringWithoutPrefix(name string, destination *string) bool {
-	strVar, ok := e.VarWithoutPrefix(name)
-	if !ok {
-		return false
-	}
-
-	*destination = strVar
-
-	return true
-}
-
-func (e *envExtractor) String(name string, destination *string) bool {
-	strVar, ok := e.Var(name)
-	if !ok {
-		return false
-	}
-
-	*destination = strVar
-
-	return true
-}
-
-func (e *envExtractor) Strings(name string, destination *[]string) bool {
-	valsStr, ok := e.Var(name)
-	if !ok {
-		return false
-	}
-
-	valsSplit := strings.Split(valsStr, ",")
-	vals := make([]string, 0, len(valsSplit))
-	for _, v := range valsSplit {
-		if strings.TrimSpace(v) != "" {
-			vals = append(vals, v)
-		}
-	}
-
-	*destination = vals
-
-	return true
-}
-
-// Bool
-// returns that env is set
-func (e *envExtractor) Bool(name string, destination *bool) bool {
-	strVar, ok := e.Var(name)
-	if !ok {
-		return false
-	}
-	value := strVar != ""
-
-	*destination = value
-
-	return true
 }
 
 func terminalPrivateKeyPasswordExtractor(path string, defaultPassword []byte, logger log.Logger) (string, error) {
