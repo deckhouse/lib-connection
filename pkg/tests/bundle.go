@@ -181,8 +181,7 @@ func AssertLogBufferWithErrorBundle(t *testing.T, buf *bytes.Buffer) {
 
 	require.Contains(t, out, strings.TrimSpace(expectedDebug), "should contain debug")
 
-	expectedTail := `│ oops! failure!
-│ Failed to execute step /var/lib/bashible/bundle_steps/02-step.sh ... retry in 2 seconds.
+	expectedTail := `│ Failed to execute step /var/lib/bashible/bundle_steps/02-step.sh ... retry in 2 seconds.
 └ Run step 02-step.sh, retry attempt #2 of 10 FAILED
 
 ┌ Run step 02-step.sh, retry attempt #3 of 10

@@ -18,21 +18,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
 	"al.essio.dev/pkg/shellescape"
-	"github.com/deckhouse/lib-dhctl/pkg/log"
 
 	connection "github.com/deckhouse/lib-connection/pkg"
 	"github.com/deckhouse/lib-connection/pkg/settings"
-	"github.com/deckhouse/lib-connection/pkg/ssh/session"
-	genssh "github.com/deckhouse/lib-connection/pkg/ssh/utils"
-	"github.com/deckhouse/lib-connection/pkg/ssh/utils/tar"
+	"github.com/deckhouse/lib-connection/pkg/ssh/utils"
 )
 
 var (
@@ -42,7 +37,7 @@ var (
 type UploadScript struct {
 	settings settings.Settings
 
-	Session *session.Session
+	client *Client
 
 	uploadDir string
 
@@ -58,12 +53,14 @@ type UploadScript struct {
 
 	timeout time.Duration
 
-	commanderMode bool
+	noLogStepOutOnError bool
+
+	bundlerOptions []connection.BundlerOption
 }
 
-func NewUploadScript(sett settings.Settings, sess *session.Session, scriptPath string, args ...string) *UploadScript {
+func NewUploadScript(sett settings.Settings, client *Client, scriptPath string, args ...string) *UploadScript {
 	return &UploadScript{
-		Session:    sess,
+		client:     client,
 		ScriptPath: scriptPath,
 		Args:       args,
 
@@ -89,8 +86,12 @@ func (u *UploadScript) WithEnvs(envs map[string]string) {
 	u.envs = envs
 }
 
-func (u *UploadScript) WithCommanderMode(enabled bool) {
-	u.commanderMode = enabled
+func (u *UploadScript) WithBundlerOpts(opts ...connection.BundlerOption) {
+	u.bundlerOptions = append(make([]connection.BundlerOption, 0), opts...)
+}
+
+func (u *UploadScript) WithNoLogStepOutOnError(enabled bool) {
+	u.noLogStepOutOnError = enabled
 }
 
 // WithCleanupAfterExec option tells if ssh executor should delete uploaded script after execution was attempted or not.
@@ -118,21 +119,24 @@ func (u *UploadScript) Settings() settings.Settings {
 func (u *UploadScript) Execute(ctx context.Context) ([]byte, error) {
 	scriptName := filepath.Base(u.ScriptPath)
 
-	remotePath := genssh.ExecuteRemoteScriptPath(u, scriptName, false)
-	err := NewFile(u.settings, u.Session).Upload(ctx, u.ScriptPath, remotePath)
+	remotePath := utils.ExecuteRemoteScriptPath(u, scriptName, false)
+	err := u.client.File().Upload(ctx, u.ScriptPath, remotePath)
 	if err != nil {
 		return nil, fmt.Errorf("upload: %v", err)
 	}
 
-	var cmd *Command
-	scriptFullPath := u.pathWithEnv(genssh.ExecuteRemoteScriptPath(u, scriptName, true))
+	var genericCommand connection.Command
+
+	scriptFullPath := u.pathWithEnv(utils.ExecuteRemoteScriptPath(u, scriptName, true))
 	if u.sudo {
-		cmd = NewCommand(u.settings, u.Session, scriptFullPath, u.Args...)
-		cmd.Sudo(ctx)
+		genericCommand = u.client.Command(scriptFullPath, u.Args...)
+		genericCommand.Sudo(ctx)
 	} else {
-		cmd = NewCommand(u.settings, u.Session, scriptFullPath, u.Args...)
-		cmd.Cmd(ctx)
+		genericCommand = u.client.Command(scriptFullPath, u.Args...)
+		genericCommand.Cmd(ctx)
 	}
+
+	cmd := genericCommand.(*Command)
 
 	scriptCmd := cmd.CaptureStdout(nil).CaptureStderr(nil)
 	if u.stdoutHandler != nil {
@@ -145,7 +149,7 @@ func (u *UploadScript) Execute(ctx context.Context) ([]byte, error) {
 
 	if u.cleanupAfterExec {
 		defer func() {
-			err := NewCommand(u.settings, u.Session, "rm", "-f", scriptFullPath).Run(ctx)
+			err := u.client.Command("rm", "-f", scriptFullPath).Run(ctx)
 			if err != nil {
 				u.settings.Logger().DebugF("Failed to delete uploaded script %s: %v", scriptFullPath, err)
 			}
@@ -185,144 +189,41 @@ func (u *UploadScript) pathWithEnv(path string) string {
 	return fmt.Sprintf("%s %s", envs, path)
 }
 
-var ErrBashibleTimeout = errors.New("Timeout bashible step running")
-
 func (u *UploadScript) ExecuteBundle(ctx context.Context, parentDir, bundleDir string) ([]byte, error) {
-	bundleName := fmt.Sprintf("bundle-%s.tar", time.Now().Format("20060102-150405"))
-	bundleLocalFilepath := filepath.Join(u.settings.TmpDir(), bundleName)
-
-	// tar cpf bundle.tar -C /tmp/dhctl.1231qd23/var/lib bashible
-	err := tar.CreateTar(bundleLocalFilepath, parentDir, bundleDir)
+	opts, err := utils.UserBundleOptsOrBashible(u.bundlerOptions...)
 	if err != nil {
-		return nil, fmt.Errorf("tar bundle: %v", err)
+		return nil, err
 	}
 
-	u.settings.RegisterOnShutdown(
-		"Delete bashible bundle folder",
-		func() { _ = os.Remove(bundleLocalFilepath) },
+	opts = append(opts,
+		utils.BundleWithNoLogStepOutOnError(u.noLogStepOutOnError),
+		utils.BundleWithCommandKiller(commandKiller),
+		utils.BundleWithCommandPreparator(commandPreparator),
 	)
 
-	// upload to node's deckhouse tmp directory
-	err = NewFile(u.settings, u.Session).Upload(ctx, bundleLocalFilepath, u.settings.NodeTmpDir())
+	bundler, err := utils.NewBundle(u.Settings(), u.client, u.ScriptPath, u.Args, opts...)
 	if err != nil {
-		return nil, fmt.Errorf("upload: %v", err)
+		return nil, err
 	}
 
-	// sudo:
-	// tar xpof ${app.DeckhouseNodeTmpPath}/bundle.tar -C /var/lib && /var/lib/bashible/bashible.sh args...
-	tarCmdline := fmt.Sprintf(
-		"tar xpof %s/%s -C /var/lib && /var/lib/%s/%s %s",
-		u.settings.NodeTmpDir(),
-		bundleName,
-		bundleDir,
-		u.ScriptPath,
-		strings.Join(u.Args, " "),
-	)
-	bundleCmd := NewCommand(u.settings, u.Session, tarCmdline)
-	bundleCmd.Sudo(ctx)
-
-	// Buffers to implement output handler logic
-	lastStep := ""
-	failsCounter := 0
-	isBashibleTimeout := false
-
-	processLogger := u.settings.Logger().ProcessLogger()
-
-	handler := bundleOutputHandler(
-		bundleCmd,
-		u.settings.Logger(),
-		processLogger,
-		&lastStep,
-		&failsCounter,
-		&isBashibleTimeout,
-		u.commanderMode,
-	)
-	bundleCmd.WithStdoutHandler(handler)
-	bundleCmd.CaptureStdout(nil)
-	bundleCmd.CaptureStderr(nil)
-	err = bundleCmd.Run(ctx)
-	if err != nil {
-		if lastStep != "" {
-			processLogger.ProcessFail()
-		}
-
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			// exitErr.Stderr is set in the "os/exec".Cmd.Output method from the Golang standard library.
-			// But we call the "os/exec".Cmd.Wait method, which does not set the Stderr field.
-			// We can reuse the exec.ExitError type when handling errors.
-			exitErr.Stderr = bundleCmd.StderrBytes()
-		}
-
-		err = fmt.Errorf("execute bundle: %w", err)
-	} else {
-		processLogger.ProcessEnd()
-	}
-
-	if isBashibleTimeout {
-		return bundleCmd.StdoutBytes(), ErrBashibleTimeout
-	}
-
-	return bundleCmd.StdoutBytes(), err
+	return bundler.Execute(ctx, parentDir, bundleDir)
 }
 
-var stepHeaderRegexp = regexp.MustCompile("^=== Step: /var/lib/bashible/bundle_steps/(.*)$")
-
-func bundleOutputHandler(
-	cmd *Command,
-	logger log.Logger,
-	processLogger log.ProcessLogger,
-	lastStep *string,
-	failsCounter *int,
-	isBashibleTimeout *bool,
-	commanderMode bool,
-) func(string) {
-	stepLogs := make([]string, 0)
-	return func(l string) {
-		if l == "===" {
-			return
-		}
-		if stepHeaderRegexp.Match([]byte(l)) {
-			match := stepHeaderRegexp.FindStringSubmatch(l)
-			stepName := match[1]
-
-			if *lastStep == stepName {
-				logMessage := strings.Join(stepLogs, "\n")
-
-				switch {
-				case commanderMode && *failsCounter == 0:
-					logger.ErrorF("%s", logMessage)
-				case commanderMode && *failsCounter > 0:
-					logger.ErrorF("Run step %s finished with error^^^\n", stepName)
-					logger.DebugF("%s", logMessage)
-				default:
-					logger.ErrorF("%s", logMessage)
-				}
-				*failsCounter++
-				stepLogs = stepLogs[:0]
-				if *failsCounter > 10 {
-					*isBashibleTimeout = true
-					if cmd != nil {
-						// Force kill bashible
-						_ = cmd.cmd.Process.Kill()
-					}
-					return
-				}
-
-				processLogger.ProcessFail()
-				stepName = fmt.Sprintf("%s, retry attempt #%d of 10\n", stepName, *failsCounter)
-			} else if *lastStep != "" {
-				stepLogs = make([]string, 0)
-				processLogger.ProcessEnd()
-				*failsCounter = 0
-			}
-
-			processLogger.ProcessStart("Run step " + stepName)
-			*lastStep = match[1]
-			return
-		}
-
-		stepLogs = append(stepLogs, l)
-		logger.DebugF(l)
+func commandKiller(command connection.Command) {
+	cliCmd, ok := command.(*Command)
+	if !ok {
+		return
 	}
+
+	_ = cliCmd.cmd.Process.Kill()
+}
+
+func commandPreparator(command connection.Command) {
+	cliCommand, ok := command.(*Command)
+	if !ok {
+		return
+	}
+
+	cliCommand.CaptureStdout(nil)
+	cliCommand.CaptureStderr(nil)
 }

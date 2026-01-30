@@ -208,10 +208,14 @@ func TestUploadScriptExecuteBundle(t *testing.T) {
 		}
 
 		for _, c := range cases {
-			assertExecuteBundle := func(t *testing.T, cs testCase, s connection.Script) {
+			assertExecuteBundle := func(t *testing.T, s connection.Script) {
 				loggerBuf.Reset()
 
 				_, err := s.ExecuteBundle(context.Background(), c.parentDir, c.bundleDir)
+
+				if c.loggerOutAssert != nil {
+					c.loggerOutAssert(t, loggerBuf)
+				}
 
 				if c.wantErr {
 					require.Error(t, err)
@@ -220,10 +224,6 @@ func TestUploadScriptExecuteBundle(t *testing.T) {
 				}
 
 				require.NoError(t, err)
-
-				if c.loggerOutAssert != nil {
-					c.loggerOutAssert(t, loggerBuf)
-				}
 			}
 
 			t.Run(c.title, func(t *testing.T) {
@@ -235,8 +235,8 @@ func TestUploadScriptExecuteBundle(t *testing.T) {
 					require.NoError(t, err)
 				}
 
-				assertExecuteBundle(t, c, goScript)
-				assertExecuteBundle(t, c, cliScript)
+				assertExecuteBundle(t, goScript)
+				assertExecuteBundle(t, cliScript)
 			})
 		}
 	})

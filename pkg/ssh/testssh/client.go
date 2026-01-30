@@ -653,11 +653,12 @@ func (t *Script) Sudo() {}
 func (t *Script) WithStdoutHandler(handler func(string)) {
 	t.handler = handler
 }
-func (t *Script) WithTimeout(timeout time.Duration)   {}
-func (t *Script) WithEnvs(envs map[string]string)     {}
-func (t *Script) WithCleanupAfterExec(doCleanup bool) {}
-func (t *Script) WithCommanderMode(enabled bool)      {}
-func (t *Script) WithExecuteUploadDir(dir string)     {}
+func (t *Script) WithTimeout(timeout time.Duration)                {}
+func (t *Script) WithEnvs(envs map[string]string)                  {}
+func (t *Script) WithCleanupAfterExec(doCleanup bool)              {}
+func (t *Script) WithNoLogStepOutOnError(enabled bool)             {}
+func (t *Script) WithBundlerOpts(opts ...connection.BundlerOption) {}
+func (t *Script) WithExecuteUploadDir(dir string)                  {}
 func (t *Script) execute() ([]byte, error) {
 	if t.handler != nil {
 		t.handler(string(t.stdOut))

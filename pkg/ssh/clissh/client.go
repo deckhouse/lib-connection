@@ -106,7 +106,7 @@ func (s *Client) File() connection.File {
 
 // UploadScript is used to upload script and execute it on remote server
 func (s *Client) UploadScript(scriptPath string, args ...string) connection.Script {
-	return NewUploadScript(s.settings, s.SessionSettings, scriptPath, args...)
+	return NewUploadScript(s.settings, s, scriptPath, args...)
 }
 
 // Check is used to upload script and execute it on remote server

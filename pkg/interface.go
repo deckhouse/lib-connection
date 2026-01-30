@@ -16,6 +16,8 @@ package pkg
 
 import (
 	"context"
+	"errors"
+	"regexp"
 	"time"
 
 	"github.com/deckhouse/lib-dhctl/pkg/retry"
@@ -119,8 +121,69 @@ type File interface {
 	DownloadBytes(ctx context.Context, remotePath string) ([]byte, error)
 }
 
+type BundlerOptions struct {
+	StepHeaderRegex     *regexp.Regexp
+	NoLogStepOutOnError bool
+	StepsDelimiter      string
+	Retries             int
+}
+
+func (o *BundlerOptions) IsValid() error {
+	if o.StepsDelimiter == "" {
+		return errors.New("steps delimiters not set")
+	}
+
+	if o.StepHeaderRegex == nil {
+		return errors.New("step header regex not set")
+	}
+
+	if o.Retries < 1 {
+		return errors.New("retries not set")
+	}
+
+	return nil
+}
+
+type BundlerOption func(*BundlerOptions)
+
+func BundlerWithStepHeaderRegex(regex *regexp.Regexp) BundlerOption {
+	return func(opts *BundlerOptions) {
+		opts.StepHeaderRegex = regex
+	}
+}
+
+func BundlerWithNoLogStepOutOnError(v bool) BundlerOption {
+	return func(opts *BundlerOptions) {
+		opts.NoLogStepOutOnError = v
+	}
+}
+
+func BundlerWithStepDelimiter(delimiter string) BundlerOption {
+	return func(opts *BundlerOptions) {
+		opts.StepsDelimiter = delimiter
+	}
+}
+
+func BundlerWithRetries(retries int) BundlerOption {
+	return func(opts *BundlerOptions) {
+		if retries > 0 {
+			opts.Retries = retries
+		}
+	}
+}
+
+type Bundler interface {
+	Execute(ctx context.Context, parentDir, bundleDir string) ([]byte, error)
+}
+
 type Script interface {
 	Execute(context.Context) (stdout []byte, err error)
+	// ExecuteBundle
+	// run script that start another list of scripts and
+	// log process of running
+	// by default running bashible bundle BundlerOption
+	// if need you can set your own BundlerOption with WithBundlerOpts
+	// to run your bundle script
 	ExecuteBundle(ctx context.Context, parentDir, bundleDir string) (stdout []byte, err error)
 
 	Sudo()
@@ -128,8 +191,9 @@ type Script interface {
 	WithTimeout(timeout time.Duration)
 	WithEnvs(envs map[string]string)
 	WithCleanupAfterExec(doCleanup bool)
-	WithCommanderMode(enabled bool)
+	WithNoLogStepOutOnError(enabled bool)
 	WithExecuteUploadDir(dir string)
+	WithBundlerOpts(opts ...BundlerOption)
 }
 
 type Tunnel interface {

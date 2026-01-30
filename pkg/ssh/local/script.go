@@ -84,6 +84,8 @@ func (s *Script) Execute(ctx context.Context) ([]byte, error) {
 	return cmd.StdoutBytes(), nil
 }
 
+func (s *Script) WithBundlerOpts(opts ...connection.BundlerOption) {}
+
 func (s *Script) ExecuteBundle(ctx context.Context, parentDir, bundleDir string) ([]byte, error) {
 	srcPath := filepath.Join(parentDir, bundleDir)
 	dstPath := filepath.Join("/var/lib/", bundleDir)
@@ -134,6 +136,6 @@ func (s *Script) WithCleanupAfterExec(doCleanup bool) {
 	s.cleanupAfterRun = doCleanup
 }
 
-func (s *Script) WithCommanderMode(bool) {}
+func (s *Script) WithNoLogStepOutOnError(bool) {}
 
 func (s *Script) WithExecuteUploadDir(string) {}

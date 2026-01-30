@@ -20,18 +20,15 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
 	"al.essio.dev/pkg/shellescape"
-	"github.com/deckhouse/lib-dhctl/pkg/log"
 	gossh "github.com/deckhouse/lib-gossh"
 
 	connection "github.com/deckhouse/lib-connection/pkg"
 	"github.com/deckhouse/lib-connection/pkg/settings"
 	"github.com/deckhouse/lib-connection/pkg/ssh/utils"
-	"github.com/deckhouse/lib-connection/pkg/ssh/utils/tar"
 )
 
 var (
@@ -55,7 +52,9 @@ type SSHUploadScript struct {
 
 	timeout time.Duration
 
-	commanderMode bool
+	noLogStepOutOnError bool
+
+	bundlerOptions []connection.BundlerOption
 }
 
 func NewSSHUploadScript(sshClient *Client, scriptPath string, args ...string) *SSHUploadScript {
@@ -84,8 +83,12 @@ func (u *SSHUploadScript) WithEnvs(envs map[string]string) {
 	u.envs = envs
 }
 
-func (u *SSHUploadScript) WithCommanderMode(enabled bool) {
-	u.commanderMode = enabled
+func (u *SSHUploadScript) WithBundlerOpts(opts ...connection.BundlerOption) {
+	u.bundlerOptions = append(make([]connection.BundlerOption, 0), opts...)
+}
+
+func (u *SSHUploadScript) WithNoLogStepOutOnError(enabled bool) {
+	u.noLogStepOutOnError = enabled
 }
 
 func (u *SSHUploadScript) IsSudo() bool {
@@ -183,151 +186,45 @@ func (u *SSHUploadScript) pathWithEnv(path string) string {
 	return fmt.Sprintf("%s %s", envs, path)
 }
 
-var ErrBashibleTimeout = errors.New("Timeout bashible step running")
-
 func (u *SSHUploadScript) ExecuteBundle(ctx context.Context, parentDir, bundleDir string) ([]byte, error) {
-	logger := u.sshClient.settings.Logger()
-
-	bundleName := fmt.Sprintf("bundle-%s.tar", time.Now().Format("20060102-150405"))
-	bundleLocalFilepath := filepath.Join(u.sshClient.settings.TmpDir(), bundleName)
-
-	// tar cpf bundle.tar -C /tmp/dhctl.1231qd23/var/lib bashible
-	err := tar.CreateTar(bundleLocalFilepath, parentDir, bundleDir)
+	opts, err := utils.UserBundleOptsOrBashible(u.bundlerOptions...)
 	if err != nil {
-		return nil, fmt.Errorf("tar bundle: %v", err)
+		return nil, err
 	}
 
-	// todo
-	// tomb.RegisterOnShutdown(
-	//	"Delete bashible bundle folder",
-	//	func() { _ = os.Remove(bundleLocalFilepath) },
-	// )
-
-	// upload to node's deckhouse tmp directory
-	err = NewSSHFile(u.sshClient.settings, u.sshClient.sshClient).
-		Upload(ctx, bundleLocalFilepath, u.sshClient.settings.NodeTmpDir())
-	if err != nil {
-		return nil, fmt.Errorf("upload: %v", err)
-	}
-
-	// sudo:
-	// tar xpof ${app.DeckhouseNodeTmpPath}/bundle.tar -C /var/lib && /var/lib/bashible/bashible.sh args...
-	tarCmdline := fmt.Sprintf(
-		"tar xpof %s/%s -C /var/lib && /var/lib/%s/%s %s",
-		u.sshClient.settings.NodeTmpDir(),
-		bundleName,
-		bundleDir,
-		u.ScriptPath,
-		strings.Join(u.Args, " "),
+	opts = append(opts,
+		utils.BundleWithNoLogStepOutOnError(u.noLogStepOutOnError),
+		utils.BundleWithCommandKiller(commandKiller),
+		utils.BundleWithCommandPreparator(commandPreparator),
 	)
-	bundleCmd := NewSSHCommand(u.sshClient, tarCmdline)
-	bundleCmd.Sudo(ctx)
 
-	// Buffers to implement output handler logic
-	lastStep := ""
-	failsCounter := 0
-	isBashibleTimeout := false
-
-	processLogger := logger.ProcessLogger()
-
-	handler := bundleSSHOutputHandler(
-		bundleCmd,
-		processLogger,
-		&lastStep,
-		&failsCounter,
-		&isBashibleTimeout,
-		u.commanderMode,
-		logger,
-	)
-	bundleCmd.WithStdoutHandler(handler)
-	bundleCmd.CaptureStdout(nil)
-	bundleCmd.CaptureStderr(nil)
-	err = bundleCmd.Run(ctx)
+	bundler, err := utils.NewBundle(u.Settings(), u.sshClient, u.ScriptPath, u.Args, opts...)
 	if err != nil {
-		if lastStep != "" {
-			processLogger.ProcessFail()
-		}
-
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			// exitErr.Stderr is set in the "os/exec".Cmd.Output method from the Golang standard library.
-			// But we call the "os/exec".Cmd.Wait method, which does not set the Stderr field.
-			// We can reuse the exec.ExitError type when handling errors.
-			exitErr.Stderr = bundleCmd.StderrBytes()
-		}
-
-		err = fmt.Errorf("execute bundle: %w", err)
-	} else {
-		processLogger.ProcessEnd()
+		return nil, err
 	}
 
-	if isBashibleTimeout {
-		return bundleCmd.StdoutBytes(), ErrBashibleTimeout
-	}
-
-	return bundleCmd.StdoutBytes(), err
+	return bundler.Execute(ctx, parentDir, bundleDir)
 }
 
-var stepHeaderRegexp = regexp.MustCompile("^=== Step: /var/lib/bashible/bundle_steps/(.*)$")
-
-func bundleSSHOutputHandler(
-	cmd *SSHCommand,
-	processLogger log.ProcessLogger,
-	lastStep *string,
-	failsCounter *int,
-	isBashibleTimeout *bool,
-	commanderMode bool,
-	logger log.Logger,
-) func(string) {
-	stepLogs := make([]string, 0)
-	return func(l string) {
-		if l == "===" {
-			return
-		}
-		if stepHeaderRegexp.Match([]byte(l)) {
-			match := stepHeaderRegexp.FindStringSubmatch(l)
-			stepName := match[1]
-
-			if *lastStep == stepName {
-				logMessage := strings.Join(stepLogs, "\n")
-				switch {
-				case commanderMode && *failsCounter == 0:
-					logger.ErrorF("%s", logMessage)
-				case commanderMode && *failsCounter > 0:
-					logger.ErrorF("Run step %s finished with error^^^\n", stepName)
-					logger.DebugF("%s", logMessage)
-				default:
-					logger.ErrorF("%s", logMessage)
-				}
-				*failsCounter++
-				stepLogs = stepLogs[:0]
-				if *failsCounter > 10 {
-					*isBashibleTimeout = true
-					if cmd != nil {
-						// Force kill bashible and close session/streams to unblock Wait/readers
-						_ = cmd.session.Signal(gossh.SIGABRT)
-						if cmd.Stdin != nil {
-							_ = cmd.Stdin.Close()
-						}
-						_ = cmd.session.Close()
-					}
-					return
-				}
-
-				processLogger.ProcessFail()
-				stepName = fmt.Sprintf("%s, retry attempt #%d of 10", stepName, *failsCounter)
-			} else if *lastStep != "" {
-				stepLogs = make([]string, 0)
-				processLogger.ProcessEnd()
-				*failsCounter = 0
-			}
-
-			processLogger.ProcessStart("Run step " + stepName)
-			*lastStep = match[1]
-			return
-		}
-
-		stepLogs = append(stepLogs, l)
-		logger.DebugLn(l)
+func commandKiller(command connection.Command) {
+	goCommand, ok := command.(*SSHCommand)
+	if !ok {
+		return
 	}
+	// Force kill bashible and close session/streams to unblock Wait/readers
+	_ = goCommand.session.Signal(gossh.SIGABRT)
+	if goCommand.Stdin != nil {
+		_ = goCommand.Stdin.Close()
+	}
+	_ = goCommand.session.Close()
+}
+
+func commandPreparator(command connection.Command) {
+	goCommand, ok := command.(*SSHCommand)
+	if !ok {
+		return
+	}
+
+	goCommand.CaptureStdout(nil)
+	goCommand.CaptureStderr(nil)
 }
