@@ -246,16 +246,22 @@ func (e *Extractor) ExtractAllVars(vars ...*Var) error {
 				continue
 			}
 
-			elem.SetInt(int64(destInt))
-			val.Present = present
+			if present {
+				elem.SetInt(int64(destInt))
+				val.Present = present
+			}
 		case reflect.String:
 			strDest := ""
 			val.Present = e.String(name, &strDest)
-			elem.SetString(strDest)
+			if val.Present {
+				elem.SetString(strDest)
+			}
 		case reflect.Bool:
 			var destBool bool
 			val.Present = e.Bool(name, &destBool)
-			elem.SetBool(destBool)
+			if val.Present {
+				elem.SetBool(destBool)
+			}
 		case reflect.Slice:
 			if err := e.processSlice(name, elem, val); err != "" {
 				appendError(name, err)
@@ -284,7 +290,9 @@ func (e *Extractor) processSlice(name string, slice reflect.Value, val *Var) str
 	case reflect.String:
 		var destStrSlice []string
 		val.Present = e.Strings(name, &destStrSlice)
-		slice.Set(reflect.ValueOf(destStrSlice))
+		if val.Present {
+			slice.Set(reflect.ValueOf(destStrSlice))
+		}
 	default:
 		return incorrectValErr(kind, true)
 	}

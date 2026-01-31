@@ -31,7 +31,7 @@ import (
 	"github.com/deckhouse/lib-connection/pkg/settings"
 	"github.com/deckhouse/lib-connection/pkg/ssh/utils"
 	"github.com/deckhouse/lib-connection/pkg/ssh/utils/terminal"
-	connectionutils "github.com/deckhouse/lib-connection/pkg/utils"
+	"github.com/deckhouse/lib-connection/pkg/utils/env"
 )
 
 const (
@@ -84,7 +84,7 @@ type Flags struct {
 	forceNoPrivateKeys bool
 
 	flagSet      *flag.FlagSet
-	envExtractor *connectionutils.EnvExtractor
+	envExtractor *env.Extractor
 }
 
 func (f *Flags) IsConflictBetweenFlags() error {
@@ -152,37 +152,34 @@ func (f *Flags) RewriteFromEnvs() error {
 		return notInitializedError("envExtractor")
 	}
 
-	f.envExtractor.Bool(ForceNoPrivateKeysEnv, &f.forceNoPrivateKeys)
+	privateKeysVal := env.NewVar(AgentPrivateKeysEnv, &f.PrivateKeysPaths)
+
+	err := f.envExtractor.ExtractAllVars(
+		env.NewVar(BastionPortEnv, &f.BastionPort),
+		env.NewVar(PortEnv, &f.Port),
+		env.NewVar(ForceNoPrivateKeysEnv, &f.forceNoPrivateKeys),
+		privateKeysVal,
+		env.NewVar(BastionHostEnv, &f.BastionHost),
+		env.NewVar(BastionUserEnv, &f.BastionUser),
+		env.NewVar(UserEnv, &f.User),
+		env.NewVar(HostsEnv, &f.Hosts),
+		env.NewVar(ExtraArgsEnv, &f.ExtraArgs),
+		env.NewVar(ConnectionConfigEnv, &f.ConnectionConfigPath),
+		env.NewVar(LegacyModeEnv, &f.ForceLegacy),
+		env.NewVar(ModernModeEnv, &f.ForceModern),
+		env.NewVar(AskBastionPasswordEnv, &f.AskBastionPass),
+		env.NewVar(AskSudoPasswordEnv, &f.AskSudoPass),
+	)
+
+	if err != nil {
+		return err
+	}
 
 	if !f.forceNoPrivateKeys {
-		isSet := f.envExtractor.Strings(AgentPrivateKeysEnv, &f.PrivateKeysPaths)
-
-		if isSet && len(f.PrivateKeysPaths) == 0 {
+		if privateKeysVal.Present && len(f.PrivateKeysPaths) == 0 {
 			f.forceNoPrivateKeys = true
 		}
 	}
-
-	f.envExtractor.String(BastionHostEnv, &f.BastionHost)
-	f.envExtractor.String(BastionUserEnv, &f.BastionUser)
-	if _, err := f.envExtractor.Int(BastionPortEnv, &f.BastionPort); err != nil {
-		return err
-	}
-
-	f.envExtractor.String(UserEnv, &f.User)
-	f.envExtractor.Strings(HostsEnv, &f.Hosts)
-	if _, err := f.envExtractor.Int(PortEnv, &f.Port); err != nil {
-		return err
-	}
-
-	f.envExtractor.String(ExtraArgsEnv, &f.ExtraArgs)
-
-	f.envExtractor.String(ConnectionConfigEnv, &f.ConnectionConfigPath)
-
-	f.envExtractor.Bool(LegacyModeEnv, &f.ForceLegacy)
-	f.envExtractor.Bool(ModernModeEnv, &f.ForceModern)
-
-	f.envExtractor.Bool(AskBastionPasswordEnv, &f.AskBastionPass)
-	f.envExtractor.Bool(AskSudoPasswordEnv, &f.AskSudoPass)
 
 	return nil
 }
@@ -238,7 +235,7 @@ type FlagsParser struct {
 	envsPrefix string
 	ask        AskPasswordFunc
 	sett       settings.Settings
-	envsLookup connectionutils.EnvsLookupFunc
+	envsLookup env.EnvsLookupFunc
 
 	// extractPrivateKey
 	// custom extract content and password for private key file
@@ -273,7 +270,7 @@ func NewFlagsParser(sett settings.Settings) *FlagsParser {
 // This method trim right all _ ang - symbols and spaces left and right
 // By default parser add _ after prefix for all env vars
 func (p *FlagsParser) WithEnvsPrefix(envsPrefix string) *FlagsParser {
-	p.envsPrefix = connectionutils.SimplifyPrefix(envsPrefix)
+	p.envsPrefix = env.SimplifyPrefix(envsPrefix)
 	return p
 }
 
@@ -287,7 +284,7 @@ func (p *FlagsParser) WithAsk(ask AskPasswordFunc) *FlagsParser {
 	return p
 }
 
-func (p *FlagsParser) WithEnvsLookup(lookup connectionutils.EnvsLookupFunc) *FlagsParser {
+func (p *FlagsParser) WithEnvsLookup(lookup env.EnvsLookupFunc) *FlagsParser {
 	if govalue.Nil(lookup) {
 		p.sett.Logger().WarnF("Envs lookup function is nil. Skip set ask function.")
 		return p
@@ -604,8 +601,8 @@ func (p *FlagsParser) ParseFlagsAndExtractConfig(arguments []string, set *flag.F
 	return p.ExtractConfigAfterParse(flags, opts...)
 }
 
-func (p *FlagsParser) envsExtractor() *connectionutils.EnvExtractor {
-	return connectionutils.NewEnvExtractor(p.envsPrefix, p.envsLookup)
+func (p *FlagsParser) envsExtractor() *env.Extractor {
+	return env.NewExtractor(p.envsPrefix, p.envsLookup)
 }
 
 func (p *FlagsParser) readPrivateKeysFromFlags(flags *Flags, logger log.Logger) ([]AgentPrivateKey, error) {
@@ -668,7 +665,7 @@ func (p *FlagsParser) getPasswordsFromUser(flags *Flags) (*passwordsFromUser, er
 	return res, nil
 }
 
-func getHomeDir(extractor *connectionutils.EnvExtractor) (string, error) {
+func getHomeDir(extractor *env.Extractor) (string, error) {
 	home := ""
 
 	extractor.StringWithoutPrefix("HOME", &home)
@@ -707,7 +704,7 @@ func getHomeDir(extractor *connectionutils.EnvExtractor) (string, error) {
 // returns current user name
 // first attempt get user from env
 // can be call multiple times because user.Current() cache user info
-func getCurrentUser(extractor *connectionutils.EnvExtractor) (string, error) {
+func getCurrentUser(extractor *env.Extractor) (string, error) {
 	userName := ""
 
 	extractor.StringWithoutPrefix("USER", &userName)

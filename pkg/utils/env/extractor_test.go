@@ -306,6 +306,31 @@ func TestExtractAll(t *testing.T) {
 
 			require.Equal(t, -22, dest.Int, "should set val")
 		})
+
+		t.Run("no rewrite destination is env not present", func(t *testing.T) {
+			dest := someStruct{
+				Bool:        true,
+				String:      "my string",
+				Int:         22,
+				StringSlice: []string{"first", "second"},
+			}
+
+			extractor := getExtractor(make(map[string]string))
+
+			err := extractor.ExtractAllVars(
+				NewVar(StringEnv, &dest.String),
+				NewVar(IntEnv, &dest.Int),
+				NewVar(BoolEnv, &dest.Bool),
+				NewVar(SliceEnv, &dest.StringSlice),
+			)
+
+			assertErr(err)
+
+			require.Equal(t, "my string", dest.String, "should set rewrite val")
+			require.Equal(t, 22, dest.Int, "should set rewrite val")
+			require.True(t, dest.Bool, "should set rewrite val")
+			require.Equal(t, []string{"first", "second"}, dest.StringSlice, "should set rewrite val")
+		})
 	})
 }
 
