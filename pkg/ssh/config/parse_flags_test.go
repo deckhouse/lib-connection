@@ -520,6 +520,7 @@ func TestParseFlags(t *testing.T) {
 			envs: map[string]string{
 				"DHCTL_SSH_HOSTS":        "192.168.0.2,192.168.0.3",
 				"DHCTL_SSH_MODERN_MODE":  "true",
+				"DHCTL_SSH_LEGACY_MODE":  "false",
 				"DHCTL_SSH_BASTION_PORT": "2200",
 			},
 
