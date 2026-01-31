@@ -87,7 +87,7 @@ func (e *Extractor) AddEnvToUsage(usage string, envName string) string {
 		return usage
 	}
 
-	return fmt.Sprintf("%s (Can rewrite with %s env)", usage, e.nameWithPrefix(envName))
+	return fmt.Sprintf("%s (Can rewrite with %s env)", usage, e.NameWithPrefix(envName))
 }
 
 func (e *Extractor) Int(name string, destination *int) (bool, error) {
@@ -98,7 +98,7 @@ func (e *Extractor) Int(name string, destination *int) (bool, error) {
 
 	value, err := strconv.Atoi(strVar)
 	if err != nil {
-		return false, fmt.Errorf("Cannot convert '%s' to int for %s: %w", strVar, e.nameWithPrefix(name), err)
+		return false, fmt.Errorf("Cannot convert '%s' to int for %s: %w", strVar, e.NameWithPrefix(name), err)
 	}
 
 	*destination = value
@@ -177,7 +177,7 @@ func (e *Extractor) Bool(name string, destination *bool) bool {
 	return true
 }
 
-func (e *Extractor) nameWithPrefix(name string) string {
+func (e *Extractor) NameWithPrefix(name string) string {
 	if e.prefix != "" {
 		name = fmt.Sprintf("%s%s%s", e.prefix, e.prefixSeparator, name)
 	}
@@ -186,7 +186,7 @@ func (e *Extractor) nameWithPrefix(name string) string {
 }
 
 func (e *Extractor) getVar(name string) (string, bool) {
-	return e.lookupFunc(e.nameWithPrefix(name))
+	return e.lookupFunc(e.NameWithPrefix(name))
 }
 
 type Var struct {

@@ -15,177 +15,22 @@
 package config
 
 import (
-	"bufio"
-	"bytes"
-	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"os/user"
 	"path"
 	"path/filepath"
-	"regexp"
 	"strings"
-	"sync"
 	"testing"
-	"time"
 
 	"github.com/deckhouse/lib-dhctl/pkg/log"
 	flag "github.com/spf13/pflag"
 	"github.com/stretchr/testify/require"
 
+	"github.com/deckhouse/lib-connection/pkg/settings"
 	"github.com/deckhouse/lib-connection/pkg/tests"
 )
-
-func TestParseFlagsHelp(t *testing.T) {
-	oldStdErr := os.Stderr
-	restoreStderr := func() {
-		os.Stderr = oldStdErr
-	}
-
-	t.Cleanup(restoreStderr)
-
-	test := tests.ShouldNewTest(t, "flags_help")
-
-	sett := test.Settings()
-	logger := test.GetLogger()
-
-	// Create a pipe
-	pr, pw, err := os.Pipe()
-	require.NoError(t, err, "pipes should created")
-
-	os.Stderr = pw
-
-	var wg sync.WaitGroup
-	wg.Add(1)
-
-	var buf bytes.Buffer
-
-	closed := false
-
-	closePipes := func() {
-		if closed {
-			return
-		}
-
-		// hack to wait write all
-		time.Sleep(3 * time.Second)
-
-		if err := pr.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
-			logger.ErrorF("Error closing read pipe: %v", err)
-		}
-
-		if err := pw.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
-			logger.ErrorF("Error closing read pipe: %v", err)
-		}
-
-		wg.Wait()
-
-		if err := bufio.NewWriter(&buf).Flush(); err != nil {
-			logger.ErrorF("Error flushing buf: %v", err)
-		}
-
-		closed = true
-	}
-
-	t.Cleanup(closePipes)
-
-	hasCopyErr := func(err error) bool {
-		if err == nil {
-			return false
-		}
-
-		if errors.Is(err, io.EOF) || errors.Is(err, os.ErrClosed) {
-			return false
-		}
-
-		return true
-	}
-
-	go func() {
-		defer wg.Done()
-		_, err := io.Copy(&buf, pr)
-		// Copy all content from the pipe reader to the buffer
-		if err != nil && hasCopyErr(err) {
-			logger.ErrorF("Error copying data from stderr: %v", err)
-		}
-	}()
-
-	t.Cleanup(func() {
-		closePipes()
-		restoreStderr()
-		if t.Failed() {
-			out := buf.String()
-			logger.InfoF("Got usage from Parse:")
-			logger.InfoF("%s", out)
-		}
-	})
-
-	// no use require because all stdout rewrite to buf
-	assertNoError := func(t *testing.T, msg string, err error) {
-		if err != nil {
-			restoreStderr()
-			logger.ErrorF("%s: %v", msg, err)
-			t.FailNow()
-		}
-	}
-
-	flagSet := flag.NewFlagSet("ssh-help", flag.ContinueOnError)
-
-	parser := NewFlagsParser(sett).WithEnvsPrefix("MY_PREFIX")
-	_, err = parser.InitFlags(flagSet)
-	assertNoError(t, "Flags init failed", err)
-
-	err = flagSet.Parse([]string{"--help"})
-	if !errors.Is(err, flag.ErrHelp) {
-		assertNoError(t, "Flags parse failed. Should return ErrHelp", fmt.Errorf("not help: %w", err))
-	}
-	// stop writing
-	closePipes()
-
-	const usagePrefix = "Usage of ssh-help:\n"
-
-	out := buf.String()
-	if !strings.Contains(out, usagePrefix) {
-		assertNoError(t, "Flags help failed", fmt.Errorf("not contains usage prefix"))
-	}
-
-	out = strings.TrimPrefix(out, usagePrefix)
-	out = strings.TrimSuffix(out, "\n")
-
-	expectedFlags := 14
-
-	lines := strings.Split(out, "\n")
-	linesCount := len(lines)
-
-	if linesCount != expectedFlags {
-		assertNoError(
-			t,
-			fmt.Sprintf("Flags help failed \n%s\n", out), fmt.Errorf(
-				"not contains all flags should %d  got %d", expectedFlags, linesCount,
-			))
-	}
-
-	envMsgRe := regexp.MustCompile(`\(Can rewrite with MY_PREFIX_[A-Z_]+ env\)`)
-
-	notContainsEnv := make([]string, 0)
-	for _, line := range lines {
-		if !envMsgRe.MatchString(line) {
-			notContainsEnv = append(notContainsEnv, line)
-		}
-	}
-
-	if len(notContainsEnv) > 0 {
-		assertNoError(t,
-			"Flags help failed",
-			fmt.Errorf(
-				"not contains env vars for:\n %v",
-				strings.Join(notContainsEnv, "\n"),
-			),
-		)
-	}
-}
 
 func TestParseFlags(t *testing.T) {
 	usr, err := user.Current()
@@ -1025,8 +870,8 @@ sshBastionPassword: "not_secure_password_bastion"
 				testCase.before(t, &testCase, logger)
 			}
 
-			parser := NewFlagsParser(sett).
-				WithEnvsPrefix(testCase.envsPrefix)
+			parser := NewFlagsParser(sett)
+			parser.WithEnvsPrefix(testCase.envsPrefix)
 
 			if !testCase.defaultAsk {
 				parser.WithAsk(func(promt string) ([]byte, error) {
@@ -1265,6 +1110,28 @@ func TestParseFlagsAndExtractConfigNoArgs(t *testing.T) {
 	flagSet.assertAdditionalFlagsParsed(t)
 }
 
+func TestParseFlagsHelp(t *testing.T) {
+	tests.AssertParseFlagsHelp(t, tests.AssertParseFlagsHelpParams{
+		ExpectedFlags: 14,
+		Name:          "ssh-flags",
+		Provider: func(sett settings.Settings, envsPrefix string) tests.TestFlagsParser {
+			parser := NewFlagsParser(sett)
+			parser.WithEnvsPrefix(envsPrefix)
+
+			return &testHelpParser{parser: parser}
+		},
+	})
+}
+
+type testHelpParser struct {
+	parser *FlagsParser
+}
+
+func (p *testHelpParser) InitFlags(flagSet *flag.FlagSet) error {
+	_, err := p.parser.InitFlags(flagSet)
+	return err
+}
+
 type parseFlagsAndExtractConfigFlagSet struct {
 	additionalParam string
 	flagSet         *flag.FlagSet
@@ -1382,7 +1249,8 @@ func assertParseAndExtract(t *testing.T, params *parseFlagsAndExtractConfigParam
 
 	logger.InfoF("Got prefix: %s", prefix)
 
-	parser := NewFlagsParser(params.test.Settings()).WithEnvsPrefix(prefix)
+	parser := NewFlagsParser(params.test.Settings())
+	parser.WithEnvsPrefix(prefix)
 
 	config, err := parser.ParseFlagsAndExtractConfig(params.arguments, flagSet, ParseWithRequiredSSHHost(true))
 

@@ -97,6 +97,19 @@ bin/kind: curl-installed bin
 
 deps: bin bin/jq bin/golangci-lint bin/gofumpt bin/kind
 
+go-deps/update: go-installed
+	if [ -z "$(DEP)" ] ; then \
+	  echo "Please pass dependency name over DEP like make go-deps/update DEP=github.com/some/lib VER=v1.1.1"; \
+	  exit 1; \
+	fi; \
+	if [ -z "$(VER)" ] ; then \
+	  echo "Please pass dependency version over VER like make go-deps/update DEP=github.com/some/lib VER=v1.1.1"; \
+	  exit 1; \
+	fi; \
+	go get "$(DEP)@$(VER)"; \
+	cd ./tests; \
+	go get "$(DEP)@$(VER)"
+
 test: go-installed docker-installed bin/kind
 	./hack/run_tests.sh
 	$(MAKE) clean/test

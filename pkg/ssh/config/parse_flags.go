@@ -16,7 +16,6 @@ package config
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -32,6 +31,8 @@ import (
 	"github.com/deckhouse/lib-connection/pkg/ssh/utils/terminal"
 	"github.com/deckhouse/lib-connection/pkg/utils/defaults"
 	"github.com/deckhouse/lib-connection/pkg/utils/env"
+	"github.com/deckhouse/lib-connection/pkg/utils/file"
+	baseflags "github.com/deckhouse/lib-connection/pkg/utils/flags"
 )
 
 const (
@@ -83,8 +84,7 @@ type Flags struct {
 
 	forceNoPrivateKeys bool
 
-	flagSet      *flag.FlagSet
-	envExtractor *env.Extractor
+	baseFlags *baseflags.BaseFlags
 }
 
 func (f *Flags) IsConflictBetweenFlags() error {
@@ -106,7 +106,7 @@ func (f *Flags) IsConflictBetweenFlags() error {
 
 func (f *Flags) FillDefaults() error {
 	if len(f.PrivateKeysPaths) == 0 && !f.forceNoPrivateKeys {
-		home, err := defaults.HomeDir(f.envExtractor)
+		home, err := defaults.HomeDir(f.baseFlags.EnvExtractor())
 		if err != nil {
 			return err
 		}
@@ -148,13 +148,14 @@ func (f *Flags) FillDefaults() error {
 }
 
 func (f *Flags) RewriteFromEnvs() error {
-	if govalue.Nil(f.envExtractor) {
-		return notInitializedError("envExtractor")
+	envExtractor, err := f.baseFlags.ShouldEnvExtractor()
+	if err != nil {
+		return err
 	}
 
 	privateKeysVal := env.NewVar(AgentPrivateKeysEnv, &f.PrivateKeysPaths)
 
-	err := f.envExtractor.ExtractAllVars(
+	err = envExtractor.ExtractAllVars(
 		env.NewVar(BastionPortEnv, &f.BastionPort),
 		env.NewVar(PortEnv, &f.Port),
 		env.NewVar(ForceNoPrivateKeysEnv, &f.forceNoPrivateKeys),
@@ -184,29 +185,6 @@ func (f *Flags) RewriteFromEnvs() error {
 	return nil
 }
 
-func notInitializedError(field string) error {
-	return fmt.Errorf(
-		"Internal error. %s in Flags did not initialize. Call InitFlags first and pass Flags from result of InitFlags",
-		field,
-	)
-}
-
-func (f *Flags) IsInitialized() error {
-	if govalue.Nil(f.envExtractor) {
-		return notInitializedError("envExtractor")
-	}
-
-	if govalue.Nil(f.flagSet) {
-		return notInitializedError("flagSet")
-	}
-
-	if !f.flagSet.Parsed() {
-		return fmt.Errorf("flagsSet is not parsed. Call flag.Parse or flag.FlagSet.Parse before extract config")
-	}
-
-	return nil
-}
-
 func (f *Flags) userExtractor() func() (string, error) {
 	var currentUser *string
 
@@ -215,7 +193,12 @@ func (f *Flags) userExtractor() func() (string, error) {
 			return *currentUser, nil
 		}
 
-		userName, err := defaults.CurrentUserName(f.envExtractor)
+		envExtractor, err := f.baseFlags.ShouldEnvExtractor()
+		if err != nil {
+			return "", err
+		}
+
+		userName, err := defaults.CurrentUserName(envExtractor)
 		if err != nil {
 			return "", err
 		}
@@ -232,10 +215,9 @@ type (
 )
 
 type FlagsParser struct {
-	envsPrefix string
-	ask        AskPasswordFunc
-	sett       settings.Settings
-	envsLookup env.EnvsLookupFunc
+	*baseflags.BaseParser
+
+	ask AskPasswordFunc
 
 	// extractPrivateKey
 	// custom extract content and password for private key file
@@ -244,39 +226,29 @@ type FlagsParser struct {
 }
 
 // NewFlagsParser
-// init FlagsParser with empty envsPrefix
-// trim right all _ ang - symbols and spaces left and right from sett.EnvsPrefix
+// init FlagsParser
+// prefix will trim right all _ ang - symbols and spaces left and right from settings.Settings EnvsPrefix
 // By default parser add _ after prefix for all env vars
 func NewFlagsParser(sett settings.Settings) *FlagsParser {
 	askFromTerminal := func(prompt string) ([]byte, error) {
 		return terminal.AskPassword(sett.Logger(), prompt)
 	}
 
-	parser := &FlagsParser{
-		sett: sett,
-	}
-
 	terminalPrivateKeyPasswordExtractorWithoutDefault := func(path string, logger log.Logger) (string, error) {
 		return terminalPrivateKeyPasswordExtractor(path, make([]byte, 0), logger)
 	}
 
-	return parser.WithEnvsPrefix(sett.EnvsPrefix()).
-		WithAsk(askFromTerminal).
-		WithEnvsLookup(os.LookupEnv).
-		WithPrivateKeyPasswordExtractor(terminalPrivateKeyPasswordExtractorWithoutDefault)
-}
+	parser := &FlagsParser{
+		BaseParser: baseflags.NewBaseParser(sett),
+	}
 
-// WithEnvsPrefix
-// This method trim right all _ ang - symbols and spaces left and right
-// By default parser add _ after prefix for all env vars
-func (p *FlagsParser) WithEnvsPrefix(envsPrefix string) *FlagsParser {
-	p.envsPrefix = env.SimplifyPrefix(envsPrefix)
-	return p
+	return parser.WithAsk(askFromTerminal).
+		WithPrivateKeyPasswordExtractor(terminalPrivateKeyPasswordExtractorWithoutDefault)
 }
 
 func (p *FlagsParser) WithAsk(ask AskPasswordFunc) *FlagsParser {
 	if govalue.Nil(ask) {
-		p.sett.Logger().WarnF("Ask function is nil. Skip set ask function.")
+		p.Settings().Logger().WarnF("Ask function is nil. Skip set ask function.")
 		return p
 	}
 
@@ -284,19 +256,9 @@ func (p *FlagsParser) WithAsk(ask AskPasswordFunc) *FlagsParser {
 	return p
 }
 
-func (p *FlagsParser) WithEnvsLookup(lookup env.EnvsLookupFunc) *FlagsParser {
-	if govalue.Nil(lookup) {
-		p.sett.Logger().WarnF("Envs lookup function is nil. Skip set ask function.")
-		return p
-	}
-
-	p.envsLookup = lookup
-	return p
-}
-
 func (p *FlagsParser) WithPrivateKeyPasswordExtractor(extractor PrivateKeyExtractorFunc) *FlagsParser {
 	if govalue.Nil(extractor) {
-		p.sett.Logger().WarnF("Private key password extractor function is nil. Skip set extractor function.")
+		p.Settings().Logger().WarnF("Private key password extractor function is nil. Skip set extractor function.")
 		return p
 	}
 
@@ -313,18 +275,17 @@ func (p *FlagsParser) InitFlags(set *flag.FlagSet) (*Flags, error) {
 		return nil, fmt.Errorf("Flags already parsed")
 	}
 
-	extractorFromEnv := p.envsExtractor()
+	envsExtractor := p.NewEnvsExtractor()
 
 	flags := &Flags{
-		flagSet:      set,
-		envExtractor: extractorFromEnv,
+		baseFlags: baseflags.NewBaseFlags(set, envsExtractor),
 	}
 
 	set.StringSliceVar(
 		&flags.PrivateKeysPaths,
 		privateKeysFlag,
 		make([]string, 0),
-		extractorFromEnv.AddEnvToUsage(
+		envsExtractor.AddEnvToUsage(
 			"Paths to private keys. Those keys will be used to connect to servers and to the bastion. Can be specified multiple times (default: '~/.ssh/id_rsa').",
 			AgentPrivateKeysEnv,
 		),
@@ -334,7 +295,7 @@ func (p *FlagsParser) InitFlags(set *flag.FlagSet) (*Flags, error) {
 		&flags.BastionHost,
 		"ssh-bastion-host",
 		"",
-		extractorFromEnv.AddEnvToUsage(
+		envsExtractor.AddEnvToUsage(
 			"Jumper (bastion) host to connect to servers (will be used both by infrastructure creation utility and ansible). Only IPs or hostnames are supported, name from ssh-config will not work.",
 			BastionHostEnv,
 		),
@@ -344,7 +305,7 @@ func (p *FlagsParser) InitFlags(set *flag.FlagSet) (*Flags, error) {
 		&flags.BastionPort,
 		"ssh-bastion-port",
 		0,
-		extractorFromEnv.AddEnvToUsage(
+		envsExtractor.AddEnvToUsage(
 			"SSH bastion port.",
 			BastionPortEnv,
 		),
@@ -354,7 +315,7 @@ func (p *FlagsParser) InitFlags(set *flag.FlagSet) (*Flags, error) {
 		&flags.BastionUser,
 		"ssh-bastion-user",
 		"",
-		extractorFromEnv.AddEnvToUsage(
+		envsExtractor.AddEnvToUsage(
 			"User to authenticate under when connecting to bastion (default: $USER).",
 			BastionUserEnv,
 		),
@@ -364,7 +325,7 @@ func (p *FlagsParser) InitFlags(set *flag.FlagSet) (*Flags, error) {
 		&flags.Hosts,
 		sshHostsFlag,
 		make([]string, 0),
-		extractorFromEnv.AddEnvToUsage(
+		envsExtractor.AddEnvToUsage(
 			"SSH destination hosts, can be specified multiple times.",
 			HostsEnv,
 		),
@@ -374,7 +335,7 @@ func (p *FlagsParser) InitFlags(set *flag.FlagSet) (*Flags, error) {
 		&flags.User,
 		"ssh-user",
 		"",
-		extractorFromEnv.AddEnvToUsage(
+		envsExtractor.AddEnvToUsage(
 			"User to authenticate under (default: $USER).",
 			UserEnv,
 		),
@@ -384,7 +345,7 @@ func (p *FlagsParser) InitFlags(set *flag.FlagSet) (*Flags, error) {
 		&flags.Port,
 		"ssh-port",
 		0,
-		extractorFromEnv.AddEnvToUsage(
+		envsExtractor.AddEnvToUsage(
 			"SSH destination port.",
 			PortEnv,
 		),
@@ -394,7 +355,7 @@ func (p *FlagsParser) InitFlags(set *flag.FlagSet) (*Flags, error) {
 		&flags.ExtraArgs,
 		"ssh-extra-args",
 		"",
-		extractorFromEnv.AddEnvToUsage(
+		envsExtractor.AddEnvToUsage(
 			"Extra args for ssh commands (like -vvv).",
 			ExtraArgsEnv,
 		),
@@ -404,7 +365,7 @@ func (p *FlagsParser) InitFlags(set *flag.FlagSet) (*Flags, error) {
 		&flags.ConnectionConfigPath,
 		"connection-config",
 		"",
-		extractorFromEnv.AddEnvToUsage(
+		envsExtractor.AddEnvToUsage(
 			"SSH connection config file path.",
 			ConnectionConfigEnv,
 		),
@@ -414,7 +375,7 @@ func (p *FlagsParser) InitFlags(set *flag.FlagSet) (*Flags, error) {
 		&flags.ForceLegacy,
 		legacyModeFlag,
 		false,
-		extractorFromEnv.AddEnvToUsage(
+		envsExtractor.AddEnvToUsage(
 			"Force legacy SSH mode.",
 			LegacyModeEnv,
 		),
@@ -424,7 +385,7 @@ func (p *FlagsParser) InitFlags(set *flag.FlagSet) (*Flags, error) {
 		&flags.ForceModern,
 		modernModeFlag,
 		false,
-		extractorFromEnv.AddEnvToUsage(
+		envsExtractor.AddEnvToUsage(
 			"Force modern SSH mode.",
 			ModernModeEnv,
 		),
@@ -434,7 +395,7 @@ func (p *FlagsParser) InitFlags(set *flag.FlagSet) (*Flags, error) {
 		&flags.AskBastionPass,
 		"ask-bastion-pass",
 		false,
-		extractorFromEnv.AddEnvToUsage(
+		envsExtractor.AddEnvToUsage(
 			"Ask for bastion password before the installation process.",
 			AskBastionPasswordEnv,
 		),
@@ -445,7 +406,7 @@ func (p *FlagsParser) InitFlags(set *flag.FlagSet) (*Flags, error) {
 		askSudoPasswordFlag,
 		"K",
 		false,
-		extractorFromEnv.AddEnvToUsage(
+		envsExtractor.AddEnvToUsage(
 			"Ask for sudo password before the installation process.",
 			AskSudoPasswordEnv,
 		),
@@ -455,7 +416,7 @@ func (p *FlagsParser) InitFlags(set *flag.FlagSet) (*Flags, error) {
 		&flags.forceNoPrivateKeys,
 		forceNoPrivateKeysFlag,
 		false,
-		extractorFromEnv.AddEnvToUsage(
+		envsExtractor.AddEnvToUsage(
 			"Do not use private keys.",
 			ForceNoPrivateKeysEnv,
 		),
@@ -469,7 +430,7 @@ func (p *FlagsParser) InitFlags(set *flag.FlagSet) (*Flags, error) {
 // should call after InitFlags and flag.Parse or flag.FlagSet.Parse
 // if flag.FlagSet in Flags is not parse returns error
 func (p *FlagsParser) ExtractConfigAfterParse(flags *Flags, opts ...ValidateOption) (*ConnectionConfig, error) {
-	if err := flags.IsInitialized(); err != nil {
+	if err := flags.baseFlags.IsInitialized(); err != nil {
 		return nil, err
 	}
 
@@ -481,10 +442,11 @@ func (p *FlagsParser) ExtractConfigAfterParse(flags *Flags, opts ...ValidateOpti
 		return nil, err
 	}
 
-	logger := p.sett.Logger()
+	sett := p.Settings()
+	logger := sett.Logger()
 
 	if flags.ConnectionConfigPath != "" {
-		configReader, err := fileReader(flags.ConnectionConfigPath, "connection config")
+		configReader, err := file.Reader(flags.ConnectionConfigPath, "connection config")
 		if err != nil {
 			return nil, err
 		}
@@ -495,7 +457,7 @@ func (p *FlagsParser) ExtractConfigAfterParse(flags *Flags, opts ...ValidateOpti
 			}
 		}()
 
-		return ParseConnectionConfig(configReader, p.sett, opts...)
+		return ParseConnectionConfig(configReader, sett, opts...)
 	}
 
 	if err := flags.FillDefaults(); err != nil {
@@ -601,10 +563,6 @@ func (p *FlagsParser) ParseFlagsAndExtractConfig(arguments []string, set *flag.F
 	return p.ExtractConfigAfterParse(flags, opts...)
 }
 
-func (p *FlagsParser) envsExtractor() *env.Extractor {
-	return env.NewExtractor(p.envsPrefix, p.envsLookup)
-}
-
 func (p *FlagsParser) readPrivateKeysFromFlags(flags *Flags, logger log.Logger) ([]AgentPrivateKey, error) {
 	res := make([]AgentPrivateKey, 0, len(flags.PrivateKeysPaths))
 
@@ -663,24 +621,6 @@ func (p *FlagsParser) getPasswordsFromUser(flags *Flags) (*passwordsFromUser, er
 	}
 
 	return res, nil
-}
-
-func fileReader(path string, fileType string) (io.ReadCloser, error) {
-	fullPath, err := filepath.Abs(path)
-	if err != nil {
-		return nil, fmt.Errorf("Cannot get abs path for %s: %w", path, err)
-	}
-
-	stat, err := os.Stat(fullPath)
-	if err != nil {
-		return nil, fmt.Errorf("Cannot get %s file info for %s: %w", fileType, fullPath, err)
-	}
-
-	if stat.IsDir() || !stat.Mode().IsRegular() {
-		return nil, fmt.Errorf("%s path '%s' should be regular file", fileType, fullPath)
-	}
-
-	return os.Open(fullPath)
 }
 
 func terminalPrivateKeyPasswordExtractor(path string, defaultPassword []byte, logger log.Logger) (string, error) {
