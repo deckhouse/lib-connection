@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package utils
+package env
 
 import (
 	"fmt"
@@ -38,27 +38,27 @@ func SimplifyPrefix(prefix string) string {
 	return prefix
 }
 
-type EnvExtractor struct {
+type Extractor struct {
 	prefixSeparator string
 	sliceSeparator  string
 	prefix          string
 	lookupFunc      func(string) (string, bool)
 }
 
-// NewEnvOsExtractor
+// NewOsExtractor
 // create extractor with os.LookupEnv lookup function
-func NewEnvOsExtractor(prefix string) *EnvExtractor {
-	return NewEnvExtractor(prefix, os.LookupEnv)
+func NewOsExtractor(prefix string) *Extractor {
+	return NewExtractor(prefix, os.LookupEnv)
 }
 
-// NewEnvExtractor
+// NewExtractor
 // utils for extract env and pass to destination
 // by default extractor use _ for separate prefix and env name
 // if need we use WithPrefixSeparator method for set your own or set to empty
 // by default slice string extractor split env string by , symbol
 // if need we use WithSliceSeparator method for set your own slice separator
-func NewEnvExtractor(prefix string, lookupFunc EnvsLookupFunc) *EnvExtractor {
-	return &EnvExtractor{
+func NewExtractor(prefix string, lookupFunc EnvsLookupFunc) *Extractor {
+	return &Extractor{
 		prefixSeparator: "_",
 		sliceSeparator:  ",",
 		prefix:          prefix,
@@ -68,7 +68,7 @@ func NewEnvExtractor(prefix string, lookupFunc EnvsLookupFunc) *EnvExtractor {
 
 // WithSliceSeparator
 // set only not empty string
-func (e *EnvExtractor) WithSliceSeparator(s string) *EnvExtractor {
+func (e *Extractor) WithSliceSeparator(s string) *Extractor {
 	if s != "" {
 		e.sliceSeparator = s
 	}
@@ -76,12 +76,12 @@ func (e *EnvExtractor) WithSliceSeparator(s string) *EnvExtractor {
 	return e
 }
 
-func (e *EnvExtractor) WithPrefixSeparator(s string) *EnvExtractor {
+func (e *Extractor) WithPrefixSeparator(s string) *Extractor {
 	e.prefixSeparator = s
 	return e
 }
 
-func (e *EnvExtractor) AddEnvToUsage(usage string, envName string) string {
+func (e *Extractor) AddEnvToUsage(usage string, envName string) string {
 	if envName == "" {
 		return usage
 	}
@@ -89,7 +89,7 @@ func (e *EnvExtractor) AddEnvToUsage(usage string, envName string) string {
 	return fmt.Sprintf("%s (Can rewrite with %s env)", usage, e.nameWithPrefix(envName))
 }
 
-func (e *EnvExtractor) Int(name string, destination *int) (bool, error) {
+func (e *Extractor) Int(name string, destination *int) (bool, error) {
 	strVar, ok := e.getVar(name)
 	if !ok {
 		return false, nil
@@ -105,7 +105,7 @@ func (e *EnvExtractor) Int(name string, destination *int) (bool, error) {
 	return true, nil
 }
 
-func (e *EnvExtractor) StringWithoutPrefix(name string, destination *string) bool {
+func (e *Extractor) StringWithoutPrefix(name string, destination *string) bool {
 	strVar, ok := e.lookupFunc(name)
 	if !ok {
 		return false
@@ -116,7 +116,7 @@ func (e *EnvExtractor) StringWithoutPrefix(name string, destination *string) boo
 	return true
 }
 
-func (e *EnvExtractor) String(name string, destination *string) bool {
+func (e *Extractor) String(name string, destination *string) bool {
 	strVar, ok := e.getVar(name)
 	if !ok {
 		return false
@@ -127,7 +127,7 @@ func (e *EnvExtractor) String(name string, destination *string) bool {
 	return true
 }
 
-func (e *EnvExtractor) Strings(name string, destination *[]string) bool {
+func (e *Extractor) Strings(name string, destination *[]string) bool {
 	valsStr, ok := e.getVar(name)
 	if !ok {
 		return false
@@ -148,7 +148,7 @@ func (e *EnvExtractor) Strings(name string, destination *[]string) bool {
 
 // Bool
 // returns that env is set
-func (e *EnvExtractor) Bool(name string, destination *bool) bool {
+func (e *Extractor) Bool(name string, destination *bool) bool {
 	strVar, ok := e.getVar(name)
 	if !ok {
 		return false
@@ -160,7 +160,7 @@ func (e *EnvExtractor) Bool(name string, destination *bool) bool {
 	return true
 }
 
-func (e *EnvExtractor) nameWithPrefix(name string) string {
+func (e *Extractor) nameWithPrefix(name string) string {
 	if e.prefix != "" {
 		name = fmt.Sprintf("%s%s%s", e.prefix, e.prefixSeparator, name)
 	}
@@ -168,36 +168,53 @@ func (e *EnvExtractor) nameWithPrefix(name string) string {
 	return name
 }
 
-func (e *EnvExtractor) getVar(name string) (string, bool) {
+func (e *Extractor) getVar(name string) (string, bool) {
 	return e.lookupFunc(e.nameWithPrefix(name))
 }
 
-type EnvVar struct {
+type Var struct {
+	Name        string
 	Destination any
 	Present     bool
 }
 
-func NewEnvVar(destination any) *EnvVar {
-	return &EnvVar{
+func NewVar(name string, destination any) *Var {
+	return &Var{
+		Name:        name,
 		Destination: destination,
 	}
 }
 
-type EnvVarsMap = map[string]*EnvVar
-
-// ExtractAll
-// extract all envs from map
-// if env present but have empty value set EnvVar Present field to true
-// you can process it if need
-// ExtractAll found need type for Destination, but destination should be pointer
-// Warning! if error returned some Destination can be set
-func (e *EnvExtractor) ExtractAll(envsToPointers EnvVarsMap) error {
+// ExtractAllVars
+// same as ExtractAll but can pass as variadic arguments
+func (e *Extractor) ExtractAllVars(vars ...*Var) error {
 	var errs *multierror.Error
 	appendError := func(envName string, msg string) {
 		errs = multierror.Append(errs, fmt.Errorf("%s for env variable '%s'", msg, envName))
 	}
 
-	for name, val := range envsToPointers {
+	names := make(map[string]int, len(vars))
+	for _, v := range vars {
+		names[v.Name]++
+	}
+
+	for name, count := range names {
+		if count > 1 {
+			appendError(name, fmt.Sprintf("have multiple names %d", count))
+		}
+	}
+
+	if err := errs.ErrorOrNil(); err != nil {
+		return err
+	}
+
+	for i, val := range vars {
+		name := val.Name
+		if name == "" {
+			appendError(fmt.Sprintf("vars[%d]", i), "name is empty")
+			continue
+		}
+
 		valAny := val.Destination
 
 		if govalue.Nil(valAny) {
@@ -251,7 +268,17 @@ func (e *EnvExtractor) ExtractAll(envsToPointers EnvVarsMap) error {
 	return errs.ErrorOrNil()
 }
 
-func (e *EnvExtractor) processSlice(name string, slice reflect.Value, val *EnvVar) string {
+// ExtractAll
+// extract all envs from map
+// if env present but have empty value set Var Present field to true
+// you can process it if need
+// ExtractAll found need type for Destination, but destination should be pointer
+// Warning! if error returned some Destination can be set
+func (e *Extractor) ExtractAll(vars []*Var) error {
+	return e.ExtractAllVars(vars...)
+}
+
+func (e *Extractor) processSlice(name string, slice reflect.Value, val *Var) string {
 	kind := slice.Type().Elem().Kind()
 	switch kind {
 	case reflect.String:

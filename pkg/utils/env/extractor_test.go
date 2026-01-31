@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package utils
+package env
 
 import (
 	"fmt"
@@ -21,7 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestEnvExtractorExtractAll(t *testing.T) {
+func TestExtractAll(t *testing.T) {
 	type someStruct struct {
 		Bool        bool
 		String      string
@@ -48,8 +48,8 @@ func TestEnvExtractorExtractAll(t *testing.T) {
 		SliceEnv  = "SLICE_VAR"
 	)
 
-	getExtractor := func(envs map[string]string) *EnvExtractor {
-		return NewEnvExtractor(prefix, func(name string) (string, bool) {
+	getExtractor := func(envs map[string]string) *Extractor {
+		return NewExtractor(prefix, func(name string) (string, bool) {
 			value, ok := envs[name]
 			return value, ok
 		})
@@ -73,15 +73,51 @@ func TestEnvExtractorExtractAll(t *testing.T) {
 			IntEnv:    "incorrect",
 		})
 
+		t.Run("has empty name", func(t *testing.T) {
+			var str string
+			var i int
+
+			extractor := getExtractor(envsForErrorCases)
+
+			err := extractor.ExtractAllVars(
+				NewVar(StringEnv, &str),
+				NewVar("", &i),
+			)
+
+			assertErr(err, "name is empty for env variable 'vars[1]'")
+		})
+
+		t.Run("not unique names", func(t *testing.T) {
+			dest := someStruct{}
+
+			extractor := getExtractor(envsForErrorCases)
+
+			err := extractor.ExtractAllVars(
+				NewVar(StringEnv, &dest.String),
+				NewVar(BoolEnv, &dest.Bool),
+				NewVar(StringEnv, &dest.String),
+				NewVar(IntEnv, &dest.Int),
+				NewVar(IntEnv, &dest.Int),
+				NewVar(SliceEnv, &dest.StringSlice),
+				NewVar(IntEnv, &dest.Int),
+			)
+
+			assertErr(
+				err,
+				"have multiple names 2 for env variable 'STRING_VAR'",
+				"have multiple names 3 for env variable 'INT_VAR'",
+			)
+		})
+
 		t.Run("has nil", func(t *testing.T) {
 			var str string
 
 			extractor := getExtractor(envsForErrorCases)
 
-			err := extractor.ExtractAll(EnvVarsMap{
-				StringEnv: NewEnvVar(&str),
-				IntEnv:    NewEnvVar(nil),
-			})
+			err := extractor.ExtractAllVars(
+				NewVar(StringEnv, &str),
+				NewVar(IntEnv, nil),
+			)
 
 			assertErr(err, "value is nil for env variable 'INT_VAR'")
 		})
@@ -92,10 +128,10 @@ func TestEnvExtractorExtractAll(t *testing.T) {
 
 			extractor := getExtractor(envsForErrorCases)
 
-			err := extractor.ExtractAll(EnvVarsMap{
-				StringEnv: NewEnvVar(&str),
-				IntEnv:    NewEnvVar(i),
-			})
+			err := extractor.ExtractAllVars(
+				NewVar(StringEnv, &str),
+				NewVar(IntEnv, i),
+			)
 
 			assertErr(err, "value should be pointer for env variable 'INT_VAR'")
 		})
@@ -111,10 +147,10 @@ func TestEnvExtractorExtractAll(t *testing.T) {
 
 				extractor := getExtractor(envsForErrorCases)
 
-				err := extractor.ExtractAll(EnvVarsMap{
-					StringEnv: NewEnvVar(&str),
-					IntEnv:    NewEnvVar(&my),
-				})
+				err := extractor.ExtractAllVars(
+					NewVar(StringEnv, &str),
+					NewVar(IntEnv, &my),
+				)
 
 				assertErr(err, "incorrect value pointer type 'struct'. Should be int, string, bool or []string for env variable 'INT_VAR'")
 			})
@@ -125,10 +161,10 @@ func TestEnvExtractorExtractAll(t *testing.T) {
 
 				extractor := getExtractor(envsForErrorCases)
 
-				err := extractor.ExtractAll(EnvVarsMap{
-					StringEnv: NewEnvVar(&str),
-					IntEnv:    NewEnvVar(&my),
-				})
+				err := extractor.ExtractAllVars(
+					NewVar(StringEnv, &str),
+					NewVar(IntEnv, &my),
+				)
 
 				assertErr(err, "incorrect value slice pointer type 'struct'. Should be int, string, bool or []string for env variable 'INT_VAR'")
 			})
@@ -141,9 +177,9 @@ func TestEnvExtractorExtractAll(t *testing.T) {
 				IntEnv: "1not int",
 			}))
 
-			err := extractor.ExtractAll(EnvVarsMap{
-				IntEnv: NewEnvVar(&dest.Int),
-			})
+			err := extractor.ExtractAllVars(
+				NewVar(IntEnv, &dest.Int),
+			)
 
 			assertErr(err, "Cannot convert '1not int' to int for MY_INT_VAR")
 		})
@@ -153,10 +189,10 @@ func TestEnvExtractorExtractAll(t *testing.T) {
 
 			extractor := getExtractor(envsForErrorCases)
 
-			err := extractor.ExtractAll(EnvVarsMap{
-				StringEnv: NewEnvVar(nil),
-				IntEnv:    NewEnvVar(i),
-			})
+			err := extractor.ExtractAllVars(
+				NewVar(StringEnv, nil),
+				NewVar(IntEnv, i),
+			)
 
 			assertErr(
 				err,
@@ -177,12 +213,12 @@ func TestEnvExtractorExtractAll(t *testing.T) {
 				SliceEnv:  "first,second,third",
 			}))
 
-			err := extractor.ExtractAll(EnvVarsMap{
-				StringEnv: NewEnvVar(&dest.String),
-				IntEnv:    NewEnvVar(&dest.Int),
-				BoolEnv:   NewEnvVar(&dest.Bool),
-				SliceEnv:  NewEnvVar(&dest.StringSlice),
-			})
+			err := extractor.ExtractAllVars(
+				NewVar(StringEnv, &dest.String),
+				NewVar(IntEnv, &dest.Int),
+				NewVar(BoolEnv, &dest.Bool),
+				NewVar(SliceEnv, &dest.StringSlice),
+			)
 
 			assertErr(err)
 
@@ -200,37 +236,37 @@ func TestEnvExtractorExtractAll(t *testing.T) {
 				SliceEnv: "",
 			}))
 
-			presentVals := make([]*EnvVar, 0, 2)
+			presentVals := make([]*Var, 0, 2)
 
-			boolVal := NewEnvVar(&dest.Bool)
+			boolVal := NewVar(BoolEnv, &dest.Bool)
 			presentVals = append(presentVals, boolVal)
 
-			sliceVal := NewEnvVar(&dest.StringSlice)
+			sliceVal := NewVar(SliceEnv, &dest.StringSlice)
 			presentVals = append(presentVals, sliceVal)
 
-			notPresentsVals := make([]*EnvVar, 0, 2)
+			notPresentsVals := make([]*Var, 0, 2)
 
-			stringVal := NewEnvVar(&dest.String)
+			stringVal := NewVar(StringEnv, &dest.String)
 			notPresentsVals = append(notPresentsVals, stringVal)
 
-			intVal := NewEnvVar(&dest.Int)
+			intVal := NewVar(IntEnv, &dest.Int)
 			notPresentsVals = append(notPresentsVals, intVal)
 
-			err := extractor.ExtractAll(EnvVarsMap{
-				StringEnv: stringVal,
-				IntEnv:    intVal,
-				BoolEnv:   boolVal,
-				SliceEnv:  sliceVal,
-			})
+			err := extractor.ExtractAllVars(
+				stringVal,
+				intVal,
+				boolVal,
+				sliceVal,
+			)
 
 			assertErr(err)
 
 			for _, val := range presentVals {
-				require.True(t, val.Present, "should set present")
+				require.True(t, val.Present, "should set present for %s", val.Name)
 			}
 
 			for _, val := range notPresentsVals {
-				require.False(t, val.Present, "should not set present")
+				require.False(t, val.Present, "should not set present for %s", val.Name)
 			}
 
 			require.Empty(t, dest.String, "should not set val")
@@ -246,8 +282,8 @@ func TestEnvExtractorExtractAll(t *testing.T) {
 				SliceEnv: "first;second;third",
 			})).WithSliceSeparator(";")
 
-			err := extractor.ExtractAll(EnvVarsMap{
-				SliceEnv: NewEnvVar(&dest.StringSlice),
+			err := extractor.ExtractAll([]*Var{
+				NewVar(SliceEnv, &dest.StringSlice),
 			})
 
 			assertErr(err)
@@ -262,9 +298,9 @@ func TestEnvExtractorExtractAll(t *testing.T) {
 				prefix + IntEnv: "-22",
 			}).WithPrefixSeparator("")
 
-			err := extractor.ExtractAll(EnvVarsMap{
-				IntEnv: NewEnvVar(&dest.Int),
-			})
+			err := extractor.ExtractAllVars(
+				NewVar(IntEnv, &dest.Int),
+			)
 
 			assertErr(err)
 
