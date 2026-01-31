@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/user"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -31,6 +30,7 @@ import (
 	"github.com/deckhouse/lib-connection/pkg/settings"
 	"github.com/deckhouse/lib-connection/pkg/ssh/utils"
 	"github.com/deckhouse/lib-connection/pkg/ssh/utils/terminal"
+	"github.com/deckhouse/lib-connection/pkg/utils/defaults"
 	"github.com/deckhouse/lib-connection/pkg/utils/env"
 )
 
@@ -106,7 +106,7 @@ func (f *Flags) IsConflictBetweenFlags() error {
 
 func (f *Flags) FillDefaults() error {
 	if len(f.PrivateKeysPaths) == 0 && !f.forceNoPrivateKeys {
-		home, err := getHomeDir(f.envExtractor)
+		home, err := defaults.HomeDir(f.envExtractor)
 		if err != nil {
 			return err
 		}
@@ -215,7 +215,7 @@ func (f *Flags) userExtractor() func() (string, error) {
 			return *currentUser, nil
 		}
 
-		userName, err := getCurrentUser(f.envExtractor)
+		userName, err := defaults.CurrentUserName(f.envExtractor)
 		if err != nil {
 			return "", err
 		}
@@ -663,67 +663,6 @@ func (p *FlagsParser) getPasswordsFromUser(flags *Flags) (*passwordsFromUser, er
 	}
 
 	return res, nil
-}
-
-func getHomeDir(extractor *env.Extractor) (string, error) {
-	home := ""
-
-	extractor.StringWithoutPrefix("HOME", &home)
-
-	if home == "" {
-		var err error
-		home, err = os.UserHomeDir()
-		if err != nil {
-			return "", fmt.Errorf("Cannot get user home dir: %w", err)
-		}
-
-		if home == "" {
-			return "", fmt.Errorf("Cannot get user home dir: empty after call os.UserHomeDir")
-		}
-	}
-
-	var err error
-	home, err = filepath.Abs(home)
-	if err != nil {
-		return "", fmt.Errorf("Cannot get absolute path of home directory: %w", err)
-	}
-
-	stat, err := os.Stat(home)
-	if err != nil {
-		return "", fmt.Errorf("Cannot get user home dir stat: %w", err)
-	}
-
-	if !stat.IsDir() {
-		return "", fmt.Errorf("Cannot get user home dir: '%s' not a directory", home)
-	}
-
-	return home, nil
-}
-
-// getCurrentUser
-// returns current user name
-// first attempt get user from env
-// can be call multiple times because user.Current() cache user info
-func getCurrentUser(extractor *env.Extractor) (string, error) {
-	userName := ""
-
-	extractor.StringWithoutPrefix("USER", &userName)
-
-	if userName != "" {
-		return userName, nil
-	}
-
-	currentUser, err := user.Current()
-	if err != nil {
-		return "", fmt.Errorf("cannot get current user: %w", err)
-	}
-
-	userName = currentUser.Username
-	if userName == "" {
-		return "", fmt.Errorf("Cannot get current user: empty after call user.Current")
-	}
-
-	return userName, nil
 }
 
 func fileReader(path string, fileType string) (io.ReadCloser, error) {
