@@ -172,6 +172,10 @@ func (p *FlagsParser) ExtractConfigAfterParse(flags *Flags) (*Config, error) {
 
 	kubeConfigFile := flags.KubeConfig
 
+	if kubeConfigFile == "" && flags.KubeConfigContext != "" {
+		return nil, fmt.Errorf("Pass context flag --%s without kubeconfig path --%s ", kubeConfigContextFlag, kubeConfigFlag)
+	}
+
 	if kubeConfigFile != "" {
 		content, err := file.ReadFile(kubeConfigFile, "kube config", logger)
 		if err != nil {
