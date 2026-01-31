@@ -334,6 +334,102 @@ func TestExtractAll(t *testing.T) {
 	})
 }
 
+func TestBool(t *testing.T) {
+	type testCase struct {
+		name     string
+		envVar   string
+		expected bool
+	}
+
+	newCase := func(v string, expected bool) testCase {
+		return testCase{
+			name:     v,
+			envVar:   v,
+			expected: expected,
+		}
+	}
+
+	falseCase := func(v string) testCase {
+		return newCase(v, false)
+	}
+
+	trueCase := func(v string) testCase {
+		return newCase(v, true)
+	}
+
+	tests := []testCase{
+		{
+			name:     "empty",
+			envVar:   "",
+			expected: false,
+		},
+
+		{
+			name:     "all spaces",
+			envVar:   "    ",
+			expected: false,
+		},
+
+		falseCase("NO"),
+		falseCase("No"),
+		falseCase("no"),
+		falseCase("FALSE"),
+		falseCase("fALSe"),
+		falseCase("False"),
+		falseCase("false"),
+		falseCase("None"),
+		falseCase("NONE"),
+		falseCase("none"),
+		falseCase("0"),
+
+		trueCase("TRUE"),
+		trueCase("tRUe"),
+		trueCase("True"),
+		trueCase("true"),
+		trueCase("not empty string"),
+		trueCase("not_empty_string"),
+		trueCase(" not empty string with spaces "),
+	}
+
+	const envName = "TST_BOOL"
+
+	getExtractor := func(envs map[string]string) *Extractor {
+		return NewExtractor("", func(name string) (string, bool) {
+			value, ok := envs[name]
+			return value, ok
+		})
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			envs := map[string]string{
+				envName: tt.envVar,
+			}
+
+			var b bool
+
+			getExtractor(envs).Bool(envName, &b)
+
+			require.Equal(t, tt.expected, b, "should set correct val")
+		})
+	}
+
+	t.Run("empty extract all present set", func(t *testing.T) {
+		envs := map[string]string{
+			envName: "",
+		}
+
+		var b bool
+		boolVal := NewVar(envName, &b)
+
+		err := getExtractor(envs).ExtractAllVars(boolVal)
+		require.NoError(t, err, "should not return error")
+
+		require.False(t, b, "should correct val")
+		require.True(t, boolVal.Present, "should correct val")
+	})
+}
+
 func TestSimplifyPrefix(t *testing.T) {
 	require.Equal(t, "MY", SimplifyPrefix(" MY_"))
 }

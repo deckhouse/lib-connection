@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -146,14 +147,30 @@ func (e *Extractor) Strings(name string, destination *[]string) bool {
 	return true
 }
 
+var falseBoolValues = []string{
+	"false",
+	"no",
+	"none",
+	"0",
+}
+
 // Bool
+// trim spaces env and to lower value string
+// lower value string "false" "no" "none" "0" interpreter as false
 // returns that env is set
 func (e *Extractor) Bool(name string, destination *bool) bool {
 	strVar, ok := e.getVar(name)
 	if !ok {
 		return false
 	}
-	value := strVar != ""
+
+	valueLower := strings.TrimSpace(strings.ToLower(strVar))
+
+	value := valueLower != ""
+
+	if value && slices.Contains(falseBoolValues, valueLower) {
+		value = false
+	}
 
 	*destination = value
 
