@@ -141,6 +141,42 @@ func TestParseFlags(t *testing.T) {
 		},
 
 		{
+			name:      "unknown flags should processed",
+			passwords: nil,
+			arguments: []string{
+				"--ssh-host=192.168.0.1",
+				"--unknown=value",
+			},
+			hasParseErrorContains: "",
+			hasErrorContains:      "",
+
+			privateKeyExtractor: defaultPrivateKeyExtractor(currentHomeDir),
+
+			expected: &ConnectionConfig{
+				Config: &Config{
+					Mode: Mode{
+						ForceLegacy: false,
+						ForceModern: false,
+					},
+					User: currentUserName,
+					Port: intPtr(22),
+
+					PrivateKeys: []AgentPrivateKey{
+						defaultPrivateKey(currentHomeDir),
+					},
+
+					BastionUser: currentUserName,
+					BastionPort: intPtr(22),
+				},
+				Hosts: []Host{
+					{
+						Host: "192.168.0.1",
+					},
+				},
+			},
+		},
+
+		{
 			name:             "empty rewrite HOME env",
 			passwords:        nil,
 			arguments:        []string{},
@@ -669,16 +705,6 @@ sshBastionPassword: "not_secure_password_bastion"
 		},
 
 		{
-			name:      "unknown flag",
-			passwords: nil,
-			arguments: []string{
-				"--ssh-host=192.168.0.1",
-				"--unknown=value",
-			},
-			hasParseErrorContains: "unknown flag: --unknown",
-		},
-
-		{
 			name:      "incorrect flag type",
 			passwords: nil,
 			arguments: []string{
@@ -909,7 +935,7 @@ sshBastionPassword: "not_secure_password_bastion"
 			flags, err := parser.InitFlags(fset)
 			require.NoError(t, err, "init flags")
 
-			err = fset.Parse(testCase.arguments)
+			err = flags.Parse(testCase.arguments)
 			if testCase.hasParseErrorContains != "" {
 				require.Error(t, err, "should parse error")
 				require.Contains(t, err.Error(), testCase.hasParseErrorContains, "should parse error contains")
@@ -1127,9 +1153,13 @@ type testHelpParser struct {
 	parser *FlagsParser
 }
 
-func (p *testHelpParser) InitFlags(flagSet *flag.FlagSet) error {
-	_, err := p.parser.InitFlags(flagSet)
-	return err
+func (p *testHelpParser) InitFlags(flagSet *flag.FlagSet) (*flag.FlagSet, error) {
+	initFlags, err := p.parser.InitFlags(flagSet)
+	if err != nil {
+		return nil, err
+	}
+
+	return initFlags.baseFlags.FlagSet(), nil
 }
 
 type parseFlagsAndExtractConfigFlagSet struct {

@@ -16,6 +16,7 @@ package flags
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/name212/govalue"
 	flag "github.com/spf13/pflag"
@@ -23,16 +24,52 @@ import (
 	"github.com/deckhouse/lib-connection/pkg/utils/env"
 )
 
+type BaseFlagsOpts struct {
+	skipUnknownFlags bool
+}
+
+type BaseFlagsOpt func(f *BaseFlagsOpts)
+
+func BaseFlagsSkipUnknownFlags() BaseFlagsOpt {
+	return func(f *BaseFlagsOpts) {
+		f.skipUnknownFlags = true
+	}
+}
+
 type BaseFlags struct {
 	flagSet      *flag.FlagSet
 	envExtractor *env.Extractor
 }
 
-func NewBaseFlags(flagSet *flag.FlagSet, envExtractor *env.Extractor) *BaseFlags {
+// NewBaseFlags
+// contains copy of flagsSet
+func NewBaseFlags(flagSet *flag.FlagSet, envExtractor *env.Extractor, opts ...BaseFlagsOpt) *BaseFlags {
+	options := &BaseFlagsOpts{}
+	for _, o := range opts {
+		o(options)
+	}
+
+	set := *flagSet
+	if options.skipUnknownFlags {
+		set.ParseErrorsAllowlist.UnknownFlags = true
+	}
+
 	return &BaseFlags{
-		flagSet:      flagSet,
+		flagSet:      &set,
 		envExtractor: envExtractor,
 	}
+}
+
+func (f *BaseFlags) Parse(args []string) error {
+	if f == nil || f.flagSet == nil {
+		return fmt.Errorf("flags is not initialized. flagSet is nil")
+	}
+
+	if args == nil {
+		args = os.Args[1:]
+	}
+
+	return f.flagSet.Parse(args)
 }
 
 func (f *BaseFlags) IsInitialized() error {

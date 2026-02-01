@@ -17,6 +17,7 @@ package kube
 import (
 	"fmt"
 
+	"github.com/deckhouse/lib-dhctl/pkg/log"
 	flag "github.com/spf13/pflag"
 	"k8s.io/client-go/tools/clientcmd"
 
@@ -44,13 +45,20 @@ type Flags struct {
 	baseFlags *baseflags.BaseFlags
 }
 
-func (f *Flags) IsConflictBetweenFlags() error {
-	envsExtractor, err := f.baseFlags.ShouldEnvExtractor()
-	if err != nil {
-		return err
-	}
+// Parse
+// pass nil if we should use os.Args
+func (f *Flags) Parse(args []string) error {
+	// Parse check that flags is initialized
+	return f.baseFlags.Parse(args)
+}
 
+func (f *Flags) IsConflictBetweenFlags() error {
 	if f.KubeConfig != "" && f.KubeConfigInCluster {
+		envsExtractor, err := f.baseFlags.ShouldEnvExtractor()
+		if err != nil {
+			return err
+		}
+
 		return fmt.Errorf(
 			"Cannot use both --%s and --%s or envs %s and %s at the same time",
 			kubeConfigFlag,
@@ -104,7 +112,7 @@ func NewFlagsParser(sett settings.Settings) *FlagsParser {
 
 // InitFlags
 // init flag.FlagSet and return struct with flags where flag.FlagSet parsed
-// should call before flag.Parse or flag.FlagSet.Parse
+// Flags contains copy of set. For parse use Flags.Parse
 // if set is parsed returns error
 func (p *FlagsParser) InitFlags(set *flag.FlagSet) (*Flags, error) {
 	if set.Parsed() {
@@ -114,8 +122,10 @@ func (p *FlagsParser) InitFlags(set *flag.FlagSet) (*Flags, error) {
 	envsExtractor := p.NewEnvsExtractor()
 
 	flags := &Flags{
-		baseFlags: baseflags.NewBaseFlags(set, envsExtractor),
+		baseFlags: baseflags.NewBaseFlags(set, envsExtractor, baseflags.BaseFlagsSkipUnknownFlags()),
 	}
+
+	set = flags.baseFlags.FlagSet()
 
 	set.StringVar(
 		&flags.KubeConfig,
@@ -128,7 +138,7 @@ func (p *FlagsParser) InitFlags(set *flag.FlagSet) (*Flags, error) {
 	)
 
 	set.StringVar(
-		&flags.KubeConfig,
+		&flags.KubeConfigContext,
 		kubeConfigContextFlag,
 		"",
 		envsExtractor.AddEnvToUsage(
@@ -170,27 +180,45 @@ func (p *FlagsParser) ExtractConfigAfterParse(flags *Flags) (*Config, error) {
 	sett := p.Settings()
 	logger := sett.Logger()
 
-	kubeConfigFile := flags.KubeConfig
-
-	if kubeConfigFile == "" && flags.KubeConfigContext != "" {
-		return nil, fmt.Errorf("Pass context flag --%s without kubeconfig path --%s ", kubeConfigContextFlag, kubeConfigFlag)
-	}
-
-	if kubeConfigFile != "" {
-		content, err := file.ReadFile(kubeConfigFile, "kube config", logger)
-		if err != nil {
-			return nil, err
-		}
-
-		_, err = clientcmd.Load(content)
-		if err != nil {
-			return nil, fmt.Errorf("Cannot parse kube config file '%s': %w", kubeConfigFile, err)
-		}
+	if err := p.validateKubeConfigWithContext(flags, logger); err != nil {
+		return nil, err
 	}
 
 	return &Config{
-		KubeConfig:          kubeConfigFile,
+		KubeConfig:          flags.KubeConfig,
 		KubeConfigContext:   flags.KubeConfigContext,
 		KubeConfigInCluster: flags.KubeConfigInCluster,
 	}, nil
+}
+
+func (p *FlagsParser) validateKubeConfigWithContext(flags *Flags, logger log.Logger) error {
+	kubeConfigFile := flags.KubeConfig
+	context := flags.KubeConfigContext
+
+	if kubeConfigFile == "" {
+		if context != "" {
+			return fmt.Errorf("Pass context flag --%s without kubeconfig path --%s ", kubeConfigContextFlag, kubeConfigFlag)
+		}
+
+		return nil
+	}
+
+	content, err := file.ReadFile(kubeConfigFile, "kube config", logger)
+	if err != nil {
+		return err
+	}
+
+	cfg, err := clientcmd.Load(content)
+	if err != nil {
+		return fmt.Errorf("Cannot parse kube config file '%s': %w", kubeConfigFile, err)
+	}
+
+	if context != "" {
+		_, ok := cfg.Contexts[context]
+		if !ok {
+			return fmt.Errorf("Cannot find context '%s' in kube config %s", context, kubeConfigFile)
+		}
+	}
+
+	return nil
 }

@@ -16,7 +16,6 @@ package config
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -85,6 +84,13 @@ type Flags struct {
 	forceNoPrivateKeys bool
 
 	baseFlags *baseflags.BaseFlags
+}
+
+// Parse
+// pass nil if we should use os.Args
+func (f *Flags) Parse(args []string) error {
+	// Parse check that flags is initialized
+	return f.baseFlags.Parse(args)
 }
 
 func (f *Flags) IsConflictBetweenFlags() error {
@@ -278,8 +284,10 @@ func (p *FlagsParser) InitFlags(set *flag.FlagSet) (*Flags, error) {
 	envsExtractor := p.NewEnvsExtractor()
 
 	flags := &Flags{
-		baseFlags: baseflags.NewBaseFlags(set, envsExtractor),
+		baseFlags: baseflags.NewBaseFlags(set, envsExtractor, baseflags.BaseFlagsSkipUnknownFlags()),
 	}
+
+	set = flags.baseFlags.FlagSet()
 
 	set.StringSliceVar(
 		&flags.PrivateKeysPaths,
@@ -427,7 +435,7 @@ func (p *FlagsParser) InitFlags(set *flag.FlagSet) (*Flags, error) {
 
 // ExtractConfigAfterParse
 // extract ConnectionConfig from flags
-// should call after InitFlags and flag.Parse or flag.FlagSet.Parse
+// Flags contains copy of set. For parse use Flags.Parse
 // if flag.FlagSet in Flags is not parse returns error
 func (p *FlagsParser) ExtractConfigAfterParse(flags *Flags, opts ...ValidateOption) (*ConnectionConfig, error) {
 	if err := flags.baseFlags.IsInitialized(); err != nil {
@@ -552,11 +560,8 @@ func (p *FlagsParser) ParseFlagsAndExtractConfig(arguments []string, set *flag.F
 		return nil, err
 	}
 
-	if arguments == nil {
-		arguments = os.Args[1:]
-	}
-
-	if err := set.Parse(arguments); err != nil {
+	// nil arguments will rewrite from os.Args
+	if err := flags.Parse(arguments); err != nil {
 		return nil, err
 	}
 

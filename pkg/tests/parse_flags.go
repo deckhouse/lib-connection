@@ -34,7 +34,7 @@ import (
 )
 
 type TestFlagsParser interface {
-	InitFlags(*flag.FlagSet) error
+	InitFlags(*flag.FlagSet) (*flag.FlagSet, error)
 }
 
 type TestFlagsParserHelpProvider func(s settings.Settings, envsPrefix string) TestFlagsParser
@@ -140,10 +140,11 @@ func AssertParseFlagsHelp(t *testing.T, params AssertParseFlagsHelpParams) {
 
 	flagSet := flag.NewFlagSet(params.Name, flag.ContinueOnError)
 
-	err = params.Provider(sett, "MY_PREFIX").InitFlags(flagSet)
+	parser := params.Provider(sett, "MY_PREFIX")
+	newFlagsSet, err := parser.InitFlags(flagSet)
 	assertNoError(t, "Flags init failed", err)
 
-	err = flagSet.Parse([]string{"--help"})
+	err = newFlagsSet.Parse([]string{"--help"})
 	if !errors.Is(err, flag.ErrHelp) {
 		assertNoError(t, "Flags parse failed. Should return ErrHelp", fmt.Errorf("not help: %w", err))
 	}
