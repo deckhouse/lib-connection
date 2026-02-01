@@ -84,11 +84,6 @@ type SSHProvider interface {
 	Cleanup(ctx context.Context) error
 }
 
-type Provider interface {
-	SSHProvider() SSHProvider
-	Cleanup(ctx context.Context) error
-}
-
 type Interface interface {
 	Command(name string, args ...string) Command
 	File() File

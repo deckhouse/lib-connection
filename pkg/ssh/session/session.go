@@ -323,3 +323,115 @@ func (s *Session) selectNewHost() {
 
 	s.host = host.Host
 }
+
+func Compare(first, second *Session) bool {
+	if first == nil && second == nil {
+		return true
+	}
+
+	if first == nil {
+		return false
+	}
+
+	if second == nil {
+		return false
+	}
+
+	if first.User != second.User {
+		return false
+	}
+
+	if first.Port != second.Port {
+		return false
+	}
+
+	if first.BecomePass != second.BecomePass {
+		return false
+	}
+
+	if first.BastionUser != second.BastionUser {
+		return false
+	}
+
+	if first.BastionHost != second.BastionHost {
+		return false
+	}
+
+	if first.BastionPort != second.BastionPort {
+		return false
+	}
+
+	if first.BastionPassword != second.BastionPassword {
+		return false
+	}
+
+	if first.ExtraArgs != second.ExtraArgs {
+		return false
+	}
+
+	firstAvailableHosts := first.AvailableHosts()
+	secondAvailableHosts := second.AvailableHosts()
+
+	if len(firstAvailableHosts) != len(secondAvailableHosts) {
+		return false
+	}
+
+	firstHosts := make(map[string]struct{}, len(firstAvailableHosts))
+	for _, host := range firstAvailableHosts {
+		firstHosts[host.Host] = struct{}{}
+	}
+
+	for _, host := range secondAvailableHosts {
+		if _, ok := firstHosts[host.Host]; !ok {
+			return false
+		}
+	}
+
+	return true
+}
+
+type SessionWithPrivateKeys struct {
+	Session *Session
+	Keys    []AgentPrivateKey
+}
+
+func CompareWithKeys(first, second *SessionWithPrivateKeys) bool {
+	if first == nil && second == nil {
+		return true
+	}
+
+	if first == nil {
+		return false
+	}
+
+	if second == nil {
+		return false
+	}
+
+	if !Compare(first.Session, second.Session) {
+		return false
+	}
+
+	if len(first.Keys) != len(second.Keys) {
+		return false
+	}
+
+	firstKeys := make(map[string]struct{}, len(first.Keys))
+
+	for _, key := range first.Keys {
+		firstKeys[privateKeyString(key)] = struct{}{}
+	}
+
+	for _, key := range second.Keys {
+		str := privateKeyString(key)
+		if _, ok := firstKeys[str]; !ok {
+			return false
+		}
+	}
+
+	return true
+}
+
+func privateKeyString(key AgentPrivateKey) string {
+	return fmt.Sprintf("%s#%s", key.Key, key.Passphrase)
+}
