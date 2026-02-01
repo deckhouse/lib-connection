@@ -27,7 +27,7 @@ import (
 )
 
 type (
-	EnvsLookupFunc func(name string) (string, bool)
+	LookupFunc func(name string) (string, bool)
 )
 
 // SimplifyPrefix
@@ -58,7 +58,7 @@ func NewOsExtractor(prefix string) *Extractor {
 // if need we use WithPrefixSeparator method for set your own or set to empty
 // by default slice string extractor split env string by , symbol
 // if need we use WithSliceSeparator method for set your own slice separator
-func NewExtractor(prefix string, lookupFunc EnvsLookupFunc) *Extractor {
+func NewExtractor(prefix string, lookupFunc LookupFunc) *Extractor {
 	return &Extractor{
 		prefixSeparator: "_",
 		sliceSeparator:  ",",

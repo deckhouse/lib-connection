@@ -38,11 +38,11 @@ func TestParseFlags(t *testing.T) {
 
 		arguments []string
 
-		envsPrefix string
-		envs       map[string]string
+		envsPrefix            string
+		envs                  map[string]string
+		noUsePredefinedLookup bool
 
-		hasErrorContains      string
-		hasParseErrorContains string
+		hasErrorContains string
 
 		expected *Config
 		before   func(*testing.T, *test)
@@ -53,9 +53,41 @@ func TestParseFlags(t *testing.T) {
 		ts.arguments = append(ts.arguments, fmt.Sprintf("--kubeconfig=%s", path))
 	}
 
+	appendEnv := func(ts *test, env string, val string, noPrefix bool) {
+		envs := ts.envs
+		if len(envs) == 0 {
+			envs = make(map[string]string)
+		}
+
+		prefix := fmt.Sprintf("%s_", ts.envsPrefix)
+		if noPrefix {
+			prefix = ""
+		}
+
+		key := prefix + env
+		envs[key] = val
+		ts.envs = envs
+	}
+
+	appendKubeConfigEnv := func(ts *test, path string) {
+		appendEnv(ts, "KUBE_CONFIG", path, false)
+	}
+
+	appendKubeConfigDefault := func(ts *test, path string) {
+		appendEnv(ts, "KUBECONFIG", path, true)
+	}
+
 	createValidConfigAndPassArg := func(t *testing.T, ts *test) {
 		path := createValidTestConfig(t, ts.test)
 		appendKubeConfigArgument(ts, path)
+		if ts.expected != nil {
+			ts.expected.KubeConfig = path
+		}
+	}
+
+	createValidConfigAndPassEnv := func(t *testing.T, ts *test) {
+		path := createValidTestConfig(t, ts.test)
+		appendKubeConfigEnv(ts, path)
 		if ts.expected != nil {
 			ts.expected.KubeConfig = path
 		}
@@ -67,10 +99,8 @@ func TestParseFlags(t *testing.T) {
 
 			arguments: nil,
 
-			hasErrorContains:      "",
-			hasParseErrorContains: "",
-
-			expected: &Config{},
+			hasErrorContains: "",
+			expected:         &Config{},
 		},
 
 		{
@@ -80,9 +110,7 @@ func TestParseFlags(t *testing.T) {
 				"--kube-client-from-cluster",
 			},
 
-			hasErrorContains:      "",
-			hasParseErrorContains: "",
-
+			hasErrorContains: "",
 			expected: &Config{
 				KubeConfigInCluster: true,
 			},
@@ -97,10 +125,8 @@ func TestParseFlags(t *testing.T) {
 
 			before: createValidConfigAndPassArg,
 
-			hasErrorContains:      "",
-			hasParseErrorContains: "",
-
-			expected: &Config{},
+			hasErrorContains: "",
+			expected:         &Config{},
 		},
 
 		{
@@ -110,10 +136,8 @@ func TestParseFlags(t *testing.T) {
 
 			before: createValidConfigAndPassArg,
 
-			hasErrorContains:      "",
-			hasParseErrorContains: "",
-
-			expected: &Config{},
+			hasErrorContains: "",
+			expected:         &Config{},
 		},
 
 		{
@@ -125,11 +149,127 @@ func TestParseFlags(t *testing.T) {
 
 			before: createValidConfigAndPassArg,
 
-			hasErrorContains:      "",
-			hasParseErrorContains: "",
-
+			hasErrorContains: "",
 			expected: &Config{
 				KubeConfigContext: "clean",
+			},
+		},
+
+		{
+			name: "get from env",
+
+			arguments: nil,
+
+			envsPrefix: "MY_ALL",
+
+			before: func(t *testing.T, ts *test) {
+				createValidConfigAndPassEnv(t, ts)
+				appendEnv(ts, "KUBE_CONFIG_CONTEXT", "clean", false)
+			},
+
+			hasErrorContains: "",
+			expected: &Config{
+				KubeConfigContext: "clean",
+			},
+		},
+
+		{
+			name: "rewrite from env",
+
+			arguments: []string{
+				"--kubeconfig=/tmp/not_exists_4hr8th8.yaml",
+				"--kubeconfig-context=incorrect",
+			},
+
+			envsPrefix: "MY_REWRITE",
+
+			before: func(t *testing.T, ts *test) {
+				createValidConfigAndPassEnv(t, ts)
+				appendEnv(ts, "KUBE_CONFIG_CONTEXT", "clean", false)
+			},
+
+			hasErrorContains: "",
+			expected: &Config{
+				KubeConfigContext: "clean",
+			},
+		},
+
+		{
+			name: "use os lookup env",
+
+			arguments: []string{
+				"--kube-client-from-cluster",
+			},
+
+			envsPrefix:            "OS_LOOKUP_KUBE",
+			noUsePredefinedLookup: true,
+
+			before: func(t *testing.T, ts *test) {
+				tests.SetEnvs(t, map[string]string{
+					fmt.Sprintf("%s_KUBE_CLIENT_FROM_CLUSTER", ts.envsPrefix): "yes",
+				})
+			},
+
+			hasErrorContains: "",
+			expected: &Config{
+				KubeConfigInCluster: true,
+			},
+		},
+
+		{
+			name: "get from KUBECONFIG env without passed kubeconfig path",
+
+			arguments: nil,
+
+			envsPrefix: "MY_DEFAULT",
+
+			before: func(t *testing.T, ts *test) {
+				path := createValidTestConfig(t, ts.test)
+				appendKubeConfigDefault(ts, path)
+				ts.expected.KubeConfig = path
+			},
+
+			hasErrorContains: "",
+			expected:         &Config{},
+		},
+
+		{
+			name: "set KUBECONFIG no rewrite passed kubeconfig path",
+
+			arguments: []string{
+				"--kubeconfig-context=clean",
+			},
+
+			envsPrefix: "MY_DEFAULT_PASSED",
+
+			before: func(t *testing.T, ts *test) {
+				createValidConfigAndPassArg(t, ts)
+				appendKubeConfigDefault(ts, "/tmp/not_exists.48t48g.yaml")
+			},
+
+			hasErrorContains: "",
+			expected: &Config{
+				KubeConfigContext: "clean",
+			},
+		},
+
+		{
+			name: "set KUBECONFIG no rewrite in cluster flag",
+
+			arguments: []string{
+				"--kube-client-from-cluster",
+			},
+
+			envsPrefix: "MY_DEFAULT_IN_CLUSTER",
+
+			before: func(t *testing.T, ts *test) {
+				path := createValidTestConfig(t, ts.test)
+				appendKubeConfigDefault(ts, path)
+			},
+
+			hasErrorContains: "",
+			expected: &Config{
+				KubeConfigInCluster: true,
 			},
 		},
 
@@ -142,8 +282,7 @@ func TestParseFlags(t *testing.T) {
 
 			before: createValidConfigAndPassArg,
 
-			hasErrorContains:      "Cannot use both --kubeconfig and --kube-client-from-cluster or envs KUBE_CONFIG and KUBE_CLIENT_FROM_CLUSTER at the same time",
-			hasParseErrorContains: "",
+			hasErrorContains: "Cannot use both --kubeconfig and --kube-client-from-cluster or envs KUBE_CONFIG and KUBE_CLIENT_FROM_CLUSTER at the same time",
 		},
 
 		{
@@ -155,8 +294,7 @@ func TestParseFlags(t *testing.T) {
 
 			before: createValidConfigAndPassArg,
 
-			hasErrorContains:      "Cannot find context 'not-exists' in kube config",
-			hasParseErrorContains: "",
+			hasErrorContains: "Cannot find context 'not-exists' in kube config",
 		},
 
 		{
@@ -166,8 +304,7 @@ func TestParseFlags(t *testing.T) {
 				"--kubeconfig-context=not-exists",
 			},
 
-			hasErrorContains:      "Pass context flag --kubeconfig-context without kubeconfig path --kubeconfig",
-			hasParseErrorContains: "",
+			hasErrorContains: "Pass context flag --kubeconfig-context without kubeconfig path --kubeconfig",
 		},
 
 		{
@@ -177,8 +314,7 @@ func TestParseFlags(t *testing.T) {
 				appendKubeConfigArgument(ts, "/tmp/not-exsists-2dfr.yaml")
 			},
 
-			hasErrorContains:      "Cannot get kube config file info for /tmp/not-exsists-2dfr.yaml",
-			hasParseErrorContains: "",
+			hasErrorContains: "Cannot get kube config file info for /tmp/not-exsists-2dfr.yaml",
 		},
 
 		{
@@ -189,8 +325,22 @@ func TestParseFlags(t *testing.T) {
 				appendKubeConfigArgument(ts, dir)
 			},
 
-			hasErrorContains:      "should be regular file",
-			hasParseErrorContains: "",
+			hasErrorContains: "should be regular file",
+		},
+
+		{
+			name: "pass kube config and from cluster envs",
+
+			arguments: nil,
+
+			envsPrefix: "MY_KUBE_FROM_CLUSTER",
+
+			before: func(t *testing.T, ts *test) {
+				createValidConfigAndPassArg(t, ts)
+				appendEnv(ts, "KUBE_CLIENT_FROM_CLUSTER", "true", false)
+			},
+
+			hasErrorContains: "Cannot use both --kubeconfig and --kube-client-from-cluster or envs MY_KUBE_FROM_CLUSTER_KUBE_CONFIG and MY_KUBE_FROM_CLUSTER_KUBE_CLIENT_FROM_CLUSTER at the same time",
 		},
 	}
 
@@ -220,10 +370,12 @@ func TestParseFlags(t *testing.T) {
 			parser := NewFlagsParser(sett)
 			parser.WithEnvsPrefix(testCase.envsPrefix)
 			if len(testCase.envs) > 0 {
-				parser.WithEnvsLookup(func(name string) (string, bool) {
-					val, ok := testCase.envs[name]
-					return val, ok
-				})
+				if !testCase.noUsePredefinedLookup {
+					parser.WithEnvsLookup(func(name string) (string, bool) {
+						val, ok := testCase.envs[name]
+						return val, ok
+					})
+				}
 			}
 
 			flagSetName := strings.ReplaceAll(testCase.name, " ", "-")
@@ -235,9 +387,7 @@ func TestParseFlags(t *testing.T) {
 			require.NoError(t, err, "init flags")
 
 			err = flags.Parse(testCase.arguments)
-			if assertError(t, err, testCase.hasParseErrorContains) {
-				return
-			}
+			require.NoError(t, err, "should parse flags")
 
 			config, err := parser.ExtractConfigAfterParse(flags)
 			if assertError(t, err, testCase.hasErrorContains) {

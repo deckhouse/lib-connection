@@ -26,7 +26,7 @@ import (
 type BaseParser struct {
 	envsPrefix string
 	sett       settings.Settings
-	envsLookup env.EnvsLookupFunc
+	envsLookup env.LookupFunc
 }
 
 func NewBaseParser(sett settings.Settings) *BaseParser {
@@ -47,7 +47,7 @@ func (p *BaseParser) WithEnvsPrefix(envsPrefix string) {
 	p.envsPrefix = env.SimplifyPrefix(envsPrefix)
 }
 
-func (p *BaseParser) WithEnvsLookup(lookup env.EnvsLookupFunc) {
+func (p *BaseParser) WithEnvsLookup(lookup env.LookupFunc) {
 	if govalue.Nil(lookup) {
 		p.sett.Logger().WarnF("Envs lookup function is nil. Skip set ask function.")
 		return
