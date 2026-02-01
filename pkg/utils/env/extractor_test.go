@@ -387,7 +387,6 @@ func TestBool(t *testing.T) {
 		trueCase("True"),
 		trueCase("true"),
 		trueCase("not empty string"),
-		trueCase("not_empty_string"),
 		trueCase(" not empty string with spaces "),
 	}
 

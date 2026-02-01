@@ -18,6 +18,7 @@ import (
 	"fmt"
 
 	"github.com/deckhouse/lib-dhctl/pkg/log"
+	"github.com/name212/govalue"
 	flag "github.com/spf13/pflag"
 	"k8s.io/client-go/tools/clientcmd"
 
@@ -189,6 +190,28 @@ func (p *FlagsParser) ExtractConfigAfterParse(flags *Flags) (*Config, error) {
 		KubeConfigContext:   flags.KubeConfigContext,
 		KubeConfigInCluster: flags.KubeConfigInCluster,
 	}, nil
+}
+
+// ParseFlagsAndExtractConfig
+// initialize, parse and extract ConnectionConfig from flags
+// set flag.FlagSet can be nil. If nil, func initialize new flag.FlagSet
+// if arguments is nil extract arguments from os.Args
+func (p *FlagsParser) ParseFlagsAndExtractConfig(arguments []string, set *flag.FlagSet) (*Config, error) {
+	if govalue.Nil(set) {
+		set = flag.NewFlagSet("kube", flag.ExitOnError)
+	}
+
+	flags, err := p.InitFlags(set)
+	if err != nil {
+		return nil, err
+	}
+
+	// nil arguments will rewrite from os.Args
+	if err := flags.Parse(arguments); err != nil {
+		return nil, err
+	}
+
+	return p.ExtractConfigAfterParse(flags)
 }
 
 func (p *FlagsParser) validateKubeConfigWithContext(flags *Flags, logger log.Logger) error {

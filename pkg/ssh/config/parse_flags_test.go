@@ -1102,7 +1102,7 @@ func TestParseFlagsAndExtractConfigNoArgs(t *testing.T) {
 		strings.Join(testArgs, " "),
 	)
 
-	t.Logf("os.Args after parse: %s", strings.Join(testArgs, " "))
+	fmt.Printf("os.Args after parse: %s\n", strings.Join(testArgs, " "))
 
 	params := defaultArgsForParseFlagsAndExtractConfig(t, "without_args", &testPrivateKey{
 		path:            privateKeyPath,

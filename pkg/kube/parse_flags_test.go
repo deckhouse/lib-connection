@@ -16,6 +16,8 @@ package kube
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -245,6 +247,202 @@ func TestParseFlags(t *testing.T) {
 			require.Equal(t, testCase.expected, config, "should valid config")
 		})
 	}
+
+	t.Run("ParseFlagsAndExtractConfig", func(t *testing.T) {
+		t.Run("with args and no FlagSet", func(t *testing.T) {
+			assertParseAndExtract(t, assertParseAndExtractParams{
+				envsPrefix: "ARGS_NO_FLAG_SET",
+				arguments: []string{
+					"--kube-client-from-cluster",
+				},
+				expected: &Config{
+					KubeConfigInCluster: true,
+				},
+			})
+		})
+
+		t.Run("with args and with FlagSet", func(t *testing.T) {
+			flagSet := newParseFlagsAndExtractConfigFlagSet("test-connection-flagset")
+
+			args := []string{
+				"--kube-client-from-cluster",
+			}
+
+			args = append(args, flagSet.additionalArguments()...)
+
+			assertParseAndExtract(t, assertParseAndExtractParams{
+				envsPrefix: "ARGS_FLAG_SET",
+				arguments:  args,
+				flagSet:    flagSet.flagSet,
+				expected: &Config{
+					KubeConfigInCluster: true,
+				},
+			})
+
+			flagSet.assertAdditionalFlagsParsed(t)
+		})
+
+		t.Run("without args and with FlagSet", func(t *testing.T) {
+			tst := tests.ShouldNewTest(t, t.Name())
+			kubeConfigPath := createValidTestConfig(t, tst)
+
+			args := []string{
+				fmt.Sprintf("--kubeconfig=%s", kubeConfigPath),
+				"--kubeconfig-context=clean",
+			}
+
+			// use subtest for safe rewrite os.Args
+			// we cannot use pass args with -args because we can run test from IDE
+			//nolint:gosec
+			cmd := exec.Command(os.Args[0], "-test.run=TestParseKubeFlagsAndExtractConfigNoArgs")
+			cmd.Env = append(
+				os.Environ(),
+				fmt.Sprintf("TEST_NO_ARGS_KUBE=%s",
+					strings.Join(args, " "),
+				),
+			)
+
+			output, err := cmd.CombinedOutput()
+			require.NoError(
+				t,
+				err,
+				"TestParseKubeFlagsAndExtractConfigNoArgs should run without error: %s",
+				string(output),
+			)
+
+			tst.GetLogger().InfoF("Got output from TestParseFlagsAndExtractConfigNoArgs:\n%s", string(output))
+		})
+	})
+}
+
+func TestParseFlagsNoInitialize(t *testing.T) {
+	getParser := func(t *testing.T) *FlagsParser {
+		test := tests.ShouldNewTest(t, tests.Name(t))
+		return NewFlagsParser(test.Settings())
+	}
+
+	assertError := func(t *testing.T, config *Config, err error, contains string) {
+		require.Error(t, err, "should not have an error")
+		require.Contains(t, err.Error(), contains)
+		require.Nil(t, config)
+	}
+
+	t.Run("Extract without initialize", func(t *testing.T) {
+		flags := &Flags{
+			Config: Config{
+				KubeConfigContext: "clean",
+				KubeConfig:        "/tmp/not-exsists-5jfr.yaml",
+			},
+		}
+
+		parser := getParser(t)
+		config, err := parser.ExtractConfigAfterParse(flags)
+		assertError(t, config, err, "Call InitFlags first and pass Flags from result of InitFlags")
+	})
+
+	t.Run("Extract from no parsed flagset", func(t *testing.T) {
+		flagSet := flag.NewFlagSet("no-parsed", flag.ContinueOnError)
+		parser := getParser(t)
+		flags, err := parser.InitFlags(flagSet)
+		require.NoError(t, err, "init flags should initialized")
+		config, err := parser.ExtractConfigAfterParse(flags)
+		assertError(t, config, err, "flagsSet is not parsed. Call flag.Parse or flag.FlagSet.Parse before extract config")
+	})
+
+	t.Run("Init config if flags already parsed", func(t *testing.T) {
+		flagSet := newParseFlagsAndExtractConfigFlagSet("already-parsed")
+		flagSet.parseOnlyAdditional(t)
+
+		parser := getParser(t)
+		flags, err := parser.InitFlags(flagSet.flagSet)
+		assertError(t, nil, err, "Flags already parsed")
+		require.Nil(t, flags, "flags should be nil")
+	})
+
+	t.Run("ParseFlagsAndExtractConfig if flags already parsed", func(t *testing.T) {
+		flagSet := newParseFlagsAndExtractConfigFlagSet("already-parsed-parse-extract")
+		flagSet.parseOnlyAdditional(t)
+
+		parser := getParser(t)
+		config, err := parser.ParseFlagsAndExtractConfig(make([]string, 0), flagSet.flagSet)
+		assertError(t, config, err, "Flags already parsed")
+	})
+}
+
+func TestParseKubeFlagsAndExtractConfigNoArgs(t *testing.T) {
+	argsStr, ok := os.LookupEnv("TEST_NO_ARGS_KUBE")
+	argsStr = strings.TrimSpace(argsStr)
+
+	if !ok || argsStr == "" {
+		t.Skip("Run TestParseKubeFlagsAndExtractConfigNoArgs directly")
+	}
+
+	// split by -- for safe process arguments with spaces
+	argsParts := strings.Split(argsStr, "--")
+	require.NotEmpty(t, argsParts, "args should not be empty")
+
+	testArgs := make([]string, 0, len(argsParts))
+	for _, arg := range argsParts {
+		arg = strings.TrimSpace(arg)
+		if arg == "" {
+			continue
+		}
+
+		if !strings.HasPrefix(arg, "--") {
+			arg = fmt.Sprintf("--%s", arg)
+		}
+
+		testArgs = append(testArgs, arg)
+	}
+
+	const kubeConfigArg = "--kubeconfig="
+
+	kubeConfigPath := ""
+
+	for _, arg := range testArgs {
+		if strings.HasPrefix(arg, kubeConfigArg) {
+			kubeConfigPath = strings.TrimPrefix(arg, kubeConfigArg)
+			kubeConfigPath = strings.TrimSpace(kubeConfigPath)
+			break
+		}
+	}
+
+	require.NotEmpty(
+		t,
+		kubeConfigPath,
+		"kubeconfig path should present in args: %v",
+		strings.Join(testArgs, " "),
+	)
+
+	fmt.Printf("os.Args after parse: %s\n", strings.Join(testArgs, " "))
+
+	flagSet := newParseFlagsAndExtractConfigFlagSet("test-connection-without-args")
+
+	require.Len(t, flagSet.arguments, 1, "should add additional arguments")
+
+	oldArgs := os.Args
+	t.Cleanup(func() {
+		os.Args = oldArgs
+	})
+
+	withAdditional := []string{
+		os.Args[0],
+		flagSet.arguments[0],
+	}
+
+	withAdditional = append(withAdditional, testArgs...)
+	os.Args = withAdditional
+
+	assertParseAndExtract(t, assertParseAndExtractParams{
+		envsPrefix: "NO_ARGS",
+		flagSet:    flagSet.flagSet,
+		expected: &Config{
+			KubeConfig:        kubeConfigPath,
+			KubeConfigContext: "clean",
+		},
+	})
+
+	flagSet.assertAdditionalFlagsParsed(t)
 }
 
 func TestParseFlagsHelp(t *testing.T) {
@@ -302,4 +500,58 @@ func createValidTestConfig(t *testing.T, test *tests.Test) string {
 	require.NoError(t, err, "marshal kube config")
 
 	return test.MustCreateTmpFile(t, string(content), false, "kubeconfig.yaml")
+}
+
+type parseFlagsAndExtractConfigFlagSet struct {
+	arguments       []string
+	additionalParam string
+	flagSet         *flag.FlagSet
+}
+
+func newParseFlagsAndExtractConfigFlagSet(name string) *parseFlagsAndExtractConfigFlagSet {
+	res := &parseFlagsAndExtractConfigFlagSet{}
+
+	flagSet := flag.NewFlagSet(name, flag.ContinueOnError)
+	flagSet.StringVar(&res.additionalParam, "my-param", "", "test argument")
+
+	res.flagSet = flagSet
+
+	res.arguments = append(res.arguments, res.additionalArguments()...)
+
+	return res
+}
+
+func (s *parseFlagsAndExtractConfigFlagSet) additionalArguments() []string {
+	return []string{
+		"--my-param=val",
+	}
+}
+
+func (s *parseFlagsAndExtractConfigFlagSet) assertAdditionalFlagsParsed(t *testing.T) {
+	require.Equal(t, s.additionalParam, "val", "should parse additional argument")
+}
+
+func (s *parseFlagsAndExtractConfigFlagSet) parseOnlyAdditional(t *testing.T) {
+	err := s.flagSet.Parse(s.additionalArguments())
+	require.NoError(t, err, "should parse only additional flags")
+	s.assertAdditionalFlagsParsed(t)
+}
+
+type assertParseAndExtractParams struct {
+	envsPrefix string
+	arguments  []string
+	flagSet    *flag.FlagSet
+	expected   *Config
+}
+
+func assertParseAndExtract(t *testing.T, params assertParseAndExtractParams) {
+	tst := tests.ShouldNewTest(t, t.Name())
+
+	parser := NewFlagsParser(tst.Settings())
+	parser.WithEnvsPrefix(params.envsPrefix)
+
+	config, err := parser.ParseFlagsAndExtractConfig(params.arguments, params.flagSet)
+	require.NoError(t, err, "should parse and extract")
+
+	require.Equal(t, params.expected, config, "config should be equal")
 }
