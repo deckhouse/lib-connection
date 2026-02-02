@@ -104,8 +104,12 @@ func startContainerAndClientAndKind(t *testing.T, test *tests.Test, opts ...test
 	kindCluster := tests.CreateKINDCluster(t, &tests.KINDClusterCreateParams{
 		Test:        test,
 		ClusterName: "kube-proxy",
-		SSHClient:   sshClient,
-		Container:   container,
+		Containers: []*tests.SSHContainersForKind{
+			{
+				Client:    sshClient,
+				Container: container,
+			},
+		},
 	})
 
 	kindCluster.RegisterCleanup(t)
