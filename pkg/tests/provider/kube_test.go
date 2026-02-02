@@ -75,10 +75,10 @@ func TestDefaultKubeProvider(t *testing.T) {
 
 					defaultConfig := connectionConfigForContainer(firstContainer, rt.mode)
 					sshProvider := getSSHProvider(test, defaultConfig)
-					registerCleanupSShProvider(t, test, sshProvider)
+					registerCleanupSSHProvider(t, test, sshProvider)
 
 					kubeProviderConfig := &kube.Config{}
-					kubeProvider := provider.NewDefaultKubeProvider(test.Settings(), kubeProviderConfig, sshProvider)
+					kubeProvider := getKubeProvider(t, test, kubeProviderConfig, sshProvider)
 
 					ctx := context.TODO()
 
@@ -257,10 +257,17 @@ func kubeRequestCtx() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.TODO(), 4*time.Second)
 }
 
-func registerCleanupSShProvider(t *testing.T, test *tests.Test, p *provider.DefaultSSHProvider) {
+func registerCleanupSSHProvider(t *testing.T, test *tests.Test, p *provider.DefaultSSHProvider) {
 	t.Cleanup(func() {
 		if err := p.Cleanup(context.TODO()); err != nil {
 			test.GetLogger().ErrorF("Failed to clean up %s provider: %v", t.Name(), err)
 		}
 	})
+}
+
+func getKubeProvider(t *testing.T, test *tests.Test, config *kube.Config, sshProvider connection.SSHProvider) *provider.DefaultKubeProvider {
+	sett := test.Settings()
+	ri, err := provider.GetRunnerInterface(config, sett, sshProvider)
+	require.NoError(t, err, "runner interface should provided")
+	return provider.NewDefaultKubeProvider(sett, config, ri)
 }

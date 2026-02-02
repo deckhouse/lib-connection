@@ -16,23 +16,40 @@ package kube
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/name212/govalue"
 	"k8s.io/client-go/rest"
 )
 
 type Config struct {
-	KubeConfig          string
-	KubeConfigContext   string
+	KubeConfig        string
+	KubeConfigContext string
+
 	KubeConfigInCluster bool
+	LocalKubeClient     bool
 
 	RestConfig *rest.Config
 }
 
 func (c *Config) IsConflict() error {
-	hasKubeConfig := c.KubeConfig != "" || c.KubeConfigInCluster
-	if hasKubeConfig && c.IsRest() {
-		return fmt.Errorf("kubeconfig flags set with rest config")
+	modes := map[string]bool{
+		"kubeconfig": c.KubeConfig != "",
+		"in-cluster": c.KubeConfigInCluster,
+		"local":      c.LocalKubeClient,
+		"rest":       c.IsRest(),
+	}
+
+	modesSet := make([]string, 0)
+
+	for mode, isSet := range modes {
+		if isSet {
+			modesSet = append(modesSet, mode)
+		}
+	}
+
+	if len(modesSet) > 1 {
+		return fmt.Errorf("conflicting kube flags: set modes: %s", strings.Join(modesSet, " "))
 	}
 
 	return nil

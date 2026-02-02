@@ -23,8 +23,6 @@ import (
 	connection "github.com/deckhouse/lib-connection/pkg"
 	"github.com/deckhouse/lib-connection/pkg/kube"
 	"github.com/deckhouse/lib-connection/pkg/settings"
-	"github.com/deckhouse/lib-connection/pkg/ssh"
-	"github.com/deckhouse/lib-connection/pkg/ssh/session"
 )
 
 var (
@@ -39,8 +37,7 @@ type DefaultKubeProvider struct {
 
 	currentClient connection.KubeClient
 
-	sshProvider             connection.SSHProvider
-	currentSSHClientSession *session.SessionWithPrivateKeys
+	runnerInterface RunnerInterface
 
 	// use for testing only
 	noStartKubeProxy bool
@@ -48,30 +45,31 @@ type DefaultKubeProvider struct {
 
 // NewDefaultKubeProvider
 // if use rest config sshProvider can be nil
-func NewDefaultKubeProvider(sett settings.Settings, config *kube.Config, sshProvider connection.SSHProvider) *DefaultKubeProvider {
+func NewDefaultKubeProvider(sett settings.Settings, config *kube.Config, runnerInterface RunnerInterface) *DefaultKubeProvider {
 	return &DefaultKubeProvider{
-		sett:        sett,
-		config:      config,
-		sshProvider: sshProvider,
+		sett:            sett,
+		config:          config,
+		runnerInterface: runnerInterface,
 	}
 }
 
 func (p *DefaultKubeProvider) Client(ctx context.Context) (connection.KubeClient, error) {
-	sshClient, err := p.getSSHClient(ctx)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	switched, err := p.runnerInterface.IsSwitched(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	if govalue.Nil(p.currentClient) || !p.hasSameSession(sshClient) {
-		client, err := p.newClient(ctx, sshClient, true)
+	if govalue.Nil(p.currentClient) || switched {
+		client, err := p.newClient(ctx, true)
 		if err != nil {
 			return nil, err
 		}
 
-		p.setCurrent(client, sshClient)
+		p.currentClient = client
+		p.runnerInterface.Finalize()
 
 		return client, nil
 	}
@@ -80,30 +78,28 @@ func (p *DefaultKubeProvider) Client(ctx context.Context) (connection.KubeClient
 }
 
 func (p *DefaultKubeProvider) NewAdditionalClient(ctx context.Context) (connection.KubeClient, error) {
-	sshClient, err := p.getSSHClient(ctx)
-	if err != nil {
-		return nil, err
-	}
+	// need lock for safe call RunnerInterface.SetNodeInterface
+	p.mu.Lock()
+	defer p.mu.Unlock()
 
-	return p.newClient(ctx, sshClient, true)
+	return p.newClient(ctx, true)
 }
 
 // NewAdditionalClientWithoutInitialize
 // create new additional client without initialize
 func (p *DefaultKubeProvider) NewAdditionalClientWithoutInitialize(ctx context.Context) (connection.KubeClient, error) {
-	sshClient, err := p.getSSHClient(ctx)
-	if err != nil {
-		return nil, err
-	}
+	// need lock for safe call RunnerInterface.SetNodeInterface
+	p.mu.Lock()
+	defer p.mu.Unlock()
 
-	return p.newClient(ctx, sshClient, false)
+	return p.newClient(ctx, false)
 }
 
 func (p *DefaultKubeProvider) Cleanup(context.Context) error {
 	return nil
 }
 
-func (p *DefaultKubeProvider) newClient(ctx context.Context, sshClient connection.SSHClient, init bool) (connection.KubeClient, error) {
+func (p *DefaultKubeProvider) newClient(ctx context.Context, init bool) (connection.KubeClient, error) {
 	config := p.config
 
 	if err := config.IsConflict(); err != nil {
@@ -112,8 +108,8 @@ func (p *DefaultKubeProvider) newClient(ctx context.Context, sshClient connectio
 
 	client := kube.NewKubernetesClient(p.sett)
 
-	if !govalue.Nil(sshClient) {
-		client.WithNodeInterface(ssh.NewNodeInterfaceWrapper(sshClient, p.sett))
+	if err := p.runnerInterface.SetNodeInterface(ctx, client); err != nil {
+		return nil, err
 	}
 
 	if !init {
@@ -131,37 +127,4 @@ func (p *DefaultKubeProvider) newClient(ctx context.Context, sshClient connectio
 	}
 
 	return client, nil
-}
-
-func (p *DefaultKubeProvider) getSSHClient(ctx context.Context) (connection.SSHClient, error) {
-	if p.config.IsRest() {
-		return nil, nil
-	}
-
-	return p.sshProvider.Client(ctx)
-}
-
-func (p *DefaultKubeProvider) setCurrent(client connection.KubeClient, sshClient connection.SSHClient) {
-	var sees *session.SessionWithPrivateKeys
-	if !govalue.Nil(sshClient) {
-		sees = &session.SessionWithPrivateKeys{
-			Session: sshClient.Session(),
-			Keys:    sshClient.PrivateKeys(),
-		}
-	}
-
-	p.currentSSHClientSession = sees
-	p.currentClient = client
-}
-
-func (p *DefaultKubeProvider) hasSameSession(sshClient connection.SSHClient) bool {
-	var fromClient *session.SessionWithPrivateKeys
-	if !govalue.Nil(sshClient) {
-		fromClient = &session.SessionWithPrivateKeys{
-			Session: sshClient.Session(),
-			Keys:    sshClient.PrivateKeys(),
-		}
-	}
-
-	return session.CompareWithKeys(fromClient, p.currentSSHClientSession)
 }
