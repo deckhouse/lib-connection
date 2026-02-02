@@ -31,6 +31,7 @@ func TestKubeProxy(t *testing.T) {
 
 	sshClient, container := startContainerAndClientAndKind(t, test)
 
+	test.GetLogger().InfoF("Try to check run kubectl on ssh container...")
 	cmd := NewSSHCommand(sshClient, "kubectl", "get", "no")
 	out, err := cmd.CombinedOutput(context.Background())
 	test.Logger.InfoF("kubectl get no\n%s", out)

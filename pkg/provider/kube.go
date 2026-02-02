@@ -18,11 +18,12 @@ import (
 	"context"
 	"sync"
 
+	"github.com/name212/govalue"
+
 	connection "github.com/deckhouse/lib-connection/pkg"
 	"github.com/deckhouse/lib-connection/pkg/kube"
 	"github.com/deckhouse/lib-connection/pkg/settings"
 	"github.com/deckhouse/lib-connection/pkg/ssh/session"
-	"github.com/name212/govalue"
 )
 
 var (

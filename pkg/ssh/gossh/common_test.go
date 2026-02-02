@@ -18,8 +18,6 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"regexp"
-	"strings"
 	"testing"
 	"time"
 
@@ -103,47 +101,14 @@ func registerStopTunnel(t *testing.T, tunnel *Tunnel) {
 func startContainerAndClientAndKind(t *testing.T, test *tests.Test, opts ...tests.TestContainerWrapperSettingsOpts) (*Client, *tests.TestContainerWrapper) {
 	sshClient, container := startContainerAndClientWithContainer(t, test, opts...)
 
-	err := tests.CreateKINDCluster()
-	require.NoError(t, err)
-
-	t.Cleanup(func() {
-		_ = tests.DeleteKindCluster()
+	kindCluster := tests.CreateKINDCluster(t, &tests.KINDClusterCreateParams{
+		Test:        test,
+		ClusterName: "kube-proxy",
+		SSHClient:   sshClient,
+		Container:   container,
 	})
 
-	err = container.Container.DockerNetworkConnect(false, "kind")
-	require.NoError(t, err)
-
-	ip, err := tests.GetKINDControlPlaneIP()
-	require.NoError(t, err)
-	ip = strings.TrimSpace(ip)
-
-	kubeconfig, err := tests.GetKINDKubeconfig()
-	require.NoError(t, err)
-
-	re := regexp.MustCompile("127[.]0[.]0[.]1:[0-9]{4,5}")
-	newKubeconfig := re.ReplaceAllString(kubeconfig, ip+":6443")
-
-	err = container.Container.CreateDirectory("/config/.kube")
-	require.NoError(t, err)
-
-	// TODO revome it. w/o sleep file upload failed
-	time.Sleep(30 * time.Second)
-
-	config := test.MustCreateTmpFile(t, newKubeconfig, false, "config")
-	file := sshClient.File()
-	err = retry.NewLoop("uploading kubeconfig", 20, 3*time.Second).Run(func() error {
-		return file.Upload(context.Background(), config, ".kube/config")
-	})
-
-	require.NoError(t, err)
-
-	err = container.Container.DownloadKubectl("v1.35.0")
-	require.NoError(t, err)
-
-	err = container.Container.CreateDirectory("/etc/kubernetes/")
-	require.NoError(t, err)
-	err = container.Container.ExecToContainer("symlink of kubeconfig", "ln", "-s", "/config/.kube/config", "/etc/kubernetes/admin.conf")
-	require.NoError(t, err)
+	kindCluster.RegisterCleanup(t)
 
 	return sshClient, container
 }

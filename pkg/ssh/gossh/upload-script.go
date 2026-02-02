@@ -120,7 +120,7 @@ func (u *SSHUploadScript) Execute(ctx context.Context) ([]byte, error) {
 
 	remotePath := utils.ExecuteRemoteScriptPath(u, scriptName, false)
 	logger.DebugF("Uploading script %s to %s\n", u.ScriptPath, remotePath)
-	err := NewSSHFile(u.sshClient.settings, u.sshClient.sshClient).Upload(ctx, u.ScriptPath, remotePath)
+	err := NewSSHFile(u.sshClient.settings, u.sshClient).Upload(ctx, u.ScriptPath, remotePath)
 	if err != nil {
 		return nil, fmt.Errorf("upload: %v", err)
 	}

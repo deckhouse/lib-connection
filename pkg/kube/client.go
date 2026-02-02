@@ -19,11 +19,17 @@ import (
 	"fmt"
 	"time"
 
+	// skip linting I do not understand wy golang-ci-lint fail here
+	//nolint:goimports
 	"github.com/deckhouse/lib-dhctl/pkg/retry"
+	//nolint:goimports
 	klient "github.com/flant/kube-client/client"
+	//nolint:goimports
 	"github.com/name212/govalue"
+	//nolint:goimports
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	// oidc allows using oidc provider in kubeconfig
+	//nolint:goimports
 	_ "k8s.io/client-go/plugin/pkg/client/auth/oidc"
 
 	connection "github.com/deckhouse/lib-connection/pkg"
@@ -107,7 +113,8 @@ func InitWithNoStartKubeProxy() InitOpt {
 }
 
 // Init initializes kubernetes client
-// Deprecated: use InitContext
+// Deprecated:
+// use InitContext
 // Warning! use InitWithNoStartKubeProxy for only testing purposes
 func (k *KubernetesClient) Init(params *Config, opts ...InitOpt) error {
 	return k.InitContext(context.Background(), params, opts...)
@@ -165,8 +172,10 @@ func (k *KubernetesClient) initContext(ctx context.Context, params *Config, opts
 }
 
 // StartKubernetesProxy initializes kubectl-proxy on remote host and establishes ssh tunnel to it
-func (k *KubernetesClient) StartKubernetesProxy(ctx context.Context) (port string, err error) {
+func (k *KubernetesClient) StartKubernetesProxy(ctx context.Context) (string, error) {
+	port := ""
 	if wrapper, ok := k.NodeInterface.(*ssh.NodeInterfaceWrapper); ok {
+		var err error
 		if port, err = k.startRemoteKubeProxy(ctx, wrapper.Client()); err != nil {
 			return "", fmt.Errorf("start kube proxy: %s", err)
 		}
@@ -176,7 +185,7 @@ func (k *KubernetesClient) StartKubernetesProxy(ctx context.Context) (port strin
 	return "6445", nil
 }
 
-func (k *KubernetesClient) startRemoteKubeProxy(ctx context.Context, sshCl connection.SSHClient) (port string, err error) {
+func (k *KubernetesClient) startRemoteKubeProxy(ctx context.Context, sshCl connection.SSHClient) (string, error) {
 	logger := k.settings.Logger()
 	startLoopParams := retry.SafeCloneOrNewParams(k.loopsParams.StartingKubeProxy, defaultStartKubeProxyLoopParamsOps...).
 		Clone(
@@ -185,11 +194,13 @@ func (k *KubernetesClient) startRemoteKubeProxy(ctx context.Context, sshCl conne
 			retry.WithAttempts(sshCl.Session().CountHosts()),
 		)
 
-	err = retry.NewLoopWithParams(startLoopParams).
+	port := ""
+	err := retry.NewLoopWithParams(startLoopParams).
 		RunContext(ctx, func() error {
 			logger.InfoF("Using host %s\n", sshCl.Session().Host())
 
 			k.KubeProxy = sshCl.KubeProxy()
+			var err error
 			port, err = k.KubeProxy.Start(-1)
 
 			if err != nil {

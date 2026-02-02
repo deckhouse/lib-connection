@@ -144,7 +144,7 @@ func (s *Client) KubeProxy() connection.KubeProxy {
 
 // File is used to upload and download files and directories
 func (s *Client) File() connection.File {
-	return NewSSHFile(s.settings, s.sshClient)
+	return NewSSHFile(s.settings, s)
 }
 
 // UploadScript is used to upload script and execute it on remote server
