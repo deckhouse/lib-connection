@@ -23,6 +23,7 @@ import (
 	connection "github.com/deckhouse/lib-connection/pkg"
 	"github.com/deckhouse/lib-connection/pkg/kube"
 	"github.com/deckhouse/lib-connection/pkg/settings"
+	"github.com/deckhouse/lib-connection/pkg/ssh"
 	"github.com/deckhouse/lib-connection/pkg/ssh/session"
 )
 
@@ -45,6 +46,8 @@ type DefaultKubeProvider struct {
 	noStartKubeProxy bool
 }
 
+// NewDefaultKubeProvider
+// if use rest config sshProvider can be nil
 func NewDefaultKubeProvider(sett settings.Settings, config *kube.Config, sshProvider connection.SSHProvider) *DefaultKubeProvider {
 	return &DefaultKubeProvider{
 		sett:        sett,
@@ -108,7 +111,10 @@ func (p *DefaultKubeProvider) newClient(ctx context.Context, sshClient connectio
 	}
 
 	client := kube.NewKubernetesClient(p.sett)
-	client.WithNodeInterface(sshClient)
+
+	if !govalue.Nil(sshClient) {
+		client.WithNodeInterface(ssh.NewNodeInterfaceWrapper(sshClient, p.sett))
+	}
 
 	if !init {
 		return client, nil

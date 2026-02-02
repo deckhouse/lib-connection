@@ -53,6 +53,8 @@ type KINDClusterCreateParams struct {
 	Test        *Test
 	ClusterName string
 	Containers  []*SSHContainersForKind
+
+	NoPrepareLocalKubectlInSSHContainer bool
 }
 
 type KINDCluster struct {
@@ -163,60 +165,22 @@ func CreateKINDCluster(t *testing.T, params *KINDClusterCreateParams) *KINDClust
 	cluster.kubeconfig, err = getKINDKubeconfig(cluster)
 	checkErrorDuringCreateCluster(t, cluster, err, "failed to get kind control plane IP")
 
-	kubectlVersion, err := getKubectlVersion(cluster)
-	checkErrorDuringCreateCluster(t, cluster, err, "failed to get kubectl version")
-
 	cluster.ControlPlanePort, _ = cluster.extractPort()
 
-	newKubeconfig := cluster.KubeconfigWithIP(cluster.ControlPlaneIP, "6443")
-
-	configTmp, err := test.CreateTmpFile(newKubeconfig, false, "kubeconfig")
-	checkErrorDuringCreateCluster(t, cluster, err, "failed to create kind config file to upload")
+	kubectlPreparator := newLocalKubectlPreparator(cluster)
 
 	for _, sshContainer := range params.Containers {
 		container := sshContainer.Container.Container
 		containerName := container.ContainerSettings().ContainerName
 
-		downloadKubectlParams := retry.NewEmptyParams(
-			retry.WithName("Download kubectl to ssh container %s", containerName),
-			retry.WithAttempts(10),
-			retry.WithWait(2*time.Second),
-			retry.WithLogger(test.GetLogger()),
-		)
-		err = retry.NewLoopWithParams(downloadKubectlParams).Run(func() error {
-			return container.DownloadKubectl(kubectlVersion)
-		})
-		checkErrorDuringCreateCluster(t, cluster, err, "failed to download kubectl to ssh container %s", containerName)
-
 		err = container.DockerNetworkConnect(false, "kind")
 		checkErrorDuringCreateCluster(t, cluster, err, "failed to connect ssh container %s to kind cluster", containerName)
 
-		err = container.CreateDirectory("/config/.kube")
-		checkErrorDuringCreateCluster(t, cluster, err, "failed to create kube config directory in ssh container %s", containerName)
-
-		file := sshContainer.Client.File()
-		uploadParams := retry.NewEmptyParams(
-			retry.WithName("Upload kubeconfig to ssh container %s", containerName),
-			retry.WithAttempts(10),
-			retry.WithWait(2*time.Second),
-			retry.WithLogger(test.GetLogger()),
-		)
-		err = retry.NewLoopWithParams(uploadParams).Run(func() error {
-			return file.Upload(context.Background(), configTmp, "/config/.kube/config")
-		})
-		checkErrorDuringCreateCluster(t, cluster, err, "failed to upload kubeconfig to ssh container")
-
-		err = container.CreateDirectory("/etc/kubernetes/")
-		checkErrorDuringCreateCluster(t, cluster, err, "failed to create directory /etc/kubernetes on ssh container %s", containerName)
-
-		err = container.ExecToContainer(
-			"symlink of kubeconfig",
-			"ln",
-			"-s",
-			"/config/.kube/config",
-			"/etc/kubernetes/admin.conf",
-		)
-		checkErrorDuringCreateCluster(t, cluster, err, "failed to create link to kube config on ssh container %s", containerName)
+		if !params.NoPrepareLocalKubectlInSSHContainer {
+			kubectlPreparator.prepareLocalKubeCtlInSSHContainer(t, sshContainer)
+		} else {
+			params.Test.GetLogger().InfoF("Skipping prepare local kubectl in ssh container %s", containerName)
+		}
 	}
 
 	return cluster
@@ -315,4 +279,94 @@ func checkErrorDuringCreateCluster(t *testing.T, cluster *KINDCluster, err error
 	}
 
 	require.NoError(t, err, fmt.Sprintf(msg, args...))
+}
+
+type localKubectlPreparator struct {
+	kubectlVersion string
+	configPath     string
+	cluster        *KINDCluster
+}
+
+func newLocalKubectlPreparator(cluster *KINDCluster) *localKubectlPreparator {
+	return &localKubectlPreparator{
+		cluster: cluster,
+	}
+}
+
+func (p *localKubectlPreparator) getKubectlVersion(t *testing.T) string {
+	if p.kubectlVersion != "" {
+		return p.kubectlVersion
+	}
+
+	kubectlVersion, err := getKubectlVersion(p.cluster)
+	checkErrorDuringCreateCluster(t, p.cluster, err, "failed to get kubectl version")
+
+	p.kubectlVersion = kubectlVersion
+	return kubectlVersion
+}
+
+func (p *localKubectlPreparator) getKubeConfigPath(t *testing.T) string {
+	if p.configPath != "" {
+		return p.configPath
+	}
+
+	cluster := p.cluster
+
+	newKubeconfig := cluster.KubeconfigWithIP(cluster.ControlPlaneIP, "6443")
+
+	configTmp, err := cluster.test.CreateTmpFile(newKubeconfig, false, "kubeconfig")
+	checkErrorDuringCreateCluster(t, cluster, err, "failed to create kind config file to upload")
+
+	p.configPath = configTmp
+	return configTmp
+}
+
+func (p *localKubectlPreparator) prepareLocalKubeCtlInSSHContainer(t *testing.T, sshContainer *SSHContainersForKind) {
+	container := sshContainer.Container.Container
+	containerName := container.ContainerSettings().ContainerName
+	cluster := p.cluster
+	test := cluster.test
+
+	kubectlVersion := p.getKubectlVersion(t)
+
+	downloadKubectlParams := retry.NewEmptyParams(
+		retry.WithName("Download kubectl to ssh container %s", containerName),
+		retry.WithAttempts(10),
+		retry.WithWait(2*time.Second),
+		retry.WithLogger(test.GetLogger()),
+	)
+	err := retry.NewLoopWithParams(downloadKubectlParams).Run(func() error {
+		return container.DownloadKubectl(kubectlVersion)
+	})
+	checkErrorDuringCreateCluster(t, cluster, err, "failed to download kubectl to ssh container %s", containerName)
+
+	err = container.CreateDirectory("/config/.kube")
+	checkErrorDuringCreateCluster(t, cluster, err, "failed to create kube config directory in ssh container %s", containerName)
+
+	file := sshContainer.Client.File()
+	uploadParams := retry.NewEmptyParams(
+		retry.WithName("Upload kubeconfig to ssh container %s", containerName),
+		retry.WithAttempts(10),
+		retry.WithWait(2*time.Second),
+		retry.WithLogger(test.GetLogger()),
+	)
+
+	configTmp := p.getKubeConfigPath(t)
+
+	err = retry.NewLoopWithParams(uploadParams).Run(func() error {
+		return file.Upload(context.Background(), configTmp, "/config/.kube/config")
+	})
+	checkErrorDuringCreateCluster(t, cluster, err, "failed to upload kubeconfig to ssh container")
+
+	err = container.CreateDirectory("/etc/kubernetes/")
+	checkErrorDuringCreateCluster(t, cluster, err, "failed to create directory /etc/kubernetes on ssh container %s", containerName)
+
+	err = container.ExecToContainer(
+		"symlink of kubeconfig",
+		"ln",
+		"-s",
+		"/config/.kube/config",
+		"/etc/kubernetes/admin.conf",
+	)
+	checkErrorDuringCreateCluster(t, cluster, err, "failed to create link to kube config on ssh container %s", containerName)
 }
