@@ -43,14 +43,21 @@ type KubeProvider interface {
 
 	// NewAdditionalClient
 	// create new additional client and initialize it
-	// returned client not cached
-	// if provider uses over ssh connection additional client use
-	// one ssh client without switches
+	// if use over ssh create new ssh client for it
+	// you should call kube.Stop if client does not need. kube.Stop
+	// save for all clients not only over ssh
+	// also provider save all these clients for stop in Cleanup
 	NewAdditionalClient(ctx context.Context) (KubeClient, error)
 
 	// NewAdditionalClientWithoutInitialize
 	// create new additional client without initialize
+	// if use over ssh create new ssh client for it
+	// you should call kube.Stop if client does not need. kube.Stop
+	// save for all clients not only over ssh
+	// also provider save all these clients for stop in Cleanup
 	NewAdditionalClientWithoutInitialize(ctx context.Context) (KubeClient, error)
 
+	// Cleanup
+	// Stops all additional clients got from NewAdditionalClient and NewAdditionalClientWithoutInitialize
 	Cleanup(ctx context.Context) error
 }

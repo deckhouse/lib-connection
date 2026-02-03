@@ -35,6 +35,7 @@ import (
 	connection "github.com/deckhouse/lib-connection/pkg"
 	"github.com/deckhouse/lib-connection/pkg/settings"
 	"github.com/deckhouse/lib-connection/pkg/ssh"
+	"github.com/deckhouse/lib-connection/pkg/ssh/gossh"
 	"github.com/deckhouse/lib-connection/pkg/ssh/local"
 )
 
@@ -173,16 +174,18 @@ func (k *KubernetesClient) initContext(ctx context.Context, params *Config, opts
 
 // StartKubernetesProxy initializes kubectl-proxy on remote host and establishes ssh tunnel to it
 func (k *KubernetesClient) StartKubernetesProxy(ctx context.Context) (string, error) {
-	port := ""
-	if wrapper, ok := k.NodeInterface.(*ssh.NodeInterfaceWrapper); ok {
-		var err error
-		if port, err = k.startRemoteKubeProxy(ctx, wrapper.Client()); err != nil {
-			return "", fmt.Errorf("start kube proxy: %s", err)
-		}
-		return port, nil
+	wrapper, ok := k.NodeInterface.(*ssh.NodeInterfaceWrapper)
+	if !ok {
+		return "6445", nil
 	}
 
-	return "6445", nil
+	port, err := k.startRemoteKubeProxy(ctx, wrapper.Client())
+
+	if err != nil {
+		return "", fmt.Errorf("start kube proxy: %s", err)
+	}
+
+	return port, nil
 }
 
 func (k *KubernetesClient) startRemoteKubeProxy(ctx context.Context, sshCl connection.SSHClient) (string, error) {
@@ -218,4 +221,37 @@ func (k *KubernetesClient) startRemoteKubeProxy(ctx context.Context, sshCl conne
 	logger.InfoF("Proxy started on port %s\n", port)
 
 	return port, nil
+}
+
+// Stop
+// pass full for fully stop client
+// for example if use over ssh full stop client also with stop proxy
+// it is safe for call with nil client
+func Stop(client connection.KubeClient, full bool) {
+	if govalue.Nil(client) {
+		return
+	}
+
+	kubeClient, ok := client.(*KubernetesClient)
+	if !ok {
+		return
+	}
+
+	if govalue.Nil(kubeClient.KubeProxy) {
+		return
+	}
+
+	kubeClient.KubeProxy.Stop(-1)
+
+	if full {
+		wrapper, ok := kubeClient.NodeInterface.(*ssh.NodeInterfaceWrapper)
+		if !ok {
+			return
+		}
+
+		sshClient := wrapper.Client()
+		if _, ok := sshClient.(*gossh.Client); ok {
+			sshClient.Stop()
+		}
+	}
 }

@@ -24,6 +24,7 @@ import (
 	"github.com/deckhouse/lib-connection/pkg/kube"
 	"github.com/deckhouse/lib-connection/pkg/settings"
 	"github.com/deckhouse/lib-connection/pkg/ssh"
+	"github.com/deckhouse/lib-connection/pkg/ssh/gossh"
 	"github.com/deckhouse/lib-connection/pkg/ssh/session"
 )
 
@@ -68,19 +69,28 @@ func (r *RunnerInterfaceWithSSH) IsSwitched(ctx context.Context) (bool, error) {
 	return !session.CompareWithKeys(fromClient, r.currentSSHClientSession), nil
 }
 
-func (r *RunnerInterfaceWithSSH) SetNodeInterface(ctx context.Context, client *kube.KubernetesClient, enableAdditionalChecks bool) error {
+func (r *RunnerInterfaceWithSSH) SetNodeInterface(ctx context.Context, client *kube.KubernetesClient, opts ...SetNodeInterfaceOpt) error {
+	options := &SetNodeInterfaceOpts{}
+	for _, opt := range opts {
+		opt(options)
+	}
+
+	cleanupIfChecksFailed := noCleanupOnFailChecks
+
 	// can use fromSwitchCall because DefaultKubeProvider use mutex for all interfaces
 	sshClient := r.fromSwitchCall
 	if govalue.Nil(sshClient) {
+		// this case if call NewAdditionalClient
 		var err error
-		sshClient, err = r.getCurrent(ctx)
+		sshClient, cleanupIfChecksFailed, err = r.getCurrentForAdditional(ctx, options)
 		if err != nil {
 			return err
 		}
 	}
 
-	if enableAdditionalChecks {
+	if options.RunChecks {
 		if err := sshClient.Check().WithDelaySeconds(1).AwaitAvailability(ctx, r.loopsParams.AwaitAvailabilityOverSSH); err != nil {
+			cleanupIfChecksFailed()
 			return fmt.Errorf("await master available: %v", err)
 		}
 	}
@@ -105,19 +115,37 @@ func (r *RunnerInterfaceWithSSH) updateSessionFromCurrent() {
 	}
 }
 
-func (r *RunnerInterfaceWithSSH) getCurrent(ctx context.Context) (connection.SSHClient, error) {
+func noCleanupOnFailChecks() {}
+
+func (r *RunnerInterfaceWithSSH) getCurrentForAdditional(ctx context.Context, opts *SetNodeInterfaceOpts) (connection.SSHClient, func(), error) {
+	if opts.NewNodeInterface {
+		client, err := r.sshProvider.NewAdditionalClient(ctx)
+		if err != nil {
+			return nil, noCleanupOnFailChecks, err
+		}
+
+		cleanup := func() {
+			// need stop only gossh client because cli ssh init agent for all
+			if _, ok := client.(*gossh.Client); ok {
+				client.Stop()
+			}
+		}
+
+		return client, cleanup, nil
+	}
+
 	// need use if call NewAdditionalClient* before Client
 	if !govalue.Nil(r.currentSSHClient) {
-		return r.currentSSHClient, nil
+		return r.currentSSHClient, noCleanupOnFailChecks, nil
 	}
 
 	client, err := r.sshProvider.Client(ctx)
 	if err != nil {
-		return nil, err
+		return nil, noCleanupOnFailChecks, err
 	}
 
 	r.currentSSHClient = client
 	r.updateSessionFromCurrent()
 
-	return client, nil
+	return client, noCleanupOnFailChecks, nil
 }

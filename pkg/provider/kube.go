@@ -45,7 +45,8 @@ type DefaultKubeProvider struct {
 	sett   settings.Settings
 	config *kube.Config
 
-	currentClient connection.KubeClient
+	currentClient     connection.KubeClient
+	additionalClients []connection.KubeClient
 
 	runnerInterface RunnerInterface
 
@@ -59,9 +60,10 @@ type DefaultKubeProvider struct {
 // if use rest config sshProvider can be nil
 func NewDefaultKubeProvider(sett settings.Settings, config *kube.Config, runnerInterface RunnerInterface) *DefaultKubeProvider {
 	return &DefaultKubeProvider{
-		sett:            sett,
-		config:          config,
-		runnerInterface: runnerInterface,
+		sett:              sett,
+		config:            config,
+		runnerInterface:   runnerInterface,
+		additionalClients: make([]connection.KubeClient, 0),
 	}
 }
 
@@ -75,10 +77,13 @@ func (p *DefaultKubeProvider) Client(ctx context.Context) (connection.KubeClient
 	}
 
 	if govalue.Nil(p.currentClient) || switched {
-		client, err := p.createAndInitClient(ctx, true)
+		// does not stop because we can use current ssh client in runner
+		client, err := p.createAndInitClient(ctx, false, SetNodeInterfaceOptWithRunChecks())
 		if err != nil {
 			return nil, err
 		}
+
+		kube.Stop(p.currentClient, false)
 
 		p.currentClient = client
 		p.runnerInterface.Finalize()
@@ -94,7 +99,20 @@ func (p *DefaultKubeProvider) NewAdditionalClient(ctx context.Context) (connecti
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	return p.createAndInitClient(ctx, true)
+	// use additional client over ssh need to stop it fully
+	client, err := p.createAndInitClient(
+		ctx,
+		true,
+		SetNodeInterfaceOptWithRunChecks(),
+		SetNodeInterfaceOptWithNewNodeInterface(),
+	)
+
+	if err != nil {
+		return nil, err
+	}
+
+	p.additionalClients = append(p.additionalClients, client)
+	return client, nil
 }
 
 // NewAdditionalClientWithoutInitialize
@@ -104,37 +122,50 @@ func (p *DefaultKubeProvider) NewAdditionalClientWithoutInitialize(ctx context.C
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	return p.createAndInitClient(ctx, false)
+	client, err := p.newClient(ctx, true, SetNodeInterfaceOptWithNewNodeInterface())
+	if err != nil {
+		return nil, err
+	}
+
+	p.additionalClients = append(p.additionalClients, client)
+	return client, nil
 }
 
 func (p *DefaultKubeProvider) Cleanup(context.Context) error {
+	for _, client := range p.additionalClients {
+		kube.Stop(client, true)
+	}
+
 	return nil
 }
 
-func (p *DefaultKubeProvider) newClient(ctx context.Context, enableAdditionalCheck bool) (*kube.KubernetesClient, error) {
+func (p *DefaultKubeProvider) AdditionalClientsCount() int {
+	return len(p.additionalClients)
+}
+
+func (p *DefaultKubeProvider) newClient(ctx context.Context, stopOnError bool, opts ...SetNodeInterfaceOpt) (*kube.KubernetesClient, error) {
 	client := kube.NewKubernetesClient(p.sett)
-	if err := p.runnerInterface.SetNodeInterface(ctx, client, enableAdditionalCheck); err != nil {
+	if err := p.runnerInterface.SetNodeInterface(ctx, client, opts...); err != nil {
+		if stopOnError {
+			kube.Stop(client, stopOnError)
+		}
 		return nil, err
 	}
 
 	return client, nil
 }
 
-func (p *DefaultKubeProvider) createAndInitClient(ctx context.Context, init bool) (connection.KubeClient, error) {
+func (p *DefaultKubeProvider) createAndInitClient(ctx context.Context, forceStopOnError bool, opts ...SetNodeInterfaceOpt) (connection.KubeClient, error) {
 	config := p.config
 
 	if err := config.IsConflict(); err != nil {
 		return nil, err
 	}
 
-	if !init {
-		return p.newClient(ctx, false)
-	}
-
-	var opts []kube.InitOpt
+	var initOpts []kube.InitOpt
 
 	if p.noStartKubeProxy {
-		opts = append(opts, kube.InitWithNoStartKubeProxy())
+		initOpts = append(initOpts, kube.InitWithNoStartKubeProxy())
 	}
 
 	logger := p.sett.Logger()
@@ -143,12 +174,14 @@ func (p *DefaultKubeProvider) createAndInitClient(ctx context.Context, init bool
 
 	err := logger.Process(log.ProcessCommon, "Connect to Kubernetes API", func() error {
 		// await availability if need here
-		newClient, err := p.newClient(ctx, true)
+		newClient, err := p.newClient(ctx, forceStopOnError, opts...)
 		if err != nil {
 			return err
 		}
 
-		if err := p.connectToKubernetesAPI(ctx, newClient, opts); err != nil {
+		if err := p.connectToKubernetesAPI(ctx, newClient, initOpts); err != nil {
+			// if does not connect to api need to stop client
+			kube.Stop(newClient, forceStopOnError)
 			return err
 		}
 

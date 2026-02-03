@@ -26,9 +26,28 @@ import (
 	"github.com/deckhouse/lib-connection/pkg/ssh/local"
 )
 
+type SetNodeInterfaceOpts struct {
+	RunChecks        bool
+	NewNodeInterface bool
+}
+
+type SetNodeInterfaceOpt func(opts *SetNodeInterfaceOpts)
+
+func SetNodeInterfaceOptWithRunChecks() SetNodeInterfaceOpt {
+	return func(opts *SetNodeInterfaceOpts) {
+		opts.RunChecks = true
+	}
+}
+
+func SetNodeInterfaceOptWithNewNodeInterface() SetNodeInterfaceOpt {
+	return func(opts *SetNodeInterfaceOpts) {
+		opts.NewNodeInterface = true
+	}
+}
+
 type RunnerInterface interface {
 	IsSwitched(ctx context.Context) (bool, error)
-	SetNodeInterface(ctx context.Context, client *kube.KubernetesClient, enableAdditionalChecks bool) error
+	SetNodeInterface(ctx context.Context, client *kube.KubernetesClient, opts ...SetNodeInterfaceOpt) error
 	Finalize()
 }
 
@@ -61,7 +80,7 @@ func (*RunnerInterfaceNoAction) IsSwitched(context.Context) (bool, error) {
 
 func (*RunnerInterfaceNoAction) Finalize() {}
 
-func (*RunnerInterfaceNoAction) SetNodeInterface(context.Context, *kube.KubernetesClient, bool) error {
+func (*RunnerInterfaceNoAction) SetNodeInterface(context.Context, *kube.KubernetesClient, ...SetNodeInterfaceOpt) error {
 	return nil
 }
 
@@ -81,7 +100,7 @@ func (r *RunnerInterfaceLocal) IsSwitched(context.Context) (bool, error) {
 
 func (r *RunnerInterfaceLocal) Finalize() {}
 
-func (r *RunnerInterfaceLocal) SetNodeInterface(_ context.Context, client *kube.KubernetesClient, _ bool) error {
+func (r *RunnerInterfaceLocal) SetNodeInterface(_ context.Context, client *kube.KubernetesClient, _ ...SetNodeInterfaceOpt) error {
 	client.WithNodeInterface(r.node)
 	return nil
 }

@@ -146,9 +146,12 @@ func (k *KubeProxy) Stop(startID int) {
 		return
 	}
 
-	if k.healthMonitorsByStartID[startID] != nil {
-		k.healthMonitorsByStartID[startID] <- struct{}{}
-		delete(k.healthMonitorsByStartID, startID)
+	if startID < 1 {
+		for id := range k.healthMonitorsByStartID {
+			k.stopHealthMonitor(id)
+		}
+	} else {
+		k.stopHealthMonitor(startID)
 	}
 
 	if k.proxy != nil {
@@ -165,6 +168,16 @@ func (k *KubeProxy) Stop(startID int) {
 		k.tunnel = nil
 	}
 	k.stop = true
+}
+
+func (k *KubeProxy) stopHealthMonitor(startID int) {
+	ch, ok := k.healthMonitorsByStartID[startID]
+	if !ok || ch == nil {
+		return
+	}
+
+	ch <- struct{}{}
+	delete(k.healthMonitorsByStartID, startID)
 }
 
 func (k *KubeProxy) tryToRestartFully(startID int) {
