@@ -51,50 +51,99 @@ func TestDefaultKubeProvider(t *testing.T) {
 		},
 	}
 
-	t.Run("Client", func(t *testing.T) {
-		baseTest := tests.ShouldNewIntegrationTest(
-			t,
-			t.Name(),
-			tests.TestWithParallelRun(false),
-		)
+	t.Run("OverSSH", func(t *testing.T) {
+		t.Run("Client", func(t *testing.T) {
+			baseTest := tests.ShouldNewIntegrationTest(
+				t,
+				t.Name(),
+				tests.TestWithParallelRun(false),
+			)
 
-		firstContainer := tests.NewTestContainerWrapper(t, baseTest, tests.WithContainerName("first"))
-		secondContainer := tests.NewTestContainerWrapper(
-			t,
-			baseTest,
-			tests.WithContainerName("second"),
-			tests.WithConnectToContainerNetwork(firstContainer),
-		)
+			firstContainer := tests.NewTestContainerWrapper(t, baseTest, tests.WithContainerName("first"))
+			secondContainer := tests.NewTestContainerWrapper(
+				t,
+				baseTest,
+				tests.WithContainerName("second"),
+				tests.WithConnectToContainerNetwork(firstContainer),
+			)
 
-		createKINDCluster(t, baseTest, firstContainer, secondContainer)
+			createKINDCluster(t, baseTest, firstContainer, secondContainer)
 
-		t.Run("SimpleGet", func(t *testing.T) {
-			for _, rt := range runTests {
-				t.Run(rt.name, func(t *testing.T) {
-					test := tests.ShouldNewIntegrationTest(t, rt.getName(t))
+			t.Run("SimpleGet", func(t *testing.T) {
+				for _, rt := range runTests {
+					t.Run(rt.name, func(t *testing.T) {
+						test := newSubTest(t, rt)
 
-					defaultConfig := connectionConfigForContainer(firstContainer, rt.mode)
-					sshProvider := getSSHProvider(test, defaultConfig)
-					registerCleanupSSHProvider(t, test, sshProvider)
+						defaultConfig := connectionConfigForContainer(firstContainer, rt.mode)
+						sshProvider := getSSHProvider(test, defaultConfig)
+						registerCleanupSSHProvider(t, test, sshProvider)
 
-					kubeProviderConfig := &kube.Config{}
-					kubeProvider := getKubeProvider(t, test, kubeProviderConfig, sshProvider)
+						kubeProviderConfig := &kube.Config{}
+						kubeProvider := getKubeProvider(t, test, kubeProviderConfig, sshProvider)
 
-					ctx := context.TODO()
+						ctx := context.TODO()
 
-					firstClient, err := kubeProvider.Client(ctx)
-					require.NoError(t, err, "first client should be created")
+						firstClient, err := kubeProvider.Client(ctx)
+						require.NoError(t, err, "first client should be created")
 
-					assertKubeClient(t, test, firstClient)
+						assertKubeClient(t, test, firstClient)
 
-					secondClient, err := kubeProvider.Client(ctx)
-					require.NoError(t, err, "second client should be created")
+						secondClient, err := kubeProvider.Client(ctx)
+						require.NoError(t, err, "second client should be created")
 
-					require.True(t, firstClient == secondClient, "first client should be equal to second client")
-				})
-			}
+						require.True(t, firstClient == secondClient, "first client should be equal to second client")
+					})
+				}
+			})
+
+			t.Run("GetClientAfterSwitch", func(t *testing.T) {
+				for _, rt := range runTests {
+					t.Run(rt.name, func(t *testing.T) {
+						test := newSubTest(t, rt)
+
+						defaultConfig := connectionConfigForContainer(firstContainer, rt.mode)
+						sshProvider := getSSHProvider(test, defaultConfig)
+						registerCleanupSSHProvider(t, test, sshProvider)
+
+						kubeProviderConfig := &kube.Config{}
+						kubeProvider := getKubeProvider(t, test, kubeProviderConfig, sshProvider)
+
+						ctx := context.TODO()
+
+						firstClient, err := kubeProvider.Client(ctx)
+						require.NoError(t, err, "first client should be created")
+
+						assertKubeClient(t, test, firstClient)
+
+						_, err = sshProvider.SwitchClient(ctx, tests.Session(secondContainer), secondContainer.AgentPrivateKeys())
+						require.NoError(t, err, "ssh client should be switched")
+
+						afterSwitchClient, err := kubeProvider.Client(ctx)
+						require.NoError(t, err, "after switch client should be created")
+
+						require.False(t, firstClient == afterSwitchClient, "first client should not be equal to second client after switch")
+
+						assertKubeClient(t, test, afterSwitchClient)
+
+						_, err = sshProvider.SwitchToDefault(ctx)
+						require.NoError(t, err, "ssh client should be switched to default")
+
+						afterSwitchToDefaultClient, err := kubeProvider.Client(ctx)
+						require.NoError(t, err, "after switch to default client should be created")
+
+						require.False(t, firstClient == afterSwitchToDefaultClient, "first client should not be equal to second client after switch to default")
+						require.False(t, afterSwitchClient == afterSwitchToDefaultClient, "after switch client should not be equal to second client after switch to default")
+
+						assertKubeClient(t, test, afterSwitchToDefaultClient)
+					})
+				}
+			})
 		})
 	})
+}
+
+func newSubTest(t *testing.T, rt runTest) *tests.Test {
+	return tests.ShouldNewIntegrationTest(t, rt.getName(t), tests.TestWithParallelRun(false))
 }
 
 type runTest struct {

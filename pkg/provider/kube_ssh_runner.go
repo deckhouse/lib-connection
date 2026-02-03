@@ -65,7 +65,7 @@ func (r *RunnerInterfaceWithSSH) IsSwitched(ctx context.Context) (bool, error) {
 
 	r.fromSwitchCall = sshClient
 
-	return session.CompareWithKeys(fromClient, r.currentSSHClientSession), nil
+	return !session.CompareWithKeys(fromClient, r.currentSSHClientSession), nil
 }
 
 func (r *RunnerInterfaceWithSSH) SetNodeInterface(ctx context.Context, client *kube.KubernetesClient, enableAdditionalChecks bool) error {
@@ -92,6 +92,7 @@ func (r *RunnerInterfaceWithSSH) SetNodeInterface(ctx context.Context, client *k
 func (r *RunnerInterfaceWithSSH) Finalize() {
 	if !govalue.Nil(r.fromSwitchCall) {
 		r.currentSSHClient = r.fromSwitchCall
+		r.updateSessionFromCurrent()
 	}
 
 	r.fromSwitchCall = nil
