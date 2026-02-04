@@ -567,6 +567,75 @@ func TestDefaultKubeProvider(t *testing.T) {
 			})
 		})
 	})
+
+	t.Run("LocalRun", func(t *testing.T) {
+		rt := runTest{name: "local_run"}
+
+		getKubeconfigKubeProvider := func(t *testing.T, test *tests.Test, kind *tests.KINDCluster, rewriteEnv ...string) *provider.DefaultKubeProvider {
+			path := ""
+
+			if len(rewriteEnv) > 0 {
+				path = rewriteEnv[0]
+			} else {
+				kubeConfig := kind.Kubeconfig()
+				path = test.MustCreateTmpFile(t, kubeConfig, false, "local-kube-config.yaml")
+			}
+
+			tests.SetEnvs(t, map[string]string{
+				"KUBECONFIG": path,
+			})
+
+			kubeProviderConfig := &kube.Config{
+				LocalKubeClient: true,
+			}
+
+			kubeProvider, _ := getKubeProvider(t, test, kubeProviderConfig, nil)
+			registerCleanupKubeProvider(t, test, kubeProvider)
+
+			return kubeProvider
+		}
+
+		t.Run("Client", func(t *testing.T) {
+			t.Run("SimpleGet", func(t *testing.T) {
+				test := newSubTest(t, rt)
+
+				kubeProvider := getKubeconfigKubeProvider(t, test, kindCluster)
+
+				assertSimpleGetKubeClient(t, test, kubeProvider)
+			})
+		})
+
+		t.Run("NewAdditionalClient", func(t *testing.T) {
+			test := newSubTest(t, rt)
+
+			kubeProvider := getKubeconfigKubeProvider(t, test, kindCluster)
+
+			assertNewAdditional(t, test, kubeProvider)
+		})
+
+		t.Run("NewAdditionalClientWithoutInitialize", func(t *testing.T) {
+			test := newSubTest(t, rt)
+
+			kubeProvider := getKubeconfigKubeProvider(t, test, kindCluster)
+			assertNewAdditionalClientsWithoutInitialize(t, test, kubeProvider, assertAdditionalClients)
+		})
+
+		t.Run("WithIncorrectConfig", func(t *testing.T) {
+			test := newSubTest(t, rt)
+
+			assertIncorrectConfiguration(t, test, func(t *testing.T, test *tests.Test) *provider.DefaultKubeProvider {
+				path := "/tmp/not-exist-ewde"
+				kubeProvider := getKubeconfigKubeProvider(t, test, kindCluster, path)
+				return kubeProvider
+			})
+		})
+
+		t.Run("Cleanup", func(t *testing.T) {
+			assertCleanupWithoutSSH(t, func(t *testing.T, test *tests.Test) *provider.DefaultKubeProvider {
+				return getKubeconfigKubeProvider(t, test, kindCluster)
+			})
+		})
+	})
 }
 
 func newSubTest(t *testing.T, rt runTest) *tests.Test {
