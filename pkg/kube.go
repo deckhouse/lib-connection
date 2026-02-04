@@ -39,6 +39,8 @@ type KubeProvider interface {
 	// Created client will cache
 	// if it uses client over ssh can create new client
 	// if ssh client was switched
+	// current client will stop if new client was created but not fully
+	// because if we use over ssh current client can used in another routines
 	Client(ctx context.Context) (KubeClient, error)
 
 	// NewAdditionalClient
@@ -59,5 +61,7 @@ type KubeProvider interface {
 
 	// Cleanup
 	// Stops all additional clients got from NewAdditionalClient and NewAdditionalClientWithoutInitialize
+	// also current client also stop, but not fully
+	// because if we use over ssh current client can used in another routines
 	Cleanup(ctx context.Context) error
 }

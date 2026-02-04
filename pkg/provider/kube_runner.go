@@ -48,10 +48,26 @@ func SetNodeInterfaceOptWithNewNodeInterface() SetNodeInterfaceOpt {
 type RunnerInterface interface {
 	IsSwitched(ctx context.Context) (bool, error)
 	SetNodeInterface(ctx context.Context, client *kube.KubernetesClient, opts ...SetNodeInterfaceOpt) error
-	Finalize()
+	Finalize(isError bool)
+	InitOptions() []kube.InitOpt
 }
 
-func GetRunnerInterface(config *kube.Config, sett settings.Settings, sshProvider connection.SSHProvider) (RunnerInterface, error) {
+type RunnerInterfaceOpt func(RunnerInterface)
+
+func GetRunnerInterface(config *kube.Config, sett settings.Settings, sshProvider connection.SSHProvider, opts ...RunnerInterfaceOpt) (RunnerInterface, error) {
+	r, err := getRunner(config, sett, sshProvider)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, o := range opts {
+		o(r)
+	}
+
+	return r, nil
+}
+
+func getRunner(config *kube.Config, sett settings.Settings, sshProvider connection.SSHProvider) (RunnerInterface, error) {
 	if err := config.IsConflict(); err != nil {
 		return nil, err
 	}
@@ -69,7 +85,7 @@ func GetRunnerInterface(config *kube.Config, sett settings.Settings, sshProvider
 		return nil, fmt.Errorf("No SSH provider specified for create kubernetes client over ssh")
 	}
 
-	return NewRunnerInterfaceWithSSH(sett, sshProvider), nil
+	return NewRunnerInterfaceSSH(sett, sshProvider), nil
 }
 
 type RunnerInterfaceNoAction struct{}
@@ -78,9 +94,13 @@ func (*RunnerInterfaceNoAction) IsSwitched(context.Context) (bool, error) {
 	return false, nil
 }
 
-func (*RunnerInterfaceNoAction) Finalize() {}
+func (*RunnerInterfaceNoAction) Finalize(bool) {}
 
 func (*RunnerInterfaceNoAction) SetNodeInterface(context.Context, *kube.KubernetesClient, ...SetNodeInterfaceOpt) error {
+	return nil
+}
+
+func (*RunnerInterfaceNoAction) InitOptions() []kube.InitOpt {
 	return nil
 }
 
@@ -98,9 +118,31 @@ func (r *RunnerInterfaceLocal) IsSwitched(context.Context) (bool, error) {
 	return false, nil
 }
 
-func (r *RunnerInterfaceLocal) Finalize() {}
+func (r *RunnerInterfaceLocal) Finalize(bool) {}
 
 func (r *RunnerInterfaceLocal) SetNodeInterface(_ context.Context, client *kube.KubernetesClient, _ ...SetNodeInterfaceOpt) error {
 	client.WithNodeInterface(r.node)
 	return nil
+}
+
+func (r *RunnerInterfaceLocal) InitOptions() []kube.InitOpt {
+	return nil
+}
+
+func RunnerInterfaceWithSSHLoopsParams(p RunnerInterfaceSSHLoopsParams) RunnerInterfaceOpt {
+	return func(r RunnerInterface) {
+		sshRI, ok := r.(*RunnerInterfaceSSH)
+		if ok {
+			sshRI.WithLoopParams(p)
+		}
+	}
+}
+
+func RunnerInterfaceWithInitOpts(opts ...kube.InitOpt) RunnerInterfaceOpt {
+	return func(r RunnerInterface) {
+		sshRI, ok := r.(*RunnerInterfaceSSH)
+		if ok {
+			sshRI.WithInitOptions(opts...)
+		}
+	}
 }

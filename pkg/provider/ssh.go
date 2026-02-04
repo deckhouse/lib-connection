@@ -252,6 +252,15 @@ func (p *DefaultSSHProvider) WithOptions(opts ...SSHClientOption) *DefaultSSHPro
 	return p
 }
 
+// AdditionalClients
+// please use for testing purposes only!
+func (p *DefaultSSHProvider) AdditionalClients() []connection.SSHClient {
+	dest := make([]connection.SSHClient, len(p.additionalClients))
+	copy(dest, p.additionalClients)
+
+	return dest
+}
+
 func (p *DefaultSSHProvider) doGetCurrentClient(ctx context.Context) (connection.SSHClient, error) {
 	if !govalue.Nil(p.currentClient) {
 		return p.currentClient, nil

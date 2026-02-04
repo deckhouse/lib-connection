@@ -31,12 +31,20 @@ import (
 	"github.com/deckhouse/lib-connection/pkg/kube"
 	"github.com/deckhouse/lib-connection/pkg/provider"
 	"github.com/deckhouse/lib-connection/pkg/ssh"
+	"github.com/deckhouse/lib-connection/pkg/ssh/clissh"
 	sshconfig "github.com/deckhouse/lib-connection/pkg/ssh/config"
 	"github.com/deckhouse/lib-connection/pkg/ssh/gossh"
 	"github.com/deckhouse/lib-connection/pkg/tests"
 )
 
 func TestDefaultKubeProvider(t *testing.T) {
+	cliRunTest := runTest{
+		name: "Cli",
+		mode: sshconfig.Mode{
+			ForceLegacy: true,
+		},
+	}
+
 	runTests := []runTest{
 		{
 			name: "Go",
@@ -45,12 +53,7 @@ func TestDefaultKubeProvider(t *testing.T) {
 			},
 		},
 
-		{
-			name: "Cli",
-			mode: sshconfig.Mode{
-				ForceLegacy: true,
-			},
-		},
+		cliRunTest,
 	}
 
 	t.Run("OverSSH", func(t *testing.T) {
@@ -81,7 +84,7 @@ func TestDefaultKubeProvider(t *testing.T) {
 						registerCleanupSSHProvider(t, test, sshProvider)
 
 						kubeProviderConfig := &kube.Config{}
-						kubeProvider := getKubeProvider(t, test, kubeProviderConfig, sshProvider)
+						kubeProvider, _ := getKubeProvider(t, test, kubeProviderConfig, sshProvider)
 						registerCleanupKubeProvider(t, test, kubeProvider)
 
 						ctx := context.TODO()
@@ -95,6 +98,11 @@ func TestDefaultKubeProvider(t *testing.T) {
 						require.NoError(t, err, "second client should be created")
 
 						require.True(t, firstClient == secondClient, "first client should be equal to second client")
+
+						firstSSHClient := extractSSHClient(t, firstClient)
+						secondSSHClient := extractSSHClient(t, secondClient)
+
+						require.True(t, firstSSHClient == secondSSHClient, "first ssh client should be equal to second ssh client")
 					})
 				}
 			})
@@ -109,7 +117,7 @@ func TestDefaultKubeProvider(t *testing.T) {
 						registerCleanupSSHProvider(t, test, sshProvider)
 
 						kubeProviderConfig := &kube.Config{}
-						kubeProvider := getKubeProvider(t, test, kubeProviderConfig, sshProvider)
+						kubeProvider, runnerIface := getKubeProvider(t, test, kubeProviderConfig, sshProvider)
 						registerCleanupKubeProvider(t, test, kubeProvider)
 
 						ctx := context.TODO()
@@ -119,8 +127,14 @@ func TestDefaultKubeProvider(t *testing.T) {
 
 						assertKubeClient(t, test, firstClient, true)
 
+						firstSSHClient := extractSSHClient(t, firstClient)
+
+						logClientSwitching(test)
 						_, err = sshProvider.SwitchClient(ctx, tests.Session(secondContainer), secondContainer.AgentPrivateKeys())
 						require.NoError(t, err, "ssh client should be switched")
+
+						// should use custom port for assert that client after switch stopped
+						provider.RunnerInterfaceWithInitOpts(kube.InitWithLocalPort(tests.RandPort()))(runnerIface)
 
 						afterSwitchClient, err := kubeProvider.Client(ctx)
 						require.NoError(t, err, "after switch client should be created")
@@ -128,9 +142,17 @@ func TestDefaultKubeProvider(t *testing.T) {
 						require.False(t, firstClient == afterSwitchClient, "first client should not be equal to second client after switch")
 
 						assertKubeClient(t, test, afterSwitchClient, true)
+						assertKubeClient(t, test, firstClient, false)
 
+						afterSwitchSSHClient := extractSSHClient(t, afterSwitchClient)
+						require.False(t, firstSSHClient == afterSwitchSSHClient, "first ssh client should not be equal to second client after switch")
+
+						logClientSwitching(test)
 						_, err = sshProvider.SwitchToDefault(ctx)
 						require.NoError(t, err, "ssh client should be switched to default")
+
+						// should use custom port for assert that client after switch stopped
+						provider.RunnerInterfaceWithInitOpts(kube.InitWithLocalPort(tests.RandPort()))(runnerIface)
 
 						afterSwitchToDefaultClient, err := kubeProvider.Client(ctx)
 						require.NoError(t, err, "after switch to default client should be created")
@@ -139,6 +161,11 @@ func TestDefaultKubeProvider(t *testing.T) {
 						require.False(t, afterSwitchClient == afterSwitchToDefaultClient, "after switch client should not be equal to second client after switch to default")
 
 						assertKubeClient(t, test, afterSwitchToDefaultClient, true)
+						assertKubeClient(t, test, afterSwitchClient, false)
+
+						afterSwitchToDefaultSSHClient := extractSSHClient(t, afterSwitchToDefaultClient)
+						require.False(t, firstSSHClient == afterSwitchToDefaultSSHClient, "first SSH client should not be equal to after switch to default SSH client")
+						require.False(t, afterSwitchSSHClient == afterSwitchToDefaultSSHClient, "after switch SSH client should not be equal to after switch to default SSH client")
 					})
 				}
 			})
@@ -153,7 +180,7 @@ func TestDefaultKubeProvider(t *testing.T) {
 						registerCleanupSSHProvider(t, test, sshProvider)
 
 						kubeProviderConfig := &kube.Config{}
-						kubeProvider := getKubeProvider(t, test, kubeProviderConfig, sshProvider)
+						kubeProvider, _ := getKubeProvider(t, test, kubeProviderConfig, sshProvider)
 						registerCleanupKubeProvider(t, test, kubeProvider)
 
 						ctx := context.TODO()
@@ -175,8 +202,9 @@ func TestDefaultKubeProvider(t *testing.T) {
 
 						require.Equal(t, kubeProvider.AdditionalClientsCount(), len(additionalClients), "additional client should added to provider")
 
-						assertAdditionalClients(t, test, firstClient, additionalClients)
+						assertAdditionalClients(t, test, firstClient, additionalClients, true)
 
+						logClientSwitching(test)
 						_, err = sshProvider.SwitchClient(ctx, tests.Session(secondContainer), secondContainer.AgentPrivateKeys())
 						require.NoError(t, err, "ssh client should be switched")
 
@@ -194,7 +222,7 @@ func TestDefaultKubeProvider(t *testing.T) {
 
 						require.Equal(t, kubeProvider.AdditionalClientsCount(), len(additionalClients), "additional client should added to provider")
 
-						assertAdditionalClients(t, test, clientAfterSwitch, additionalClients)
+						assertAdditionalClients(t, test, clientAfterSwitch, additionalClients, true)
 
 						// stop additional client does not affect another
 
@@ -211,14 +239,213 @@ func TestDefaultKubeProvider(t *testing.T) {
 
 						for _, c := range stoppedClients {
 							assertKubeClient(t, test, c, false)
+							assertSSHClientLive(t, test, extractSSHClient(t, c), false)
 						}
 
 						liveClients := disJoinClients(additionalClients, stoppedClients)
 						for _, c := range liveClients {
 							assertKubeClient(t, test, c, true)
 						}
+
+						assertSSHClientLive(t, test, extractSSHClient(t, clientAfterSwitch), true)
 					})
 				}
+			})
+
+			t.Run("NewAdditionalClientWithoutInitialize", func(t *testing.T) {
+				for _, rt := range runTests {
+					t.Run(rt.name, func(t *testing.T) {
+						test := newSubTest(t, rt)
+
+						defaultConfig := connectionConfigForContainer(firstContainer, rt.mode)
+						sshProvider := getSSHProvider(test, defaultConfig)
+						registerCleanupSSHProvider(t, test, sshProvider)
+
+						kubeProviderConfig := &kube.Config{}
+						kubeProvider, _ := getKubeProvider(t, test, kubeProviderConfig, sshProvider)
+						registerCleanupKubeProvider(t, test, kubeProvider)
+
+						ctx := context.TODO()
+
+						firstClient, err := kubeProvider.Client(ctx)
+						require.NoError(t, err, "first client should be created")
+
+						assertKubeClient(t, test, firstClient, true)
+
+						additionalClients := make([]connection.KubeClient, 0, 2)
+
+						firstAdditionalClient, err := kubeProvider.NewAdditionalClientWithoutInitialize(ctx)
+						require.NoError(t, err, "additional client should be created")
+						additionalClients = append(additionalClients, firstAdditionalClient)
+
+						secondAdditionalClient, err := kubeProvider.NewAdditionalClientWithoutInitialize(ctx)
+						require.NoError(t, err, "additional client should be created")
+						additionalClients = append(additionalClients, secondAdditionalClient)
+
+						require.Equal(t, kubeProvider.AdditionalClientsCount(), len(additionalClients), "additional client should added to provider")
+
+						assertAdditionalClients(t, test, firstClient, additionalClients, false)
+
+						// stop additional client no initialized not failed does not affect another
+						for _, c := range additionalClients {
+							kube.Stop(c, true)
+						}
+
+						assertKubeClient(t, test, firstClient, true)
+					})
+				}
+			})
+
+			t.Run("FailAdditionalChecks", func(t *testing.T) {
+				// test only cli because go-ssh will fail on start
+				// cli ssh always create client but it can connect after creation
+
+				test := newSubTest(t, cliRunTest)
+
+				defaultConfig := connectionConfigForContainer(firstContainer, cliRunTest.mode)
+				defaultConfig.Config.Port = tests.Ptr(tests.RandPort())
+				sshProvider := getSSHProvider(test, defaultConfig)
+				registerCleanupSSHProvider(t, test, sshProvider)
+
+				kubeProviderConfig := &kube.Config{}
+				kubeProvider, _ := getKubeProvider(t, test, kubeProviderConfig, sshProvider,
+					provider.RunnerInterfaceWithSSHLoopsParams(provider.RunnerInterfaceSSHLoopsParams{
+						AwaitAvailabilityOverSSH: retry.NewEmptyParams(
+							retry.WithWait(2*time.Second),
+							retry.WithAttempts(4),
+						),
+					}),
+				)
+				registerCleanupKubeProvider(t, test, kubeProvider)
+
+				ctx := context.TODO()
+
+				assertError := func(t *testing.T, err error) {
+					require.Error(t, err, "first client should be created")
+					require.Contains(t, err.Error(), "SSH connect failed to")
+				}
+
+				_, err := kubeProvider.Client(ctx)
+				assertError(t, err)
+
+				_, err = kubeProvider.NewAdditionalClient(ctx)
+				assertError(t, err)
+
+				require.Len(t, sshProvider.AdditionalClients(), 1, "additional ssh clients should added to provider")
+
+				_, err = kubeProvider.NewAdditionalClientWithoutInitialize(ctx)
+				require.NoError(t, err, "client without initialize should be provided")
+
+				require.Len(t, sshProvider.AdditionalClients(), 2, "additional ssh clients should added to provider")
+			})
+
+			t.Run("Cleanup", func(t *testing.T) {
+				getKubeForCleanupProvider := func(t *testing.T, test *tests.Test, rt runTest) *provider.DefaultKubeProvider {
+					defaultConfig := connectionConfigForContainer(firstContainer, rt.mode)
+					sshProvider := getSSHProvider(test, defaultConfig)
+					registerCleanupSSHProvider(t, test, sshProvider)
+
+					kubeProviderConfig := &kube.Config{}
+					kubeProvider, _ := getKubeProvider(t, test, kubeProviderConfig, sshProvider)
+					registerCleanupKubeProvider(t, test, kubeProvider)
+
+					return kubeProvider
+				}
+
+				t.Run("NoClients", func(t *testing.T) {
+					rt := runTest{name: "none"}
+					test := newSubTest(t, rt)
+
+					kubeProvider := getKubeForCleanupProvider(t, test, rt)
+
+					doClean := func() {
+						err := kubeProvider.Cleanup(context.TODO())
+						require.NoError(t, err, "should cleanup")
+					}
+
+					require.NotPanics(t, doClean, "should cleanup")
+
+				})
+
+				t.Run("OnlyDefault", func(t *testing.T) {
+					for _, rt := range runTests {
+						t.Run(rt.name, func(t *testing.T) {
+							test := newSubTest(t, rt)
+
+							kubeProvider := getKubeForCleanupProvider(t, test, rt)
+
+							defaultClient, err := kubeProvider.Client(context.TODO())
+							require.NoError(t, err, "should be created")
+
+							sshClient := extractSSHClient(t, defaultClient)
+
+							doClean := func() {
+								err := kubeProvider.Cleanup(context.TODO())
+								require.NoError(t, err, "should cleanup")
+							}
+
+							require.NotPanics(t, doClean, "should cleanup")
+
+							require.False(t, kubeProvider.HasCurrent(), "should not have current")
+							assertSSHClientLive(t, test, sshClient, true)
+						})
+					}
+				})
+
+				t.Run("WithAdditionals", func(t *testing.T) {
+					for _, rt := range runTests {
+						t.Run(rt.name, func(t *testing.T) {
+							test := newSubTest(t, rt)
+
+							defaultConfig := connectionConfigForContainer(firstContainer, rt.mode)
+							sshProvider := getSSHProvider(test, defaultConfig)
+							registerCleanupSSHProvider(t, test, sshProvider)
+
+							kubeProviderConfig := &kube.Config{}
+							kubeProvider, _ := getKubeProvider(t, test, kubeProviderConfig, sshProvider)
+							registerCleanupKubeProvider(t, test, kubeProvider)
+
+							ctx := context.TODO()
+
+							defaultClient, err := kubeProvider.Client(ctx)
+							require.NoError(t, err, "should be created")
+
+							additionalClients := make([]connection.KubeClient, 0, 3)
+
+							firstAdditional, err := kubeProvider.NewAdditionalClient(ctx)
+							require.NoError(t, err, "additional client should be created")
+							additionalClients = append(additionalClients, firstAdditional)
+
+							secondAdditional, err := kubeProvider.NewAdditionalClient(ctx)
+							require.NoError(t, err, "additional client should be created")
+							additionalClients = append(additionalClients, secondAdditional)
+
+							noInitClient, err := kubeProvider.NewAdditionalClientWithoutInitialize(ctx)
+							require.NoError(t, err, "additional client should be created")
+
+							sshClient := extractSSHClient(t, defaultClient)
+
+							doClean := func() {
+								err := kubeProvider.Cleanup(context.TODO())
+								require.NoError(t, err, "should cleanup")
+							}
+
+							require.NotPanics(t, doClean, "should cleanup")
+
+							require.False(t, kubeProvider.HasCurrent(), "should not have current")
+							assertSSHClientLive(t, test, sshClient, true)
+
+							require.Equal(t, 0, kubeProvider.AdditionalClientsCount(), "additional client should removed")
+
+							for _, c := range additionalClients {
+								assertKubeClient(t, test, c, false)
+								assertSSHClientLive(t, test, extractSSHClient(t, c), false)
+							}
+
+							assertSSHClientLive(t, test, extractSSHClient(t, noInitClient), false)
+						})
+					}
+				})
 			})
 		})
 	})
@@ -304,14 +531,15 @@ func connectionConfigForContainer(container *tests.TestContainerWrapper, mode ss
 }
 
 func getSSHProvider(test *tests.Test, config *sshconfig.ConnectionConfig) *provider.DefaultSSHProvider {
-	defaultLoopParam := retry.NewEmptyParams(
-		retry.WithWait(2*time.Second),
-		retry.WithAttempts(10),
-	)
-
 	loopsParams := gossh.ClientLoopsParams{
-		ConnectToHostDirectly: defaultLoopParam.Clone(),
-		NewSession:            defaultLoopParam.Clone(),
+		ConnectToHostDirectly: retry.NewEmptyParams(
+			retry.WithWait(2*time.Second),
+			retry.WithAttempts(10),
+		),
+		NewSession: retry.NewEmptyParams(
+			retry.WithWait(1*time.Second),
+			retry.WithAttempts(5),
+		),
 	}
 
 	return provider.NewDefaultSSHProvider(
@@ -331,8 +559,21 @@ func assertKubeClient(t *testing.T, test *tests.Test, client connection.KubeClie
 	name := fmt.Sprintf("kube-cl-%s", tests.GenerateID(test.Name()))
 	content := tests.RandString(32)
 
+	liveLoopParams := retry.NewEmptyParams(
+		retry.WithWait(1*time.Second),
+		retry.WithAttempts(4),
+	)
+
+	liveCtx := context.TODO()
+	err := kube.IsLive(liveCtx, client, liveLoopParams)
+	if !success {
+		require.Error(t, err, "should not live")
+		return
+	}
+	require.NoError(t, err, "should live")
+
 	defaultParams := retry.NewEmptyParams(
-		retry.WithAttempts(5),
+		retry.WithAttempts(4),
 		retry.WithWait(2*time.Second),
 		retry.WithLogger(test.GetLogger()),
 	)
@@ -341,7 +582,7 @@ func assertKubeClient(t *testing.T, test *tests.Test, client connection.KubeClie
 		retry.WithName("Create ConfigMap %s/%s", ns, name),
 	)
 
-	err := retry.NewLoopWithParams(createCMParams).Run(func() error {
+	err = retry.NewLoopWithParams(createCMParams).Run(func() error {
 		ctx, cancel := kubeRequestCtx()
 		defer cancel()
 
@@ -361,12 +602,7 @@ func assertKubeClient(t *testing.T, test *tests.Test, client connection.KubeClie
 		return err
 	})
 
-	assertError := require.Error
-	if success {
-		assertError = require.NoError
-	}
-
-	assertError(t, err, "should valid create configmap result")
+	require.NoError(t, err, "should create configmap")
 
 	getCMParams := defaultParams.Clone(
 		retry.WithName("Get ConfigMap %s/%s", ns, name),
@@ -384,15 +620,9 @@ func assertKubeClient(t *testing.T, test *tests.Test, client connection.KubeClie
 		return nil
 	})
 
-	if success {
-		require.NoError(t, err, "should get configmap")
-		require.NotNil(t, gotCM, "should get configmap")
-		require.Equal(t, content, gotCM.Data[key], "should content be equal")
-
-		return
-	}
-
-	require.Error(t, err, "should not get configmap")
+	require.NoError(t, err, "should get configmap")
+	require.NotNil(t, gotCM, "should get configmap")
+	require.Equal(t, content, gotCM.Data[key], "should content be equal")
 }
 
 func kubeRequestCtx() (context.Context, context.CancelFunc) {
@@ -415,11 +645,20 @@ func registerCleanupKubeProvider(t *testing.T, test *tests.Test, p *provider.Def
 	})
 }
 
-func getKubeProvider(t *testing.T, test *tests.Test, config *kube.Config, sshProvider connection.SSHProvider) *provider.DefaultKubeProvider {
+func getKubeProvider(t *testing.T, test *tests.Test, config *kube.Config, sshProvider connection.SSHProvider, opts ...provider.RunnerInterfaceOpt) (*provider.DefaultKubeProvider, provider.RunnerInterface) {
 	sett := test.Settings()
-	ri, err := provider.GetRunnerInterface(config, sett, sshProvider)
+	ri, err := provider.GetRunnerInterface(config, sett, sshProvider, opts...)
 	require.NoError(t, err, "runner interface should provided")
-	return provider.NewDefaultKubeProvider(sett, config, ri)
+
+	loopParams := retry.NewEmptyParams(
+		retry.WithAttempts(10),
+		retry.WithWait(2*time.Second),
+	)
+
+	return provider.NewDefaultKubeProvider(sett, config, ri).WithLoopsParams(provider.KubeProviderLoopsParams{
+		InitClient:   loopParams.Clone(),
+		WaitingReady: loopParams.Clone(),
+	}), ri
 }
 
 func extractSSHClient(t *testing.T, kubeClient connection.KubeClient) connection.SSHClient {
@@ -438,11 +677,11 @@ func extractSSHClient(t *testing.T, kubeClient connection.KubeClient) connection
 	return sshClient
 }
 
-func assertAdditionalClients(t *testing.T, test *tests.Test, clientFromClientCall connection.KubeClient, additional []connection.KubeClient) {
+func assertAdditionalClients(t *testing.T, test *tests.Test, clientFromClientCall connection.KubeClient, additional []connection.KubeClient, success bool) {
 	sshClientFromClientCall := extractSSHClient(t, clientFromClientCall)
 
 	for i, client := range additional {
-		assertKubeClient(t, test, client, true)
+		assertKubeClient(t, test, client, success)
 
 		currentSSHClient := extractSSHClient(t, client)
 		require.False(t, currentSSHClient == sshClientFromClientCall, "additional ssh client should not be equal to first ssh additional client")
@@ -473,4 +712,43 @@ func disJoinClients(all []connection.KubeClient, subSet []connection.KubeClient)
 	}
 
 	return res
+}
+
+func assertSSHClientLive(t *testing.T, test *tests.Test, sshClient connection.SSHClient, live bool) {
+	if _, ok := sshClient.(*clissh.Client); ok {
+		test.GetLogger().InfoF("SSH client always should be live")
+		live = true
+	}
+
+	loopParams := retry.NewEmptyParams(
+		retry.WithAttempts(3),
+		retry.WithWait(2*time.Second),
+		retry.WithLogger(test.GetLogger()),
+		retry.WithName("Check that ssh client live"),
+	)
+
+	out := ""
+
+	err := retry.NewLoopWithParams(loopParams).Run(func() error {
+		cmd := sshClient.Command("echo", "-n", "RUN_OK")
+		o, err := cmd.CombinedOutput(context.TODO())
+		if err != nil {
+			return err
+		}
+
+		out = string(o)
+		return nil
+	})
+
+	if !live {
+		require.Error(t, err, "ssh client should not be live")
+		return
+	}
+
+	require.NoError(t, err, "ssh client should live")
+	require.True(t, strings.HasSuffix(out, "RUN_OK"), "should valid output for check live")
+}
+
+func logClientSwitching(test *tests.Test) {
+	test.GetLogger().InfoF("Start switching ssh client")
 }

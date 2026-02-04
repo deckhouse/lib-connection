@@ -103,6 +103,7 @@ func (k *KubernetesClient) NodeInterfaceAsSSHClient() connection.SSHClient {
 
 type InitOpts struct {
 	NoStartKubeProxy bool
+	UseLocalPort     int
 }
 
 type InitOpt func(*InitOpts)
@@ -110,6 +111,12 @@ type InitOpt func(*InitOpts)
 func InitWithNoStartKubeProxy() InitOpt {
 	return func(initOpts *InitOpts) {
 		initOpts.NoStartKubeProxy = true
+	}
+}
+
+func InitWithLocalPort(port int) InitOpt {
+	return func(initOpts *InitOpts) {
+		initOpts.UseLocalPort = port
 	}
 }
 
@@ -128,7 +135,9 @@ func (k *KubernetesClient) InitContext(ctx context.Context, params *Config, opts
 }
 
 func (k *KubernetesClient) initContext(ctx context.Context, params *Config, opts ...InitOpt) error {
-	options := &InitOpts{}
+	options := &InitOpts{
+		UseLocalPort: -1,
+	}
 
 	for _, opt := range opts {
 		opt(options)
@@ -147,14 +156,14 @@ func (k *KubernetesClient) initContext(ctx context.Context, params *Config, opts
 		kubeClient.WithRestConfig(params.RestConfig)
 	case isLocalRun:
 		if !options.NoStartKubeProxy {
-			_, err := k.StartKubernetesProxy(ctx)
+			_, err := k.StartKubernetesProxy(ctx, options)
 			if err != nil {
 				return err
 			}
 		}
 	default:
 		if !options.NoStartKubeProxy {
-			port, err := k.StartKubernetesProxy(ctx)
+			port, err := k.StartKubernetesProxy(ctx, options)
 			if err != nil {
 				return err
 			}
@@ -173,13 +182,13 @@ func (k *KubernetesClient) initContext(ctx context.Context, params *Config, opts
 }
 
 // StartKubernetesProxy initializes kubectl-proxy on remote host and establishes ssh tunnel to it
-func (k *KubernetesClient) StartKubernetesProxy(ctx context.Context) (string, error) {
+func (k *KubernetesClient) StartKubernetesProxy(ctx context.Context, opts *InitOpts) (string, error) {
 	wrapper, ok := k.NodeInterface.(*ssh.NodeInterfaceWrapper)
 	if !ok {
 		return "6445", nil
 	}
 
-	port, err := k.startRemoteKubeProxy(ctx, wrapper.Client())
+	port, err := k.startRemoteKubeProxy(ctx, wrapper.Client(), opts)
 
 	if err != nil {
 		return "", fmt.Errorf("start kube proxy: %s", err)
@@ -188,7 +197,7 @@ func (k *KubernetesClient) StartKubernetesProxy(ctx context.Context) (string, er
 	return port, nil
 }
 
-func (k *KubernetesClient) startRemoteKubeProxy(ctx context.Context, sshCl connection.SSHClient) (string, error) {
+func (k *KubernetesClient) startRemoteKubeProxy(ctx context.Context, sshCl connection.SSHClient, opts *InitOpts) (string, error) {
 	logger := k.settings.Logger()
 	startLoopParams := retry.SafeCloneOrNewParams(k.loopsParams.StartingKubeProxy, defaultStartKubeProxyLoopParamsOps...).
 		Clone(
@@ -204,7 +213,7 @@ func (k *KubernetesClient) startRemoteKubeProxy(ctx context.Context, sshCl conne
 
 			k.KubeProxy = sshCl.KubeProxy()
 			var err error
-			port, err = k.KubeProxy.Start(-1)
+			port, err = k.KubeProxy.Start(opts.UseLocalPort)
 
 			if err != nil {
 				sshCl.Session().ChoiceNewHost()
@@ -237,11 +246,10 @@ func Stop(client connection.KubeClient, full bool) {
 		return
 	}
 
-	if govalue.Nil(kubeClient.KubeProxy) {
-		return
+	if !govalue.Nil(kubeClient.KubeProxy) {
+		kubeClient.KubeProxy.Stop(-1)
+		kubeClient.KubeProxy = nil
 	}
-
-	kubeClient.KubeProxy.Stop(-1)
 
 	if full {
 		wrapper, ok := kubeClient.NodeInterface.(*ssh.NodeInterfaceWrapper)
@@ -254,4 +262,46 @@ func Stop(client connection.KubeClient, full bool) {
 			sshClient.Stop()
 		}
 	}
+}
+
+// IsLive
+// check that client is live (can connect to API)
+// you can pass retry loop paras as first variadic option
+// if not pass use 2 attempts with  2 seconds wait
+func IsLive(ctx context.Context, client connection.KubeClient, loopParams ...retry.Params) error {
+	if govalue.Nil(client) {
+		return nil
+	}
+
+	kubeClient, ok := client.(*KubernetesClient)
+	if !ok {
+		return fmt.Errorf("not a KubernetesClient")
+	}
+
+	if govalue.Nil(kubeClient.KubeClient) {
+		return fmt.Errorf("kube client does not initialized")
+	}
+
+	var retryParams retry.Params
+	if len(loopParams) > 0 {
+		retryParams = loopParams[0]
+	}
+
+	readyLoopParams := retry.SafeCloneOrNewParams(retryParams, defaultLiveLoopParamsOpts...).Clone(
+		retry.WithName("Waiting for Kubernetes API to become Ready"),
+		retry.WithLogger(kubeClient.settings.Logger()),
+	)
+
+	return retry.NewLoopWithParams(readyLoopParams).RunContext(ctx, func() error {
+		_, err := client.Discovery().ServerVersion()
+		if err == nil {
+			return nil
+		}
+		return fmt.Errorf("kubernetes API is not Ready: %w", err)
+	})
+}
+
+var defaultLiveLoopParamsOpts = []retry.ParamsBuilderOpt{
+	retry.WithWait(2 * time.Second),
+	retry.WithAttempts(2),
 }

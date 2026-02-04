@@ -34,9 +34,8 @@ var (
 )
 
 type KubeProviderLoopsParams struct {
-	AwaitAvailabilityOverSSH retry.Params
-	InitClient               retry.Params
-	WaitingReady             retry.Params
+	InitClient   retry.Params
+	WaitingReady retry.Params
 }
 
 type DefaultKubeProvider struct {
@@ -51,9 +50,6 @@ type DefaultKubeProvider struct {
 	runnerInterface RunnerInterface
 
 	loopsParams KubeProviderLoopsParams
-
-	// use for testing only
-	noStartKubeProxy bool
 }
 
 // NewDefaultKubeProvider
@@ -65,6 +61,11 @@ func NewDefaultKubeProvider(sett settings.Settings, config *kube.Config, runnerI
 		runnerInterface:   runnerInterface,
 		additionalClients: make([]connection.KubeClient, 0),
 	}
+}
+
+func (p *DefaultKubeProvider) WithLoopsParams(l KubeProviderLoopsParams) *DefaultKubeProvider {
+	p.loopsParams = l
+	return p
 }
 
 func (p *DefaultKubeProvider) Client(ctx context.Context) (connection.KubeClient, error) {
@@ -80,13 +81,15 @@ func (p *DefaultKubeProvider) Client(ctx context.Context) (connection.KubeClient
 		// does not stop because we can use current ssh client in runner
 		client, err := p.createAndInitClient(ctx, false, SetNodeInterfaceOptWithRunChecks())
 		if err != nil {
+			// need finalize to drop per session variables
+			p.runnerInterface.Finalize(true)
 			return nil, err
 		}
 
 		kube.Stop(p.currentClient, false)
 
 		p.currentClient = client
-		p.runnerInterface.Finalize()
+		p.runnerInterface.Finalize(false)
 
 		return client, nil
 	}
@@ -132,15 +135,24 @@ func (p *DefaultKubeProvider) NewAdditionalClientWithoutInitialize(ctx context.C
 }
 
 func (p *DefaultKubeProvider) Cleanup(context.Context) error {
+	kube.Stop(p.currentClient, false)
+	p.currentClient = nil
+
 	for _, client := range p.additionalClients {
 		kube.Stop(client, true)
 	}
+
+	p.additionalClients = make([]connection.KubeClient, 0)
 
 	return nil
 }
 
 func (p *DefaultKubeProvider) AdditionalClientsCount() int {
 	return len(p.additionalClients)
+}
+
+func (p *DefaultKubeProvider) HasCurrent() bool {
+	return !govalue.Nil(p.currentClient)
 }
 
 func (p *DefaultKubeProvider) newClient(ctx context.Context, stopOnError bool, opts ...SetNodeInterfaceOpt) (*kube.KubernetesClient, error) {
@@ -162,11 +174,7 @@ func (p *DefaultKubeProvider) createAndInitClient(ctx context.Context, forceStop
 		return nil, err
 	}
 
-	var initOpts []kube.InitOpt
-
-	if p.noStartKubeProxy {
-		initOpts = append(initOpts, kube.InitWithNoStartKubeProxy())
-	}
+	initOpts := p.runnerInterface.InitOptions()
 
 	logger := p.sett.Logger()
 
@@ -218,18 +226,9 @@ func (p *DefaultKubeProvider) connectToKubernetesAPI(ctx context.Context, client
 
 	time.Sleep(50 * time.Millisecond) // tick to prevent first probable fail
 
-	readyLoopParams := retry.SafeCloneOrNewParams(p.loopsParams.WaitingReady, defaultWaitingReadyParamsOpts...).Clone(
-		retry.WithName("Waiting for Kubernetes API to become Ready"),
-		retry.WithLogger(logger),
-	)
+	readyLoopParams := retry.SafeCloneOrNewParams(p.loopsParams.WaitingReady, defaultWaitingReadyParamsOpts...)
 
-	return retry.NewLoopWithParams(readyLoopParams).RunContext(ctx, func() error {
-		_, err := client.Discovery().ServerVersion()
-		if err == nil {
-			return nil
-		}
-		return fmt.Errorf("kubernetes API is not Ready: %w", err)
-	})
+	return kube.IsLive(ctx, client, readyLoopParams)
 }
 
 var defaultInitClientParamsOpts = []retry.ParamsBuilderOpt{

@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/deckhouse/lib-dhctl/pkg/retry"
 	"github.com/name212/govalue"
 
 	connection "github.com/deckhouse/lib-connection/pkg"
@@ -28,7 +29,11 @@ import (
 	"github.com/deckhouse/lib-connection/pkg/ssh/session"
 )
 
-type RunnerInterfaceWithSSH struct {
+type RunnerInterfaceSSHLoopsParams struct {
+	AwaitAvailabilityOverSSH retry.Params
+}
+
+type RunnerInterfaceSSH struct {
 	sett settings.Settings
 
 	sshProvider connection.SSHProvider
@@ -38,22 +43,29 @@ type RunnerInterfaceWithSSH struct {
 
 	currentSSHClientSession *session.SessionWithPrivateKeys
 
-	loopsParams KubeProviderLoopsParams
+	loopsParams RunnerInterfaceSSHLoopsParams
+
+	initOpts []kube.InitOpt
 }
 
-func NewRunnerInterfaceWithSSH(sett settings.Settings, sshProvider connection.SSHProvider) *RunnerInterfaceWithSSH {
-	return &RunnerInterfaceWithSSH{
+func NewRunnerInterfaceSSH(sett settings.Settings, sshProvider connection.SSHProvider) *RunnerInterfaceSSH {
+	return &RunnerInterfaceSSH{
 		sshProvider: sshProvider,
 		sett:        sett,
 	}
 }
 
-func (r *RunnerInterfaceWithSSH) WithLoopParams(p KubeProviderLoopsParams) *RunnerInterfaceWithSSH {
+func (r *RunnerInterfaceSSH) WithLoopParams(p RunnerInterfaceSSHLoopsParams) *RunnerInterfaceSSH {
 	r.loopsParams = p
 	return r
 }
 
-func (r *RunnerInterfaceWithSSH) IsSwitched(ctx context.Context) (bool, error) {
+func (r *RunnerInterfaceSSH) WithInitOptions(opts ...kube.InitOpt) *RunnerInterfaceSSH {
+	r.initOpts = opts
+	return r
+}
+
+func (r *RunnerInterfaceSSH) IsSwitched(ctx context.Context) (bool, error) {
 	sshClient, err := r.sshProvider.Client(ctx)
 	if err != nil {
 		return false, err
@@ -69,7 +81,7 @@ func (r *RunnerInterfaceWithSSH) IsSwitched(ctx context.Context) (bool, error) {
 	return !session.CompareWithKeys(fromClient, r.currentSSHClientSession), nil
 }
 
-func (r *RunnerInterfaceWithSSH) SetNodeInterface(ctx context.Context, client *kube.KubernetesClient, opts ...SetNodeInterfaceOpt) error {
+func (r *RunnerInterfaceSSH) SetNodeInterface(ctx context.Context, client *kube.KubernetesClient, opts ...SetNodeInterfaceOpt) error {
 	options := &SetNodeInterfaceOpts{}
 	for _, opt := range opts {
 		opt(options)
@@ -99,8 +111,8 @@ func (r *RunnerInterfaceWithSSH) SetNodeInterface(ctx context.Context, client *k
 	return nil
 }
 
-func (r *RunnerInterfaceWithSSH) Finalize() {
-	if !govalue.Nil(r.fromSwitchCall) {
+func (r *RunnerInterfaceSSH) Finalize(isError bool) {
+	if !isError && !govalue.Nil(r.fromSwitchCall) {
 		r.currentSSHClient = r.fromSwitchCall
 		r.updateSessionFromCurrent()
 	}
@@ -108,7 +120,11 @@ func (r *RunnerInterfaceWithSSH) Finalize() {
 	r.fromSwitchCall = nil
 }
 
-func (r *RunnerInterfaceWithSSH) updateSessionFromCurrent() {
+func (r *RunnerInterfaceSSH) InitOptions() []kube.InitOpt {
+	return r.initOpts
+}
+
+func (r *RunnerInterfaceSSH) updateSessionFromCurrent() {
 	r.currentSSHClientSession = &session.SessionWithPrivateKeys{
 		Session: r.currentSSHClient.Session().Copy(),
 		Keys:    r.currentSSHClient.PrivateKeys(),
@@ -117,7 +133,7 @@ func (r *RunnerInterfaceWithSSH) updateSessionFromCurrent() {
 
 func noCleanupOnFailChecks() {}
 
-func (r *RunnerInterfaceWithSSH) getCurrentForAdditional(ctx context.Context, opts *SetNodeInterfaceOpts) (connection.SSHClient, func(), error) {
+func (r *RunnerInterfaceSSH) getCurrentForAdditional(ctx context.Context, opts *SetNodeInterfaceOpts) (connection.SSHClient, func(), error) {
 	if opts.NewNodeInterface {
 		client, err := r.sshProvider.NewAdditionalClient(ctx)
 		if err != nil {
