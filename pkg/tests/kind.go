@@ -26,6 +26,8 @@ import (
 
 	"github.com/deckhouse/lib-dhctl/pkg/retry"
 	"github.com/stretchr/testify/require"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
 
 	connection "github.com/deckhouse/lib-connection/pkg"
 )
@@ -64,6 +66,7 @@ type KINDCluster struct {
 
 	test       *Test
 	kubeconfig string
+	restConfig *rest.Config
 }
 
 func (c *KINDCluster) appendClusterNameArg(args []string) []string {
@@ -134,6 +137,86 @@ func (c *KINDCluster) KubeconfigWithIP(ip string, port string) string {
 	return strings.ReplaceAll(c.kubeconfig, full, replace)
 }
 
+func (c *KINDCluster) RESTConfig() (*rest.Config, error) {
+	if c.restConfig != nil {
+		return c.copyREST(), nil
+	}
+
+	config, err := clientcmd.Load([]byte(c.Kubeconfig()))
+	if err != nil {
+		return nil, err
+	}
+
+	cluster, ok := config.Clusters[fmt.Sprintf("kind-%s", c.Name)]
+	if !ok {
+		return nil, fmt.Errorf("cluster %s not found in kubeconfig", c.Name)
+	}
+
+	ca := cluster.CertificateAuthorityData
+	if len(ca) == 0 {
+		return nil, fmt.Errorf("no CA data for cluster %s", c.Name)
+	}
+
+	saName := "test-kube-admin"
+
+	_, err = c.runKubectlInSystemNs("Create SA for token", "create", "serviceaccount", saName)
+	if err != nil {
+		return nil, err
+	}
+
+	roleBindingArgs := []string{
+		"create",
+		"clusterrolebinding",
+		"test-kube-admin-binding",
+		"--clusterrole=cluster-admin",
+		fmt.Sprintf("--serviceaccount=kube-system:%s", saName),
+	}
+
+	_, err = c.runKubectlInSystemNs("Create role binding", roleBindingArgs...)
+	if err != nil {
+		return nil, err
+	}
+
+	token, err := c.runKubectlInSystemNs("Create token", "create", "token", saName)
+	if err != nil {
+		return nil, err
+	}
+
+	c.restConfig = &rest.Config{
+		Host:        fmt.Sprintf("https://127.0.0.1:%s", c.ControlPlanePort),
+		BearerToken: token,
+		TLSClientConfig: rest.TLSClientConfig{
+			CAData: ca,
+		},
+	}
+
+	return c.copyREST(), nil
+}
+
+func (c *KINDCluster) copyREST() *rest.Config {
+	ca := c.restConfig.TLSClientConfig.CAData
+
+	cpy := *c.restConfig
+	cpyCA := make([]byte, len(ca))
+	copy(cpyCA, ca)
+
+	cpy.TLSClientConfig.CAData = cpyCA
+
+	return &cpy
+}
+
+func (c *KINDCluster) runKubectlInSystemNs(name string, args ...string) (string, error) {
+	runArgs := []string{
+		"kubectl",
+		"-n",
+		"kube-system",
+	}
+
+	runArgs = append(runArgs, args...)
+
+	return execInKINDContainer(c, name, runArgs...)
+}
+
 func CreateKINDCluster(t *testing.T, params *KINDClusterCreateParams) *KINDCluster {
 	test := params.Test
 
@@ -186,6 +269,17 @@ func CreateKINDCluster(t *testing.T, params *KINDClusterCreateParams) *KINDClust
 	return cluster
 }
 
+func execInKINDContainer(cluster *KINDCluster, name string, args ...string) (string, error) {
+	a := []string{
+		"exec",
+		cluster.containerName(),
+	}
+
+	a = append(a, args...)
+
+	return runDockerForKINDContainer(cluster, name, a...)
+}
+
 func runDockerForKINDContainer(cluster *KINDCluster, name string, args ...string) (string, error) {
 	params := retry.NewEmptyParams(
 		retry.WithName("%s", name),
@@ -212,8 +306,6 @@ func runDockerForKINDContainer(cluster *KINDCluster, name string, args ...string
 
 func getKubectlVersion(cluster *KINDCluster) (string, error) {
 	args := []string{
-		"exec",
-		cluster.containerName(),
 		"kubectl",
 		"version",
 		"--client",
@@ -221,7 +313,7 @@ func getKubectlVersion(cluster *KINDCluster) (string, error) {
 		"json",
 	}
 
-	out, err := runDockerForKINDContainer(cluster, "Get kubectl version", args...)
+	out, err := execInKINDContainer(cluster, "Get kubectl version", args...)
 	if err != nil {
 		return "", err
 	}

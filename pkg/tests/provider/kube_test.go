@@ -455,41 +455,16 @@ func TestDefaultKubeProvider(t *testing.T) {
 
 				assertNoGetSSHConnection(t, sshProvider)
 			})
+		})
 
-			t.Run("NewAdditionalClient", func(t *testing.T) {
-				test := newSubTest(t, rt)
+		t.Run("NewAdditionalClient", func(t *testing.T) {
+			test := newSubTest(t, rt)
 
-				kubeProvider, sshProvider := getKubeconfigKubeProvider(t, test, kindCluster)
+			kubeProvider, sshProvider := getKubeconfigKubeProvider(t, test, kindCluster)
 
-				ctx := context.TODO()
+			assertNewAdditional(t, test, kubeProvider)
 
-				defaultClient, err := kubeProvider.Client(ctx)
-				require.NoError(t, err, "default client should be created")
-
-				assertKubeClient(t, test, defaultClient, true)
-
-				additionalClients := make([]connection.KubeClient, 0, 2)
-
-				firstAdditionalClient, err := kubeProvider.NewAdditionalClient(ctx)
-				require.NoError(t, err, "additional client should be created")
-				additionalClients = append(additionalClients, firstAdditionalClient)
-
-				secondAdditionalClient, err := kubeProvider.NewAdditionalClient(ctx)
-				require.NoError(t, err, "additional client should be created")
-				additionalClients = append(additionalClients, secondAdditionalClient)
-
-				require.Equal(t, len(additionalClients), kubeProvider.AdditionalClientsCount())
-
-				assertAdditionalClients(t, test, defaultClient, additionalClients, true)
-
-				kube.Stop(secondAdditionalClient, true)
-				assertKubeClient(t, test, secondAdditionalClient, false, kube.ErrStoppedKubeClient.Error())
-
-				assertKubeClient(t, test, defaultClient, true)
-				assertKubeClient(t, test, firstAdditionalClient, true)
-
-				assertNoGetSSHConnection(t, sshProvider)
-			})
+			assertNoGetSSHConnection(t, sshProvider)
 		})
 
 		t.Run("NewAdditionalClientWithoutInitialize", func(t *testing.T) {
@@ -507,6 +482,80 @@ func TestDefaultKubeProvider(t *testing.T) {
 			assertIncorrectConfiguration(t, test, func(t *testing.T, test *tests.Test) *provider.DefaultKubeProvider {
 				port := fmt.Sprintf("%d", tests.RandPort())
 				kubeProvider, _ := getKubeconfigKubeProviderWithPort(t, test, kindCluster, port)
+				return kubeProvider
+			})
+		})
+
+		t.Run("Cleanup", func(t *testing.T) {
+			assertCleanupWithoutSSH(t, func(t *testing.T, test *tests.Test) *provider.DefaultKubeProvider {
+				kubeProvider, _ := getKubeconfigKubeProvider(t, test, kindCluster)
+				return kubeProvider
+			})
+		})
+	})
+
+	t.Run("OverRESTConfig", func(t *testing.T) {
+		rt := runTest{name: "overRESTKubeconfig"}
+
+		getKubeconfigKubeProvider := func(t *testing.T, test *tests.Test, kind *tests.KINDCluster, token ...string) (*provider.DefaultKubeProvider, *provider.DefaultSSHProvider) {
+			defaultConfig := connectionConfigForContainer(firstContainer, rt.mode)
+			sshProvider := getSSHProvider(test, defaultConfig)
+			registerCleanupSSHProvider(t, test, sshProvider)
+
+			restConfig, err := kind.RESTConfig()
+			require.NoError(t, err, "rest config should be created")
+
+			if len(token) > 0 {
+				restConfig.BearerToken = token[0]
+			}
+
+			kubeProviderConfig := &kube.Config{
+				RestConfig: restConfig,
+			}
+
+			kubeProvider, _ := getKubeProvider(t, test, kubeProviderConfig, sshProvider)
+			registerCleanupKubeProvider(t, test, kubeProvider)
+
+			return kubeProvider, sshProvider
+		}
+
+		t.Run("Client", func(t *testing.T) {
+			t.Run("SimpleGet", func(t *testing.T) {
+				test := newSubTest(t, rt)
+
+				kubeProvider, sshProvider := getKubeconfigKubeProvider(t, test, kindCluster)
+
+				assertSimpleGetKubeClient(t, test, kubeProvider)
+
+				assertNoGetSSHConnection(t, sshProvider)
+			})
+		})
+
+		t.Run("NewAdditionalClient", func(t *testing.T) {
+			test := newSubTest(t, rt)
+
+			kubeProvider, sshProvider := getKubeconfigKubeProvider(t, test, kindCluster)
+
+			assertNewAdditional(t, test, kubeProvider)
+
+			assertNoGetSSHConnection(t, sshProvider)
+		})
+
+		t.Run("NewAdditionalClientWithoutInitialize", func(t *testing.T) {
+			test := newSubTest(t, rt)
+
+			kubeProvider, sshProvider := getKubeconfigKubeProvider(t, test, kindCluster)
+			assertNewAdditionalClientsWithoutInitialize(t, test, kubeProvider, assertAdditionalClients)
+
+			assertNoGetSSHConnection(t, sshProvider)
+		})
+
+		t.Run("WithIncorrectConfig", func(t *testing.T) {
+			test := newSubTest(t, rt)
+
+			assertIncorrectConfiguration(t, test, func(t *testing.T, test *tests.Test) *provider.DefaultKubeProvider {
+				token := tests.RandString(24)
+				kubeProvider, _ := getKubeconfigKubeProvider(t, test, kindCluster, token)
 				return kubeProvider
 			})
 		})
@@ -967,6 +1016,13 @@ func assertIncorrectConfiguration(t *testing.T, test *tests.Test, getKubeProvide
 
 	ctx := context.TODO()
 
+	kubeProvider.WithLoopsParams(provider.KubeProviderLoopsParams{
+		WaitingReady: retry.NewEmptyParams(
+			retry.WithWait(2*time.Second),
+			retry.WithAttempts(4),
+		),
+	})
+
 	_, err := kubeProvider.Client(ctx)
 	require.Error(t, err, "should be not created")
 
@@ -980,4 +1036,33 @@ func assertIncorrectConfiguration(t *testing.T, test *tests.Test, getKubeProvide
 	require.NoError(t, err, "additional client without initialize should be created")
 
 	require.Equal(t, kubeProvider.AdditionalClientsCount(), 1, "only without initialize should store")
+}
+
+func assertNewAdditional(t *testing.T, test *tests.Test, kubeProvider *provider.DefaultKubeProvider) {
+	ctx := context.TODO()
+
+	defaultClient, err := kubeProvider.Client(ctx)
+	require.NoError(t, err, "default client should be created")
+
+	assertKubeClient(t, test, defaultClient, true)
+
+	additionalClients := make([]connection.KubeClient, 0, 2)
+
+	firstAdditionalClient, err := kubeProvider.NewAdditionalClient(ctx)
+	require.NoError(t, err, "additional client should be created")
+	additionalClients = append(additionalClients, firstAdditionalClient)
+
+	secondAdditionalClient, err := kubeProvider.NewAdditionalClient(ctx)
+	require.NoError(t, err, "additional client should be created")
+	additionalClients = append(additionalClients, secondAdditionalClient)
+
+	require.Equal(t, len(additionalClients), kubeProvider.AdditionalClientsCount())
+
+	assertAdditionalClients(t, test, defaultClient, additionalClients, true)
+
+	kube.Stop(secondAdditionalClient, true)
+	assertKubeClient(t, test, secondAdditionalClient, false, kube.ErrStoppedKubeClient.Error())
+
+	assertKubeClient(t, test, defaultClient, true)
+	assertKubeClient(t, test, firstAdditionalClient, true)
 }
