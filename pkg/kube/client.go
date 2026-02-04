@@ -41,6 +41,8 @@ import (
 
 var (
 	_ connection.KubeClient = &KubernetesClient{}
+
+	ErrStoppedKubeClient = fmt.Errorf("use stopped kube client")
 )
 
 type ClientLoopParams struct {
@@ -246,21 +248,11 @@ func Stop(client connection.KubeClient, full bool) {
 		return
 	}
 
-	if !govalue.Nil(kubeClient.KubeProxy) {
-		kubeClient.KubeProxy.Stop(-1)
-		kubeClient.KubeProxy = nil
-	}
+	stopProxyAndSSH(kubeClient, full)
 
-	if full {
-		wrapper, ok := kubeClient.NodeInterface.(*ssh.NodeInterfaceWrapper)
-		if !ok {
-			return
-		}
-
-		sshClient := wrapper.Client()
-		if _, ok := sshClient.(*gossh.Client); ok {
-			sshClient.Stop()
-		}
+	errorClient, err := NewErrorKubernetesClient(ErrStoppedKubeClient)
+	if err == nil {
+		kubeClient.KubeClient = errorClient
 	}
 }
 
@@ -299,6 +291,27 @@ func IsLive(ctx context.Context, client connection.KubeClient, loopParams ...ret
 		}
 		return fmt.Errorf("kubernetes API is not Ready: %w", err)
 	})
+}
+
+func stopProxyAndSSH(kubeClient *KubernetesClient, full bool) {
+	if !govalue.Nil(kubeClient.KubeProxy) {
+		kubeClient.KubeProxy.Stop(-1)
+		kubeClient.KubeProxy = nil
+	}
+
+	if !full {
+		return
+	}
+
+	wrapper, ok := kubeClient.NodeInterface.(*ssh.NodeInterfaceWrapper)
+	if !ok {
+		return
+	}
+
+	sshClient := wrapper.Client()
+	if _, ok := sshClient.(*gossh.Client); ok {
+		sshClient.Stop()
+	}
 }
 
 var defaultLiveLoopParamsOpts = []retry.ParamsBuilderOpt{

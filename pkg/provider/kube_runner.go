@@ -74,7 +74,9 @@ func getRunner(config *kube.Config, sett settings.Settings, sshProvider connecti
 
 	switch {
 	case config.KubeConfigInCluster:
+		fallthrough
 	case config.KubeConfig != "":
+		fallthrough
 	case config.IsRest():
 		return &RunnerInterfaceNoAction{}, nil
 	case config.LocalKubeClient:

@@ -261,6 +261,10 @@ func (p *DefaultSSHProvider) AdditionalClients() []connection.SSHClient {
 	return dest
 }
 
+func (p *DefaultSSHProvider) HasCurrent() bool {
+	return !govalue.Nil(p.currentClient)
+}
+
 func (p *DefaultSSHProvider) doGetCurrentClient(ctx context.Context) (connection.SSHClient, error) {
 	if !govalue.Nil(p.currentClient) {
 		return p.currentClient, nil
