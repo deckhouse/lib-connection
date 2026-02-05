@@ -28,50 +28,9 @@ import (
 )
 
 func TestTunnel(t *testing.T) {
-	test := tests.ShouldNewIntegrationTest(t, "TestTunnel")
+	test := tests.ShouldNewIntegrationTest(t, "TestGoTunnel")
 
-	sshClient, container := startContainerAndClientWithContainer(t, test)
-	sshClient.WithLoopsParams(ClientLoopsParams{
-		NewSession: retry.NewEmptyParams(
-			retry.WithAttempts(5),
-			retry.WithWait(250*time.Millisecond),
-		),
-	})
-
-	// we don't have /opt/deckhouse in the container, so we should create it before start any UploadScript with sudo
-	err := container.Container.CreateDeckhouseDirs()
-	require.NoError(t, err, "could not create deckhouse dirs")
-
-	remoteServerPort := tests.RandPortExclude([]int{container.Container.RemotePort()})
-	remoteServerScript := fmt.Sprintf(`#!/bin/bash
-while true ; do {
-  echo -ne "HTTP/1.0 200 OK\r\nContent-Length: 2\r\n\r\n" ;
-  echo -n "OK";
-} | nc -l -p %d ;
-done`, remoteServerPort)
-
-	const remoteServerFile = "/tmp/server.sh"
-	localServerFile := test.MustCreateTmpFile(t, remoteServerScript, true, "remote_server", "server.sh")
-
-	err = sshClient.File().Upload(context.TODO(), localServerFile, remoteServerFile)
-	require.NoError(t, err)
-
-	runRemoteServerSession, err := sshClient.NewSSHSession()
-	require.NoError(t, err)
-
-	t.Cleanup(func() {
-		err := runRemoteServerSession.Signal(ssh.SIGKILL)
-		if err != nil {
-			test.Logger.ErrorF("error killing remote server: %v", err)
-		}
-		err = runRemoteServerSession.Close()
-		if err != nil {
-			test.Logger.ErrorF("error closing remote server session: %v", err)
-		}
-	})
-
-	err = runRemoteServerSession.Start(remoteServerFile)
-	require.NoError(t, err, "error starting remote server")
+	sshClient, container, remoteServerPort := prepareContainerForTunnelTest(t, test)
 
 	localsReservedPorts := []int{container.LocalPort()}
 
@@ -116,7 +75,7 @@ done`, remoteServerPort)
 				ctx := context.TODO()
 
 				tun := NewTunnel(sshClient, c.address)
-				err = tun.Up(ctx)
+				err := tun.Up(ctx)
 				registerStopTunnel(t, tun)
 
 				if !c.wantErr {
@@ -136,7 +95,8 @@ done`, remoteServerPort)
 	t.Run("Health monitor", func(t *testing.T) {
 		upTunnelWithMonitor := func(t *testing.T, ctx context.Context, address string) chan error {
 			tun := NewTunnel(sshClient, address)
-			err = tun.Up(ctx)
+			err := tun.Up(ctx)
+			require.NoError(t, err, "failed to up tunnel")
 			registerStopTunnel(t, tun)
 
 			// starting HealthMonitor
@@ -182,6 +142,85 @@ done`, remoteServerPort)
 	})
 }
 
+func TestTunnelStop(t *testing.T) {
+	test := tests.ShouldNewIntegrationTest(t, "TestGoTunnelStop", tests.TestWithDebug(false))
+
+	sshClient, container, remoteServerPort := prepareContainerForTunnelTest(t, test)
+
+	localPort := container.LocalPort()
+
+	localServerPort := tests.RandPortExclude([]int{localPort})
+
+	tun := NewTunnel(sshClient, tunnelAddressString(localServerPort, remoteServerPort))
+	err := tun.Up(context.TODO())
+	require.NoError(t, err, "failed to up tunnel")
+
+	// starting HealthMonitor
+	errChan := make(chan error, 10)
+	go tun.HealthMonitor(errChan)
+
+	checkLocalTunnel(t, test, localServerPort, false)
+
+	waitAfter := func(op string) {
+		sleep := 3 * time.Second
+		test.GetLogger().InfoF("Waiting %s perform operation after %s", sleep.String(), op)
+		time.Sleep(sleep)
+	}
+
+	assertErrorChannel := func(t *testing.T, errChan chan error, errContains string) {
+		var err error
+		var chStatus bool
+		select {
+		case err, chStatus = <-errChan:
+		default:
+		}
+
+		if errContains == "" {
+			require.False(t, chStatus, "should not be closed")
+			require.NoError(t, err, "should not have error in channel")
+			return
+		}
+
+		require.True(t, chStatus, "should not be closed")
+		require.Error(t, err, "should have error in chanel")
+		require.Contains(t, err.Error(), errContains)
+	}
+
+	tun.Stop()
+
+	waitAfter("first stop")
+
+	tests.AssertLogMessage(t, test.Settings(), "Tunnel health monitor stopped")
+
+	assertErrorChannel(t, errChan, "")
+
+	checkTunnelFailed := func() {
+		checkLocalTunnel(t, test, localServerPort, true)
+	}
+
+	require.NotPanics(t, checkTunnelFailed, "not panic check after stop")
+
+	anotherErrChan := make(chan error, 10)
+	startMonitor := func() {
+		tun.HealthMonitor(anotherErrChan)
+	}
+
+	require.NotPanics(t, startMonitor, "startMonitor shouldn't be panic")
+	waitAfter("health monitor after stop")
+
+	tests.AssertLogMessage(t, test.Settings(), "Call HealthMonitor. Tunnel stopped")
+	assertErrorChannel(t, anotherErrChan, "tunnel stopped")
+
+	secondStopTunnel := func() {
+		tun.Stop()
+	}
+
+	require.NotPanics(t, secondStopTunnel, "startMonitor shouldn't be panic")
+	waitAfter("second stop")
+
+	tests.AssertLogMessage(t, test.Settings(), "Tunnel already stopped")
+}
+
 func checkLocalTunnel(t *testing.T, test *tests.Test, localServerPort int, wantError bool) {
 	url := fmt.Sprintf("http://127.0.0.1:%d", localServerPort)
 
@@ -204,4 +243,55 @@ func checkLocalTunnel(t *testing.T, test *tests.Test, localServerPort int, wantE
 	}
 
 	assert(t, err, "check local tunnel. Want error %v", wantError)
+}
+
+func prepareContainerForTunnelTest(t *testing.T, test *tests.Test) (*Client, *tests.TestContainerWrapper, int) {
+	sshClient, container := startContainerAndClientWithContainer(t, test)
+	sshClient.WithLoopsParams(ClientLoopsParams{
+		NewSession: retry.NewEmptyParams(
+			retry.WithAttempts(5),
+			retry.WithWait(250*time.Millisecond),
+		),
+	})
+
+	// we don't have /opt/deckhouse in the container, so we should create it before start any UploadScript with sudo
+	err := container.Container.CreateDeckhouseDirs()
+	require.NoError(t, err, "could not create deckhouse dirs")
+
+	remoteServerPort := tests.RandPortExclude([]int{container.Container.RemotePort()})
+	remoteServerScript := fmt.Sprintf(`#!/bin/bash
+while true ; do {
+  echo -ne "HTTP/1.0 200 OK\r\nContent-Length: 2\r\n\r\n" ;
+  echo -n "OK";
+} | nc -l -p %d ;
+done`, remoteServerPort)
+
+	const remoteServerFile = "/tmp/server.sh"
+	localServerFile := test.MustCreateTmpFile(t, remoteServerScript, true, "remote_server", "server.sh")
+
+	err = sshClient.File().Upload(context.TODO(), localServerFile, remoteServerFile)
+	require.NoError(t, err)
+
+	runRemoteServerSession, err := sshClient.NewSSHSession()
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		err := runRemoteServerSession.Signal(ssh.SIGKILL)
+		if err != nil {
+			test.Logger.ErrorF("error killing remote server: %v", err)
+		}
+		err = runRemoteServerSession.Close()
+		if err != nil {
+			test.Logger.ErrorF("error closing remote server session: %v", err)
+		}
+	})
+
+	err = runRemoteServerSession.Start(remoteServerFile)
+	require.NoError(t, err, "error starting remote server")
+
+	t.Cleanup(func() {
+		sshClient.Stop()
+	})
+
+	return sshClient, container, remoteServerPort
 }

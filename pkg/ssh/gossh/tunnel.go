@@ -35,13 +35,16 @@ var (
 )
 
 type Tunnel struct {
+	globalMu sync.Mutex
+
 	sshClient *Client
 	address   string
 
-	tunMutex sync.Mutex
+	started bool
 
-	started        bool
-	stopCh         chan struct{}
+	stopCh chan struct{}
+
+	tunMutex       sync.RWMutex
 	remoteListener net.Listener
 
 	errorCh chan error
@@ -61,13 +64,11 @@ func (t *Tunnel) Up(ctx context.Context) error {
 }
 
 func (t *Tunnel) upNewTunnel(ctx context.Context, oldId int) (int, error) {
-	logger := t.sshClient.settings.Logger()
-
-	t.tunMutex.Lock()
-	defer t.tunMutex.Unlock()
+	t.globalMu.Lock()
+	defer t.globalMu.Unlock()
 
 	if t.started {
-		logger.DebugF("[%d] Tunnel already up\n", oldId)
+		t.debugWithID(oldId, "[%d] Tunnel already up")
 		return -1, fmt.Errorf("already up")
 	}
 
@@ -80,39 +81,37 @@ func (t *Tunnel) upNewTunnel(ctx context.Context, oldId int) (int, error) {
 
 	remoteBind, remotePort, localBind, localPort := parts[0], parts[1], parts[2], parts[3]
 
-	logger.DebugF("[%d] Remote bind: %s remote port: %s local bind: %s local port: %s\n", id, remoteBind, remotePort, localBind, localPort)
-
-	logger.DebugF("[%d] Start tunnel\n", id)
+	t.debugWithID(
+		id,
+		"Start tunnel. Remote bind: %s remote port: %s local bind: %s local port: %s",
+		remoteBind,
+		remotePort,
+		localBind,
+		localPort,
+	)
 
 	remoteAddress := net.JoinHostPort(remoteBind, remotePort)
 	localAddress := net.JoinHostPort(localBind, localPort)
 
 	listener, err := net.Listen("tcp", localAddress)
 	if err != nil {
-		return -1, errors.Wrap(err, fmt.Sprintf("failed to listen local on %s", localAddress))
+		return -1, fmt.Errorf("failed to listen local on %s: %w", localAddress, err)
 	}
 
-	tcpListener, ok := listener.(*net.TCPListener)
-	if !ok {
-		_ = listener.Close()
-		return -1, fmt.Errorf("Failed to up tunnel: got not TCPListner")
-	}
+	t.setListener(listener)
 
-	logger.DebugF("[%d] Listen remote on %s successful", id, localAddress)
-
-	logger.DebugF("[%d] Tunnel %s up. Starting accept tunnel connection", id, localAddress)
+	t.debugWithID(id, "Listen remote on %s successful. Starting monitors...", localAddress)
 
 	go t.monitorContext(ctx, id)
-	go t.acceptTunnelConnection(ctx, id, remoteAddress, tcpListener)
+	go t.acceptTunnelConnection(ctx, id, remoteAddress)
 
-	t.remoteListener = listener
 	t.started = true
 
 	return id, nil
 }
 
-func (t *Tunnel) remoteConn(ctx context.Context, remoteAddress string) (net.Conn, error) {
-	cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+func (t *Tunnel) dialRemote(ctx context.Context, remoteAddress string) (net.Conn, error) {
+	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	remoteConn, err := t.sshClient.GetClient().DialContext(cctx, "tcp", remoteAddress)
@@ -123,17 +122,43 @@ func (t *Tunnel) remoteConn(ctx context.Context, remoteAddress string) (net.Conn
 	return remoteConn, nil
 }
 
+func (t *Tunnel) remoteConn(ctx context.Context, remoteAddress string) (net.Conn, error) {
+	// use cycle for prevent connection refuse error on start
+
+	// no use retry package because silent logger can tee logs to file
+	// it is huge for logger
+	var lastErr error
+	for i := 0; i < 3; i++ {
+		conn, err := t.dialRemote(ctx, remoteAddress)
+		if err != nil {
+			lastErr = err
+			time.Sleep(50 * time.Millisecond)
+			continue
+		}
+		return conn, nil
+	}
+
+	return nil, lastErr
+}
+
 func (t *Tunnel) monitorContext(ctx context.Context, id int) {
 	<-ctx.Done()
-	t.stop(id, true)
+	t.stop(id)
 	t.errorCh <- ctx.Err()
 }
 
-func (t *Tunnel) acceptNext(ctx context.Context, id int, remoteAddress string, listener *net.TCPListener) (net.Conn, net.Conn, error) {
+var emptyListenerErr = errors.New("empty listener")
+
+func (t *Tunnel) acceptNext(ctx context.Context, id int, remoteAddress string) (net.Conn, net.Conn, error) {
 	select {
 	case <-ctx.Done():
 		return nil, nil, ctx.Err()
 	default:
+	}
+
+	listener, err := t.getListener()
+	if err != nil {
+		return nil, nil, err
 	}
 
 	localConn, err := listener.Accept()
@@ -154,11 +179,20 @@ func (t *Tunnel) acceptNext(ctx context.Context, id int, remoteAddress string, l
 	return localConn, remoteConn, nil
 }
 
-func (t *Tunnel) acceptTunnelConnection(ctx context.Context, id int, remoteAddress string, listener *net.TCPListener) {
+func (t *Tunnel) acceptTunnelConnection(ctx context.Context, id int, remoteAddress string) {
+	t.debugWithID(id, "Start accepting tunnel connection")
+	defer t.debugWithID(id, "Accepting tunnel connection stopped")
+
 	for {
-		// todo handle listener closed case and break cycle
-		localConn, remoteConn, err := t.acceptNext(ctx, id, remoteAddress, listener)
+		localConn, remoteConn, err := t.acceptNext(ctx, id, remoteAddress)
 		if err != nil {
+			// after stop we can get error on using close connection should not send error
+			// it is valid operation
+			if errors.Is(err, emptyListenerErr) {
+				t.debugWithID(id, "Accept tunnel connection stopped because listener set to nil")
+				return
+			}
+
 			t.errorCh <- err
 
 			if isContextError(err) {
@@ -189,10 +223,14 @@ func (t *Tunnel) acceptTunnelConnection(ctx context.Context, id int, remoteAddre
 }
 
 func (t *Tunnel) HealthMonitor(errorOutCh chan<- error) {
-	logger := t.sshClient.settings.Logger()
+	if _, err := t.getListener(); err != nil || !t.started {
+		t.debug("Call HealthMonitor. Tunnel stopped")
+		errorOutCh <- fmt.Errorf("tunnel stopped")
+		return
+	}
 
-	defer logger.DebugF("Tunnel health monitor stopped\n")
-	logger.DebugF("Tunnel health monitor started\n")
+	defer t.debug("Tunnel health monitor stopped")
+	t.debug("Tunnel health monitor started")
 
 	t.stopCh = make(chan struct{}, 1)
 
@@ -201,43 +239,42 @@ func (t *Tunnel) HealthMonitor(errorOutCh chan<- error) {
 		case err := <-t.errorCh:
 			errorOutCh <- err
 		case <-t.stopCh:
-			if !govalue.Nil(t.remoteListener) {
-				_ = t.remoteListener.Close()
-			}
 			return
 		}
 	}
 }
 
 func (t *Tunnel) Stop() {
-	t.stop(-1, true)
+	t.stop(-1)
 }
 
-func (t *Tunnel) stop(id int, full bool) {
-	logger := t.sshClient.settings.Logger()
-
-	t.tunMutex.Lock()
-	defer t.tunMutex.Unlock()
+func (t *Tunnel) stop(id int) {
+	t.globalMu.Lock()
+	defer t.globalMu.Unlock()
 
 	if !t.started {
-		logger.DebugF("[%d] Tunnel already stopped\n", id)
+		t.debugWithID(id, "Tunnel already stopped")
 		return
 	}
 
-	logger.DebugF("[%d] Stop tunnel\n", id)
-	defer logger.DebugF("[%d] End stop tunnel\n", id)
+	t.debugWithID(id, "Stop tunnel")
+	defer t.debugWithID(id, "End stop tunnel")
 
-	if full && t.stopCh != nil {
-		logger.DebugF("[%d] Stop tunnel health monitor\n", id)
+	if t.stopCh != nil {
+		t.debugWithID(id, "Stop tunnel health monitor")
 		t.stopCh <- struct{}{}
 	}
 
-	err := t.remoteListener.Close()
-	if err != nil {
-		logger.DebugF("[%d] Cannot close listener: %s\n", id, err.Error())
+	listener, err := t.getListener()
+	if err == nil {
+		t.debugWithID(id, "Close listener")
+		err := listener.Close()
+		if err != nil && !errors.Is(err, net.ErrClosed) {
+			t.debugWithID(id, "Cannot close listener: %v", id, err)
+		}
 	}
 
-	t.remoteListener = nil
+	t.setListener(nil)
 	t.started = false
 }
 
@@ -245,6 +282,34 @@ func (t *Tunnel) String() string {
 	return fmt.Sprintf("%s:%s", "L", t.address)
 }
 
-func (t *Tunnel) debug(format string, args ...interface{}) {
+func (t *Tunnel) setListener(l net.Listener) {
+	t.tunMutex.Lock()
+	defer t.tunMutex.Unlock()
+
+	t.remoteListener = l
+}
+
+func (t *Tunnel) getListener() (net.Listener, error) {
+	t.tunMutex.RLock()
+	defer t.tunMutex.RUnlock()
+
+	listener := t.remoteListener
+	if govalue.Nil(listener) {
+		return nil, emptyListenerErr
+	}
+
+	return listener, nil
+}
+
+func (t *Tunnel) debug(format string, args ...any) {
+	t.sshClient.settings.Logger().DebugF(format, args...)
+}
+
+func (t *Tunnel) debugWithID(id int, format string, args ...any) {
+	if id > 0 {
+		format = "[%d] " + format
+		args = append([]any{id}, args...)
+	}
+
 	t.sshClient.settings.Logger().DebugF(format, args...)
 }

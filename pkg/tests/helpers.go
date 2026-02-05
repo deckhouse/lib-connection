@@ -20,6 +20,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -237,8 +238,8 @@ func findLogMsg(t *testing.T, sett settings.Settings, msgInLog string) string {
 	require.True(t, ok, "logger is not of type *log.InMemoryLogger")
 
 	getMatch, err := logger.FirstMatch(&log.Match{
-		Prefix: []string{
-			msgInLog,
+		Regex: []*regexp.Regexp{
+			regexp.MustCompile(fmt.Sprintf(`.*%s.*`, regexp.QuoteMeta(msgInLog))),
 		},
 	})
 

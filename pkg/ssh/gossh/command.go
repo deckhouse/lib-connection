@@ -101,7 +101,8 @@ func NewSSHCommand(client *Client, name string, arg ...string) *SSHCommand {
 	}
 
 	// todo move new session to Start()
-	session, _ := client.NewSSHSession()
+	session, err := client.NewSSHSession()
+	client.settings.Logger().DebugF("Cannot create new SSH session for command '%s': %v", name, err)
 
 	return &SSHCommand{
 		// Executor: process.NewDefaultExecutor(sess.Run(cmd)),
