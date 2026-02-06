@@ -282,3 +282,9 @@ type SSHClient interface {
 
 	IsStopped() bool
 }
+
+type KubeProxyCommand interface {
+	Command
+	WaitError() error
+	Stop()
+}

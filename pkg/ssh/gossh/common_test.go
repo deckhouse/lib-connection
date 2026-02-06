@@ -46,6 +46,12 @@ func assertFilesViaRemoteRun(t *testing.T, sshClient *Client, cmd string, expect
 
 func startContainerAndClientWithContainer(t *testing.T, test *tests.Test, opts ...tests.TestContainerWrapperSettingsOpts) (*Client, *tests.TestContainerWrapper) {
 	container := tests.NewTestContainerWrapper(t, test, opts...)
+	sshClient := startClient(t, test, container)
+
+	return sshClient, container
+}
+
+func startClient(t *testing.T, test *tests.Test, container *tests.TestContainerWrapper) *Client {
 	sess := tests.Session(container)
 	keys := container.AgentPrivateKeys()
 
@@ -69,7 +75,7 @@ func startContainerAndClientWithContainer(t *testing.T, test *tests.Test, opts .
 
 	registerStopClient(t, sshClient)
 
-	return sshClient, container
+	return sshClient
 }
 
 func startContainerAndClient(t *testing.T, test *tests.Test) *Client {

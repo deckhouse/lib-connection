@@ -17,7 +17,6 @@ package testssh
 import (
 	"context"
 	"fmt"
-	"net"
 	"strconv"
 	"testing"
 	"time"
@@ -79,7 +78,7 @@ func TestKubeProxy(t *testing.T) {
 			require.NoError(t, err, "proxy should start")
 			require.Equal(t, fmt.Sprintf("%d", kubeproxy.DefaultLocalAPIPort), firstProxyPort, "should start on default port")
 
-			assertKubeProxy(t, test, firstProxyPort, false)
+			tests.AssertKubeProxy(t, test, firstProxyPort, false)
 
 			// second proxy start on default but get random port
 			secondProxy := client.KubeProxy()
@@ -87,7 +86,7 @@ func TestKubeProxy(t *testing.T) {
 			require.NoError(t, err, "second proxy should start")
 			assertGetRandomPort(t, secondProxyPort)
 
-			assertKubeProxy(t, test, secondProxyPort, false)
+			tests.AssertKubeProxy(t, test, secondProxyPort, false)
 
 			// third proxy start on default but get random port
 			thirdProxy := client.KubeProxy()
@@ -95,7 +94,7 @@ func TestKubeProxy(t *testing.T) {
 			require.NoError(t, err, "second proxy should start")
 			assertGetRandomPort(t, thirdProxyPort)
 
-			assertKubeProxy(t, test, thirdProxyPort, false)
+			tests.AssertKubeProxy(t, test, thirdProxyPort, false)
 
 			// forth proxy start on custom port
 			customPort := 30099
@@ -104,7 +103,7 @@ func TestKubeProxy(t *testing.T) {
 			require.NoError(t, err, "second proxy should start")
 			require.Equal(t, fmt.Sprintf("%d", customPort), forthProxyPort, "should start on custom port")
 
-			assertKubeProxy(t, test, forthProxyPort, false)
+			tests.AssertKubeProxy(t, test, forthProxyPort, false)
 
 			anotherOnCustomProxy := client.KubeProxy()
 			_, err = anotherOnCustomProxy.Start(customPort)
@@ -121,7 +120,7 @@ func TestKubeProxy(t *testing.T) {
 			}
 
 			for _, port := range stopped {
-				assertKubeProxy(t, test, port, true)
+				tests.AssertKubeProxy(t, test, port, true)
 			}
 
 			notAffected := []string{
@@ -130,7 +129,7 @@ func TestKubeProxy(t *testing.T) {
 			}
 
 			for _, port := range notAffected {
-				assertKubeProxy(t, test, port, false)
+				tests.AssertKubeProxy(t, test, port, false)
 			}
 		})
 	}
@@ -195,41 +194,4 @@ func startClientForContainer(t *testing.T, test *tests.Test, rt runTest, contain
 	registerStopClient(t, sshClient)
 
 	return sshClient
-}
-
-func assertKubeProxy(t *testing.T, test *tests.Test, localServerPort string, wantError bool) {
-	url := fmt.Sprintf("http://127.0.0.1:%s/api/v1/nodes", localServerPort)
-
-	test.GetLogger().InfoF("assert kubeproxy on '%s' want err: %v", url, wantError)
-
-	if wantError {
-		dialTo := fmt.Sprintf("127.0.0.1:%s", localServerPort)
-		d, err := net.DialTimeout("tcp", dialTo, 5*time.Second)
-		if err == nil {
-			d.Close()
-		}
-
-		require.Error(t, err, "should not reach this host %s", localServerPort)
-		return
-	}
-
-	requestLoop := retry.NewEmptyParams(
-		retry.WithName("Check kube proxy available by %s", url),
-		retry.WithAttempts(10),
-		retry.WithWait(500*time.Millisecond),
-		retry.WithLogger(test.Logger),
-	)
-
-	_, err := tests.DoGetRequest(
-		url,
-		requestLoop,
-		tests.NewPrefixLogger(test.Logger).WithPrefix(test.FullName()),
-	)
-
-	assert := require.NoError
-	if wantError {
-		assert = require.Error
-	}
-
-	assert(t, err, "check local tunnel. Want error %v", wantError)
 }

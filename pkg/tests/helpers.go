@@ -231,13 +231,13 @@ func Name(t *testing.T) string {
 	return prepareTestNames(t.Name())
 }
 
-func findLogMsg(t *testing.T, sett settings.Settings, msgInLog string) string {
+func findLogMsg(t *testing.T, sett settings.Settings, msgInLog string) []string {
 	loggerInterface := sett.Logger()
 
 	logger, ok := loggerInterface.(*log.InMemoryLogger)
 	require.True(t, ok, "logger is not of type *log.InMemoryLogger")
 
-	getMatch, err := logger.FirstMatch(&log.Match{
+	getMatch, err := logger.AllMatches(&log.Match{
 		Regex: []*regexp.Regexp{
 			regexp.MustCompile(fmt.Sprintf(`.*%s.*`, regexp.QuoteMeta(msgInLog))),
 		},
@@ -250,10 +250,20 @@ func findLogMsg(t *testing.T, sett settings.Settings, msgInLog string) string {
 
 func AssertLogMessage(t *testing.T, sett settings.Settings, msgInLog string) {
 	getMatch := findLogMsg(t, sett, msgInLog)
-	require.Contains(t, getMatch, msgInLog, "should contain %s", msgInLog)
+	require.Len(t, getMatch, 1, "should have one match %s", msgInLog)
+	require.Contains(t, getMatch[0], msgInLog, "should contain %s", msgInLog)
 }
 
 func AssertNoLogMessage(t *testing.T, sett settings.Settings, msgInLog string) {
 	getMatch := findLogMsg(t, sett, msgInLog)
-	require.Empty(t, getMatch, "should not find log msg %s", msgInLog)
+	require.Len(t, getMatch, 0, "should not have any match %s", msgInLog)
+}
+
+func AssertLogMessagesCount(t *testing.T, sett settings.Settings, msgInLog string, expected int) {
+	getMatch := findLogMsg(t, sett, msgInLog)
+	require.Len(t, getMatch, expected, "should have %d matches %s", expected, msgInLog)
+
+	for _, m := range getMatch {
+		require.Contains(t, m, msgInLog, "should contain %s", msgInLog)
+	}
 }
