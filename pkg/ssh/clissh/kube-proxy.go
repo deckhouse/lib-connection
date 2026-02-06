@@ -25,13 +25,12 @@ import (
 	connection "github.com/deckhouse/lib-connection/pkg"
 	"github.com/deckhouse/lib-connection/pkg/settings"
 	"github.com/deckhouse/lib-connection/pkg/ssh/session"
+	"github.com/deckhouse/lib-connection/pkg/utils/kubeproxy"
 )
 
 var (
 	_ connection.KubeProxy = &KubeProxy{}
 )
-
-const DefaultLocalAPIPort = 22322
 
 type KubeProxy struct {
 	Session *session.Session
@@ -56,7 +55,7 @@ func NewKubeProxy(sett settings.Settings, sess *session.Session) *KubeProxy {
 		settings:                sett,
 		Session:                 sess,
 		port:                    "0",
-		localPort:               DefaultLocalAPIPort,
+		localPort:               kubeproxy.DefaultLocalAPIPort,
 		healthMonitorsByStartID: make(map[int]chan struct{}),
 	}
 }
@@ -248,10 +247,10 @@ func (k *KubeProxy) healthMonitor(
 				return
 			}
 
-			logger.DebugF("[%d] Tunnel re up successfully\n")
+			logger.DebugF("[%d] Tunnel re up successfully", startID)
 
 		case <-stopCh:
-			logger.DebugF("[%d] Kubeproxy monitor stopped")
+			logger.DebugF("[%d] Kubeproxy monitor stopped", startID)
 			return
 		}
 	}
@@ -279,14 +278,16 @@ func (k *KubeProxy) upTunnel(
 	rewriteLocalPort := false
 	localPort := useLocalPort
 
+	portProvider := kubeproxy.NewPortProvider(useLocalPort)
+
 	if useLocalPort < 1 {
 		logger.DebugF(
 			"[%d] Incorrect local port %d use default %d\n",
 			startID,
 			useLocalPort,
-			DefaultLocalAPIPort,
+			kubeproxy.DefaultLocalAPIPort,
 		)
-		localPort = DefaultLocalAPIPort
+		localPort = kubeproxy.DefaultLocalAPIPort
 		rewriteLocalPort = true
 	}
 
@@ -319,7 +320,7 @@ func (k *KubeProxy) upTunnel(
 			lastError = fmt.Errorf("tunnel '%s': %w", tunnelAddress, err)
 			logger.DebugF("[%d] Start tunnel was failed. Error: %v\n", startID, lastError)
 			if rewriteLocalPort {
-				localPort++
+				localPort = portProvider.Next()
 				logger.DebugF("[%d] New local port %d\n", startID, localPort)
 			}
 

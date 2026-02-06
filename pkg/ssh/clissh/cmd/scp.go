@@ -82,7 +82,10 @@ func (s *SCP) WithPreserve(preserve bool) *SCP {
 
 func (s *SCP) SCP(ctx context.Context) *SCP {
 	// env := append(os.Environ(), s.Env...)
-	env := append(os.Environ(), s.Session.AgentSettings.AuthSockEnv())
+	env := os.Environ()
+	if s.Session.AgentSettings != nil {
+		env = append(os.Environ(), s.Session.AgentSettings.AuthSockEnv())
+	}
 
 	// set absolute path to the ssh binary, because scp contains predefined absolute path to ssh binary (/ssh/bin/ssh) as we set in the building process of the static ssh utils
 	sshPathArgs := []string{"-S", fmt.Sprintf("%s/bin/ssh", os.Getenv("PWD"))}

@@ -29,13 +29,7 @@ import (
 func TestKubeProxy(t *testing.T) {
 	test := tests.ShouldNewIntegrationTest(t, "TestKubeProxy")
 
-	sshClient, container := startContainerAndClientAndKind(t, test)
-
-	test.GetLogger().InfoF("Try to check run kubectl on ssh container...")
-	cmd := NewSSHCommand(sshClient, "kubectl", "get", "no")
-	out, err := cmd.CombinedOutput(context.Background())
-	test.Logger.InfoF("kubectl get no\n%s", out)
-	require.NoError(t, err)
+	sshClient, container := prepareContainerForTestKubeProxy(t, test)
 
 	t.Run("Kubeproxy with HealthMonitor", func(t *testing.T) {
 		kp := sshClient.KubeProxy()
@@ -87,4 +81,16 @@ func checkKubeProxy(t *testing.T, test *tests.Test, localServerPort string, want
 	}
 
 	assert(t, err, "check local tunnel. Want error %v", wantError)
+}
+
+func prepareContainerForTestKubeProxy(t *testing.T, test *tests.Test) (*Client, *tests.TestContainerWrapper) {
+	sshClient, container := startContainerAndClientAndKind(t, test)
+
+	test.GetLogger().InfoF("Try to check run kubectl on ssh container...")
+	cmd := NewSSHCommand(sshClient, "kubectl", "get", "no")
+	out, err := cmd.CombinedOutput(context.Background())
+	test.Logger.InfoF("kubectl get no\n%s", out)
+	require.NoError(t, err)
+
+	return sshClient, container
 }
