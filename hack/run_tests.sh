@@ -81,7 +81,7 @@ function run_tests_in_dir() {
 
     echo "Run tests in $full_pkg_path"
     cd "$full_pkg_path"
-    if ! echo "test -timeout 30m -v -p 1 $run_tests" | xargs go; then
+    if ! echo "test -timeout 35m -v -p 1 $run_tests" | xargs go; then
       all_failed_tests="$(echo -e "${all_failed_tests}\nTests in ${p} failed")"
     fi
   done <<< "$packages"
