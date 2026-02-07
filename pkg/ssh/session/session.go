@@ -19,6 +19,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/deckhouse/lib-connection/pkg/settings"
 )
 
 type Input struct {
@@ -47,7 +49,7 @@ type AgentPrivateKey struct {
 
 func (s *AgentSettings) AuthSockEnv() string {
 	if s.AuthSock != "" {
-		return fmt.Sprintf("SSH_AUTH_SOCK=%s", s.AuthSock)
+		return fmt.Sprintf("%s=%s", settings.SSHAgentAuthSockEnv, s.AuthSock)
 	}
 	return ""
 }

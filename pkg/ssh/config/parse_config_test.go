@@ -150,6 +150,27 @@ sudoPassword: "not_secure_password"
 		},
 
 		{
+			name: "only connection: force agent",
+			input: `
+apiVersion: dhctl.deckhouse.io/v1
+kind: SSHConfig
+sshPort: 22
+sshUser: ubuntu
+forceUseSSHAgent: true
+`,
+			hasErrorContains: "",
+			opts:             noRequiredHostsOpts,
+			expected: &ConnectionConfig{
+				Config: &Config{
+					Port:             intPtr(22),
+					User:             "ubuntu",
+					BastionPort:      nil,
+					ForceUseSSHAgent: true,
+				},
+			},
+		},
+
+		{
 			name: "only connection: correct no port",
 			input: `
 apiVersion: dhctl.deckhouse.io/v1

@@ -190,4 +190,6 @@ func AssertParseFlagsHelp(t *testing.T, params AssertParseFlagsHelpParams) {
 			),
 		)
 	}
+
+	logger.InfoF("Has valid help:\n%s", out)
 }

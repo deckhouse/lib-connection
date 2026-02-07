@@ -545,7 +545,7 @@ func (s *Client) authMethods(password string) ([]gossh.AuthMethod, error) {
 	}
 
 	if len(authMethods) == 0 {
-		return nil, fmt.Errorf("Private keys or SSH_AUTH_SOCK environment variable or become password should passed")
+		return nil, fmt.Errorf("Private keys or %s environment variable or become password should passed", settings.SSHAgentAuthSockEnv)
 	}
 
 	return authMethods, nil

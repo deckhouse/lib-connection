@@ -98,7 +98,7 @@ func (a *Agent) Start() error {
 	a.agent = cmd.NewAgent(a.sshSettings, a.agentSettings)
 
 	if len(a.agentSettings.PrivateKeys) == 0 {
-		a.agent.WithAuthSock(os.Getenv("SSH_AUTH_SOCK"))
+		a.agent.WithAuthSock(os.Getenv(settings.SSHAgentAuthSockEnv))
 		return nil
 	}
 

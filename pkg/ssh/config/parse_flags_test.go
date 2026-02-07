@@ -591,6 +591,48 @@ func TestParseFlags(t *testing.T) {
 		},
 
 		{
+			name: "force no private keys with use agent",
+
+			arguments: []string{
+				"--force-no-private-keys",
+				"--use-agent-with-no-private-keys",
+			},
+
+			envsPrefix: "USE_AGENT",
+			envs:       map[string]string{},
+
+			hasErrorContains: "",
+
+			privateKeyExtractor: defaultPrivateKeyExtractor(currentHomeDir),
+
+			before: func(t *testing.T, ts *test, logger log.Logger) {
+				p := ts.test.MustCreateTmpFile(t, "", false, "auth_sock")
+				ts.envs["SSH_AUTH_SOCK"] = p
+			},
+
+			expected: &ConnectionConfig{
+				Config: &Config{
+					Mode: Mode{
+						ForceLegacy: false,
+						ForceModern: false,
+					},
+					User: currentUserName,
+					Port: intPtr(22),
+
+					SudoPassword: "",
+
+					PrivateKeys: make([]AgentPrivateKey, 0),
+
+					BastionUser: currentUserName,
+					BastionPort: intPtr(22),
+
+					ForceUseSSHAgent: true,
+				},
+				Hosts: make([]Host, 0),
+			},
+		},
+
+		{
 			name: "connection config",
 
 			arguments: []string{},
@@ -747,7 +789,7 @@ sshBastionPassword: "not_secure_password_bastion"
 			arguments: []string{
 				"--connection-config=/tmp/not_exists.86t6ff6d.yaml",
 			},
-			hasErrorContains: "Cannot get connection config file info for /tmp/not_exists.86t6ff6d.yaml",
+			hasErrorContains: "cannot get connection config file info for /tmp/not_exists.86t6ff6d.yaml",
 		},
 
 		{
@@ -758,7 +800,7 @@ sshBastionPassword: "not_secure_password_bastion"
 				configPath := tst.test.MustMkSubDirs(t, "connection-config-dir")
 				tst.arguments = append(tst.arguments, fmt.Sprintf("--connection-config=%s", configPath))
 			},
-			hasErrorContains: "should be regular file",
+			hasErrorContains: "should be a file not dir",
 		},
 
 		{
@@ -875,9 +917,46 @@ sshBastionPassword: "not_secure_password_bastion"
 				"--force-no-private-keys",
 			},
 
-			hasErrorContains: "No auth methods configured. Please pass --ssh-agent-private-keys and/or --ask-become-pass or --force-no-private-keys and --ask-become-pass",
+			hasErrorContains: "No auth methods configured. Please pass --ssh-agent-private-keys and/or --ask-become-pass or --force-no-private-keys with --ask-become-pass or --force-no-private-keys with --use-agent-with-no-private-keys",
 
 			privateKeyExtractor: defaultPrivateKeyExtractor(currentHomeDir),
+		},
+
+		{
+			name: "force no private keys with use agent no sock env",
+
+			arguments: []string{
+				"--force-no-private-keys",
+				"--use-agent-with-no-private-keys",
+			},
+
+			envsPrefix: "USE_AGENT_NO_SET",
+			envs:       map[string]string{},
+
+			hasErrorContains: "pass empty path for auth socket from env SSH_AUTH_SOCK",
+
+			privateKeyExtractor: defaultPrivateKeyExtractor(currentHomeDir),
+		},
+
+		{
+			name: "force no private keys with use agent incorrect sock env",
+
+			arguments: []string{
+				"--force-no-private-keys",
+				"--use-agent-with-no-private-keys",
+			},
+
+			envsPrefix: "USE_AGENT_NO_SET",
+			envs:       map[string]string{},
+
+			hasErrorContains: "auth socket from env SSH_AUTH_SOCK path",
+
+			privateKeyExtractor: defaultPrivateKeyExtractor(currentHomeDir),
+
+			before: func(t *testing.T, ts *test, logger log.Logger) {
+				p := ts.test.MustMkSubDirs(t, "auth_sock")
+				ts.envs["SSH_AUTH_SOCK"] = p
+			},
 		},
 	}
 
@@ -1138,7 +1217,7 @@ func TestParseFlagsAndExtractConfigNoArgs(t *testing.T) {
 
 func TestParseFlagsHelp(t *testing.T) {
 	tests.AssertParseFlagsHelp(t, tests.AssertParseFlagsHelpParams{
-		ExpectedFlags: 14,
+		ExpectedFlags: 15,
 		Name:          "ssh-flags",
 		Provider: func(sett settings.Settings, envsPrefix string) tests.TestFlagsParser {
 			parser := NewFlagsParser(sett)

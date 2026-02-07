@@ -24,18 +24,9 @@ import (
 )
 
 func Reader(path string, fileType string) (io.ReadCloser, error) {
-	fullPath, err := filepath.Abs(path)
+	fullPath, err := isExists(path, fileType, true)
 	if err != nil {
-		return nil, fmt.Errorf("Cannot get abs path for %s: %w", path, err)
-	}
-
-	stat, err := os.Stat(fullPath)
-	if err != nil {
-		return nil, fmt.Errorf("Cannot get %s file info for %s: %w", fileType, fullPath, err)
-	}
-
-	if stat.IsDir() || !stat.Mode().IsRegular() {
-		return nil, fmt.Errorf("%s path '%s' should be regular file", fileType, fullPath)
+		return nil, err
 	}
 
 	return os.Open(fullPath)
@@ -55,4 +46,35 @@ func ReadFile(path string, fileType string, logger ...log.Logger) ([]byte, error
 	}()
 
 	return io.ReadAll(reader)
+}
+
+func IsExists(path string, fileType string) error {
+	_, err := isExists(path, fileType, false)
+	return err
+}
+
+func isExists(path string, fileType string, shouldRegular bool) (string, error) {
+	if path == "" {
+		return "", fmt.Errorf("pass empty path for %s", fileType)
+	}
+
+	fullPath, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("cannot get abs path for %s: %w", path, err)
+	}
+
+	stat, err := os.Stat(fullPath)
+	if err != nil {
+		return "", fmt.Errorf("cannot get %s file info for %s: %w", fileType, fullPath, err)
+	}
+
+	if stat.IsDir() {
+		return "", fmt.Errorf("%s path '%s' should be a file not dir", fileType, fullPath)
+	}
+
+	if shouldRegular && !stat.Mode().IsRegular() {
+		return "", fmt.Errorf("%s path '%s' should be regular file", fileType, fullPath)
+	}
+
+	return fullPath, nil
 }

@@ -1517,6 +1517,55 @@ func TestSSHProviderClient(t *testing.T) {
 			require.NotEqual(t, privateKeyPathBeforeCleanup, provider.privateKeysTmp, "should create new tmp dir")
 		})
 	})
+
+	t.Run("No auth methods", func(t *testing.T) {
+		test := newTest(t)
+		config := testCreateSSHConnectionConfigWithPrivateKeyContent(t, connectionConfigParams{
+			mode: sshconfig.Mode{
+				ForceLegacy: true,
+			},
+			test:        test,
+			bastionPort: nil,
+			port:        nil,
+		})
+
+		config.Config.PrivateKeys = make([]sshconfig.AgentPrivateKey, 0)
+		config.Config.SudoPassword = ""
+		config.Config.ForceUseSSHAgent = false
+
+		sett := test.Settings()
+
+		provider := newTestProvider(sett, config)
+
+		ctx := context.TODO()
+
+		_, err := provider.Client(ctx)
+		require.Error(t, err, "should fail")
+
+		_, err = provider.NewAdditionalClient(ctx)
+		require.Error(t, err, "should fail")
+
+		sess := session.NewSession(session.Input{
+			User:       "uuser",
+			Port:       "22013",
+			BecomePass: "not secure standalone",
+			AvailableHosts: []session.Host{
+				{
+					Host: "192.168.101.9",
+					Name: "192.168.101.9",
+				},
+			},
+		})
+
+		_, err = provider.NewStandaloneClient(ctx, sess, nil)
+		require.Error(t, err, "should fail")
+
+		_, err = provider.SwitchClient(ctx, sess, nil)
+		require.Error(t, err, "should fail")
+
+		_, err = provider.SwitchToDefault(ctx)
+		require.Error(t, err, "should fail")
+	})
 }
 
 func newTest(t *testing.T) *tests.Test {

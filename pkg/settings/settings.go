@@ -115,7 +115,7 @@ func (b *BaseProviders) AuthSock() string {
 		return b.params.AuthSock
 	}
 
-	return os.Getenv("SSH_AUTH_SOCK")
+	return os.Getenv(SSHAgentAuthSockEnv)
 }
 
 func (b *BaseProviders) EnvsPrefix() string {
@@ -142,15 +142,4 @@ func (b *BaseProviders) Clone(opts ...CloneOpt) *BaseProviders {
 	}
 
 	return &clone
-}
-
-// SetDefaultLogger
-// Deprecated:
-// for backward compatibility please pass logger to all structure directly
-func SetDefaultLogger(logger log.Logger) {
-	defaultLogger = logger
-}
-
-func SetNodeTmpPath(path string) {
-	defaultNodeTmpPath = path
 }
