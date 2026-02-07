@@ -1,4 +1,4 @@
-// Copyright 2025 Flant JSC
+// Copyright 2021 Flant JSC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package gossh
+package clissh
 
 import (
 	"context"
@@ -33,7 +33,7 @@ type KubeProxy struct {
 func NewKubeProxy(client *Client) *KubeProxy {
 	runner := newKubeProxyRunner(context.Background(), client)
 	return &KubeProxy{
-		BaseKubeProxy: kubeproxy.NewBaseKubeProxy(runner, client.settings, client.Session()),
+		BaseKubeProxy: kubeproxy.NewBaseKubeProxy(runner, client.Settings(), client.Session()),
 	}
 }
 
@@ -50,12 +50,14 @@ func newKubeProxyRunner(ctx context.Context, client *Client) *kubeProxyRunner {
 }
 
 func (r *kubeProxyRunner) StartCommand(params kubeproxy.StartCommandParams) (connection.KubeProxyCommand, error) {
-	cmd := NewSSHCommand(r.client, params.Cmd)
+	cmd := NewCommand(r.client.Settings(), r.client.Session(), params.Cmd)
 	cmd.Sudo(r.ctx)
 
 	cmd.OnCommandStart(params.OnStart)
 	cmd.WithStdoutHandler(params.StdoutHandler)
 	cmd.WithWaitHandler(params.WaitHandler)
+
+	cmd.Executor = cmd.Executor.CaptureStderr(nil).CaptureStdout(nil)
 
 	if err := cmd.Start(); err != nil {
 		return nil, err
@@ -67,12 +69,12 @@ func (r *kubeProxyRunner) StartCommand(params kubeproxy.StartCommandParams) (con
 func (r *kubeProxyRunner) UpTunnel(localPort int, kubeProxyPort string) (connection.Tunnel, string, error) {
 	address := kubeproxy.ExtractTunnelAddressFromEnv(localPort, kubeProxyPort)
 	if address == "" {
-		address = fmt.Sprintf("127.0.0.1:%s:127.0.0.1:%d", kubeProxyPort, localPort)
+		address = fmt.Sprintf("%d:127.0.0.1:%s", localPort, kubeProxyPort)
 	}
 
 	r.client.settings.Logger().DebugF("Try up tunnel for kube proxy on %s", address)
 
-	tun := NewTunnel(r.client, address)
+	tun := r.client.Tunnel(address)
 
 	if err := tun.Up(r.ctx); err != nil {
 		return nil, address, err

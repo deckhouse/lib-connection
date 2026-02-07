@@ -22,8 +22,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/deckhouse/lib-connection/pkg/ssh/base/kubeproxy"
 	"github.com/deckhouse/lib-connection/pkg/tests"
-	"github.com/deckhouse/lib-connection/pkg/utils/kubeproxy"
 )
 
 func TestKubeProxy(t *testing.T) {
@@ -80,6 +80,8 @@ func TestKubeProxy(t *testing.T) {
 
 		tests.AssertKubeProxy(t, test, port, false)
 
+		sshClient.WithID("Restart container")
+
 		// restart container case
 		restartSleep := 5 * time.Second
 		test.GetLogger().InfoF("Restart container with wait %s", restartSleep.String())
@@ -89,6 +91,8 @@ func TestKubeProxy(t *testing.T) {
 		// wait for ssh client/tunnel/kubeproxy restart
 		waitRestart("restart container")
 		tests.AssertKubeProxy(t, test, port, false)
+
+		sshClient.WithID("")
 
 		// network issue case
 		err = container.Container.FailAndUpConnection(restartSleep)

@@ -25,11 +25,11 @@ import (
 	"github.com/stretchr/testify/require"
 
 	connection "github.com/deckhouse/lib-connection/pkg"
+	"github.com/deckhouse/lib-connection/pkg/ssh/base/kubeproxy"
 	"github.com/deckhouse/lib-connection/pkg/ssh/clissh"
 	sshconfig "github.com/deckhouse/lib-connection/pkg/ssh/config"
 	"github.com/deckhouse/lib-connection/pkg/ssh/gossh"
 	"github.com/deckhouse/lib-connection/pkg/tests"
-	"github.com/deckhouse/lib-connection/pkg/utils/kubeproxy"
 )
 
 func TestKubeProxy(t *testing.T) {
@@ -97,7 +97,8 @@ func TestKubeProxy(t *testing.T) {
 			tests.AssertKubeProxy(t, test, thirdProxyPort, false)
 
 			// forth proxy start on custom port
-			customPort := 30099
+			customPort := tests.RandRange(30001, 30199)
+			test.GetLogger().InfoF("Got custom Port: %d", customPort)
 			forthProxy := client.KubeProxy()
 			forthProxyPort, err := forthProxy.Start(customPort)
 			require.NoError(t, err, "second proxy should start")

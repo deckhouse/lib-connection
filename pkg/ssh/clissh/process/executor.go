@@ -373,7 +373,7 @@ func (e *Executor) readFromStreams(stdoutReadPipe io.Reader, stdoutHandlerWriteP
 		return
 	}
 
-	logger.DebugF("Start read from streams for command: ", e.cmd.String())
+	logger.DebugF("Start read from streams for command: %s", e.cmd.String())
 
 	buf := make([]byte, 16)
 	var matchersDone bool

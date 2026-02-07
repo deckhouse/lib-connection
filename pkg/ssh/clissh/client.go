@@ -53,6 +53,8 @@ type Client struct {
 	kubeProxies []*KubeProxy
 
 	stopped bool
+
+	id string
 }
 
 func (s *Client) OnlyPreparePrivateKeys() error {
@@ -94,7 +96,7 @@ func (s *Client) Command(name string, arg ...string) connection.Command {
 
 // KubeProxy is used to start kubectl proxy and create a tunnel from local port to proxy port
 func (s *Client) KubeProxy() connection.KubeProxy {
-	p := NewKubeProxy(s.settings, s.SessionSettings)
+	p := NewKubeProxy(s)
 	s.kubeProxies = append(s.kubeProxies, p)
 	return p
 }
@@ -171,6 +173,11 @@ func (s *Client) Loop(fn connection.SSHLoopHandler) error {
 
 func (s *Client) IsStopped() bool {
 	return s.stopped
+}
+
+func (s *Client) WithID(id string) *Client {
+	s.id = id
+	return s
 }
 
 func (s *Client) stopAgent() {

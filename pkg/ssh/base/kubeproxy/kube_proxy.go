@@ -39,7 +39,8 @@ type StartCommandParams struct {
 
 type Runner interface {
 	StartCommand(params StartCommandParams) (connection.KubeProxyCommand, error)
-	UpTunnel(address string) (connection.Tunnel, error)
+	UpTunnel(localPort int, kubeProxyPort string) (connection.Tunnel, string, error)
+	ClientID() string
 }
 
 type BaseKubeProxy struct {
@@ -223,12 +224,14 @@ func (k *BaseKubeProxy) tryToRestartFully(startID int) {
 		}
 
 		// need warn for human
-		k.sett.Logger().WarnF(
-			"[%d] Proxy was not restarted: %v. Sleep %s seconds before next attempt",
+		msg, args := k.appendIDs(
 			startID,
+			"Proxy was not restarted: %v. Sleep %s seconds before next attempt",
 			err,
 			sleep.String(),
 		)
+
+		k.sett.Logger().WarnF(msg, args...)
 
 		time.Sleep(sleep)
 
@@ -314,7 +317,6 @@ func (k *BaseKubeProxy) upTunnel(
 	if useLocalPort < 1 {
 		k.debugWithID(startID,
 			"Incorrect local port %d use default %d",
-			startID,
 			useLocalPort,
 			DefaultLocalAPIPort,
 		)
@@ -338,16 +340,7 @@ func (k *BaseKubeProxy) upTunnel(
 			break
 		}
 
-		// try to start tunnel from localPort to proxy port
-		var tunnelAddress string
-		if v := os.Getenv("KUBE_PROXY_BIND_ADDR"); v != "" {
-			tunnelAddress = fmt.Sprintf("%s:%d:localhost:%s", v, localPort, kubeProxyPort)
-		} else {
-			tunnelAddress = fmt.Sprintf("%s:%s:localhost:%d", "127.0.0.1", kubeProxyPort, localPort)
-		}
-
-		k.debugWithID(startID, "Try up tunnel on %s", tunnelAddress)
-		newTun, upTunnelErr := k.runner.UpTunnel(tunnelAddress)
+		newTun, tunnelAddress, upTunnelErr := k.runner.UpTunnel(localPort, kubeProxyPort)
 		if upTunnelErr != nil {
 			k.debugWithID(startID, "Start tunnel was failed. Cleaning...")
 
@@ -370,7 +363,7 @@ func (k *BaseKubeProxy) upTunnel(
 				break
 			}
 		} else {
-			k.debugWithID(startID, "Tunnel was started. Starting health monitor")
+			k.debugWithID(startID, "Tunnel was started on %s. Starting health monitor", tunnelAddress)
 			go newTun.HealthMonitor(tunnelErrorCh)
 			lastError = nil
 			tun = newTun
@@ -413,16 +406,16 @@ func (k *BaseKubeProxy) runKubeProxy(
 	onStart := make(chan struct{}, 1)
 
 	onStartHandler := func() {
-		k.debugWithID(startID, "Command started")
+		k.debugWithID(startID, "Proxy command started")
 		onStart <- struct{}{}
 	}
 
 	waitHandler := func(err error) {
-		k.debugWithID(startID, "Wait error: %v", err)
+		k.debugWithID(startID, "Proxy command wait error: %v", err)
 		waitCh <- err
 	}
 
-	k.debugWithID(startID, "Start proxy command")
+	k.debugWithID(startID, "Starting proxy command")
 
 	proxy, err := k.runner.StartCommand(StartCommandParams{
 		OnStart:       onStartHandler,
@@ -530,11 +523,30 @@ func (k *BaseKubeProxy) getTunnel() (connection.Tunnel, error) {
 	return t, nil
 }
 
-func (k *BaseKubeProxy) debugWithID(id int, f string, args ...any) {
+func (k *BaseKubeProxy) appendIDs(id int, f string, args ...any) (string, []any) {
 	if id > 0 {
 		f = "[%d] " + f
 		args = append([]any{id}, args...)
 	}
 
+	clientID := k.runner.ClientID()
+	if clientID != "" {
+		f = "[%s] " + f
+		args = append([]any{clientID}, args...)
+	}
+
+	return f, args
+}
+
+func (k *BaseKubeProxy) debugWithID(id int, f string, args ...any) {
+	f, args = k.appendIDs(id, f, args...)
 	k.sett.Logger().DebugF(f, args...)
+}
+
+func ExtractTunnelAddressFromEnv(localPort int, kubeProxyPort string) string {
+	if v := os.Getenv("KUBE_PROXY_BIND_ADDR"); v != "" {
+		return fmt.Sprintf("%s:%d:localhost:%s", v, localPort, kubeProxyPort)
+	}
+
+	return ""
 }

@@ -36,6 +36,7 @@ import (
 
 var (
 	_ connection.SSHProvider = &DefaultSSHProvider{}
+	_ connection.SSHProvider = &ErrorSSHProvider{}
 )
 
 type SSHClientOptions struct {
@@ -43,6 +44,7 @@ type SSHClientOptions struct {
 	ForceGoSSH         bool
 	LoopsParams        gossh.ClientLoopsParams
 	StartClient        bool
+	ClientID           string
 }
 
 type SSHClientOption func(options *SSHClientOptions)
@@ -67,6 +69,12 @@ func SSHClientWithStartAfterCreate(f bool) SSHClientOption {
 func SSHClientWithLoopsParams(params gossh.ClientLoopsParams) SSHClientOption {
 	return func(options *SSHClientOptions) {
 		options.LoopsParams = params
+	}
+}
+
+func SSHClientWithID(id string) SSHClientOption {
+	return func(options *SSHClientOptions) {
+		options.ClientID = id
 	}
 }
 
@@ -252,6 +260,15 @@ func (p *DefaultSSHProvider) WithOptions(opts ...SSHClientOption) *DefaultSSHPro
 	return p
 }
 
+func (p *DefaultSSHProvider) WithID(id string) *DefaultSSHProvider {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.options.ClientID = id
+
+	return p
+}
+
 // AdditionalClients
 // please use for testing purposes only!
 func (p *DefaultSSHProvider) AdditionalClients() []connection.SSHClient {
@@ -316,10 +333,10 @@ func (p *DefaultSSHProvider) createClient(ctx context.Context, parent *session.S
 func (p *DefaultSSHProvider) constructClient(ctx context.Context, sess *session.Session, privateKeys []session.AgentPrivateKey) connection.SSHClient {
 	if p.useGoSSH(true) {
 		return gossh.NewClient(ctx, p.sett, sess, privateKeys).
-			WithLoopsParams(p.options.LoopsParams)
+			WithLoopsParams(p.options.LoopsParams).WithID(p.options.ClientID)
 	}
 
-	return clissh.NewClient(p.sett, sess, privateKeys, p.options.InitializeNewAgent)
+	return clissh.NewClient(p.sett, sess, privateKeys, p.options.InitializeNewAgent).WithID(p.options.ClientID)
 }
 
 func (p *DefaultSSHProvider) stopCurrentClientIfNeed() {
@@ -665,4 +682,48 @@ func fileExists(path string) (bool, error) {
 	}
 
 	return true, nil
+}
+
+type ErrorSSHProvider struct {
+	err error
+}
+
+// NewErrorSSHProvider
+// Special provider that always return error for all operations
+// expected cleanup
+// it can be used with GetRunnerInterface if you are you sure that
+// you do not use KubeClient over SSH
+func NewErrorSSHProvider(err error) *ErrorSSHProvider {
+	if err == nil {
+		err = fmt.Errorf("ErrorSSHProvider: error not provided")
+	}
+	return &ErrorSSHProvider{err: err}
+}
+
+func (p *ErrorSSHProvider) Client(context.Context) (connection.SSHClient, error) {
+	return nil, p.returnError("Client")
+}
+
+func (p *ErrorSSHProvider) NewAdditionalClient(context.Context) (connection.SSHClient, error) {
+	return nil, p.returnError("NewAdditionalClient")
+}
+
+func (p *ErrorSSHProvider) NewStandaloneClient(context.Context, *session.Session, []session.AgentPrivateKey, ...connection.StandaloneClientOpt) (connection.SSHClient, error) {
+	return nil, p.returnError("NewStandaloneClient")
+}
+
+func (p *ErrorSSHProvider) SwitchClient(context.Context, *session.Session, []session.AgentPrivateKey) (connection.SSHClient, error) {
+	return nil, p.returnError("SwitchClient")
+}
+
+func (p *ErrorSSHProvider) SwitchToDefault(context.Context) (connection.SSHClient, error) {
+	return nil, p.returnError("SwitchToDefault")
+}
+
+func (p *ErrorSSHProvider) Cleanup(context.Context) error {
+	return nil
+}
+
+func (p *ErrorSSHProvider) returnError(op string) error {
+	return fmt.Errorf("cannot provide ssh client with %s: %w", op, p.err)
 }

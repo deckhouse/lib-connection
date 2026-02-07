@@ -202,6 +202,7 @@ func TestDefaultKubeProvider(t *testing.T) {
 					assertAdditionalClientsOverSSH(t, test, firstClient, additionalClients, true)
 
 					logClientSwitching(test)
+					sshProvider.WithID(rt.getName(t) + "AfterSwitch")
 					_, err = sshProvider.SwitchClient(ctx, tests.Session(secondContainer), secondContainer.AgentPrivateKeys())
 					require.NoError(t, err, "ssh client should be switched")
 
@@ -734,6 +735,7 @@ func getSSHProvider(test *tests.Test, config *sshconfig.ConnectionConfig) *provi
 		config,
 		provider.SSHClientWithLoopsParams(loopsParams),
 		provider.SSHClientWithStartAfterCreate(true),
+		provider.SSHClientWithID(test.FullName()),
 	)
 }
 
