@@ -23,6 +23,7 @@ import (
 	"github.com/deckhouse/lib-dhctl/pkg/log"
 	"github.com/deckhouse/lib-dhctl/pkg/retry"
 	"github.com/name212/govalue"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	connection "github.com/deckhouse/lib-connection/pkg"
 	"github.com/deckhouse/lib-connection/pkg/kube"
@@ -31,6 +32,7 @@ import (
 
 var (
 	_ connection.KubeProvider = &DefaultKubeProvider{}
+	_ connection.KubeProvider = &FakeKubeProvider{}
 )
 
 type KubeProviderLoopsParams struct {
@@ -239,4 +241,45 @@ var defaultInitClientParamsOpts = []retry.ParamsBuilderOpt{
 var defaultWaitingReadyParamsOpts = []retry.ParamsBuilderOpt{
 	retry.WithWait(5 * time.Second),
 	retry.WithAttempts(45),
+}
+
+type FakeKubeProvider struct {
+	current *kube.KubernetesClient
+}
+
+func NewFakeKubeProvider(gvrs ...map[schema.GroupVersionResource]string) *FakeKubeProvider {
+	resGVR := make(map[schema.GroupVersionResource]string)
+	for _, gvrMap := range gvrs {
+		for gvr, kind := range gvrMap {
+			resGVR[gvr] = kind
+		}
+	}
+
+	return &FakeKubeProvider{
+		current: newFake(resGVR),
+	}
+}
+
+func (p *FakeKubeProvider) Client(context.Context) (connection.KubeClient, error) {
+	return p.current, nil
+}
+
+func (p *FakeKubeProvider) NewAdditionalClient(ctx context.Context) (connection.KubeClient, error) {
+	return p.current, nil
+}
+
+func (p *FakeKubeProvider) NewAdditionalClientWithoutInitialize(ctx context.Context) (connection.KubeClient, error) {
+	return p.current, nil
+}
+
+func (p *FakeKubeProvider) Cleanup(context.Context) error {
+	return nil
+}
+
+func newFake(gvr map[schema.GroupVersionResource]string) *kube.KubernetesClient {
+	if len(gvr) == 0 {
+		return kube.NewFakeKubernetesClient()
+	}
+
+	return kube.NewFakeKubernetesClientWithListGVR(gvr)
 }

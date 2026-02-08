@@ -97,6 +97,14 @@ func (f *Flags) RewriteFromEnvs() error {
 	return nil
 }
 
+func (f *Flags) FlagSet() (*flag.FlagSet, error) {
+	if err := f.baseFlags.IsInitialized(); err != nil {
+		return nil, err
+	}
+
+	return f.baseFlags.FlagSet(), nil
+}
+
 type FlagsParser struct {
 	*baseflags.BaseParser
 }

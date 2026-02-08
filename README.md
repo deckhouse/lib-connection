@@ -51,9 +51,9 @@ Library implement own interfaces to provide clients for creating clients for lig
 ### SSHProvider
 
 Described [here](./pkg/ssh.go) as `SSHProvider`. Have next interface:
-- Client - this provides SSH client for default settings passed in provider. Implementations should cache
+- `Client` - this provides SSH client for default settings passed in provider. Implementations should cache
 current client. You should use this method for getting `SSHClient`. Please do not stop this client directly.
-- SwitchClient - switch current `SSHClient` with new settings. It needs if you first connect with defaults
+- `SwitchClient` - switch current `SSHClient` with new settings. It needs if you first connect with defaults
 but in you logic we need to use new connection. For example, you connect to master, create new user and should
 continue working with new user. It will close current `SSHClient` if this got via `Client` method, but safe
 if `Client` did not call. Warning! This method returns `SSHClient`, but DO NOT SAVE it your structures.
@@ -73,7 +73,7 @@ func do(){
 	// ...
 }
 ```
-- SwitchToDefault - it uses if you need to use default configuration client after `SwitchClient`.
+- `SwitchToDefault` - it uses if you need to use default configuration client after `SwitchClient`.
 For example, For example, you connect to master, create new user do all routines with new user
 and continue with default. It will close current `SSHClient` if this got via `Client` or `SwitchClient`
 method, but safe if `Client` or/and `SwitchClient` did not call. Warning! This method returns 
@@ -95,13 +95,13 @@ func do(){
 	// ...
 }
 ```
-- NewAdditionalClient - creates new additional client with default configuration. It needs if you want
+- `NewAdditionalClient` - creates new additional client with default configuration. It needs if you want
 to use another connection without affect current client. Provider save all clients created via this method
 for cleanup. If clients does not need anymore you can stop it with `Stop` method
-- NewStandaloneClient - creates new standalone client. It needs if you need to connect to another hosts.
+- `NewStandaloneClient` - creates new standalone client. It needs if you need to connect to another hosts.
 Provider save all clients created via this method for cleanup. If clients does not need anymore 
 you can stop it with `Stop` method.
-- Cleanup - provider can provide some files for its routines like private keys passed from configuration.
+- `Cleanup` - provider can provide some files for its routines like private keys passed from configuration.
 This files will delete in this call. Also, it stops current client and all additional clients created with
 `NewAdditionalClient` and `NewStandaloneClient`. It is safe if provider does not have current client or
 additional clients. Also, it is safe if some or all clients were stopped. Current client and all additional
@@ -134,7 +134,7 @@ password if password set) and that `legacyMode` and `modernMode` set both.
 
 ###### ParseFlags
 
-`FlagsParser` provide `ConnectionConfig` from cli arguments. It is use `cobra` package for parse it.
+`FlagsParser` provide `ConnectionConfig` from cli arguments. It is use `https://github.com/spf13/pflag` package for parse it.
 All flags can rewrite with env variables [described in](./pkg/ssh/config/parse_flags.go). You can 
 provide prefix for envs variables with `WithEnvsPrefix` method. Parse flags doing in next order:
 ```go
@@ -167,6 +167,10 @@ func do() error {
 	return nil
 }
 ```
+
+Flags parsers uses copy of passed flag set for parsing. If you need parse with you another flags set
+you can get new flag set with `FlagSet` method and parse flag set by your hand.
+After parse, extract `ConnectionConfig` with `ExtractConfigAfterParse` method.
 
 By default, hosts is not required for parse, you can rewrite with `ParseWithRequiredSSHHost`.
 `ExtractConfigAfterParse` add some defaults if some flags not passes, like port and bastion port (22 by default),
@@ -220,3 +224,110 @@ as file. All files will delete on `Cleanup` call.
 Also, in creating all clients (additional, standalone, switch) provider adds private keys from default
 configuration by default. For example, if you switch client, you could not add private keys from current 
 client for safe switching.
+
+`DefaultSSHProvider` provide client implementations with next rules:
+- if you provide `SSHClientWithForceGoSSH` option it returns go-ssh
+- if set `ForceModern` in configuration returns go-ssh
+- if set `ForceLegacy` in configuration returns cli-ssh
+- if configuration does not contain private keys returns go-ssh, because cli-ssh not supported
+password authentification
+- by default returns cli-ssh. Warning! this behaviour can change in the future.
+
+By default, provider not start client if you need you can pass `SSHClientWithStartAfterCreate` option.
+
+##### ErrorSSHProvider
+
+This provider returns error for every call. This provider can use with `KubeProvider` if you sure
+that you need to use kube client not over ssh.
+
+###### SSHProvider in `testssh`
+
+You can pass this provider in unit tests. This provider save all switch calls and you can test it.
+
+### KubeProvider
+
+Provides kubernetes client. Have next methods:
+- `Client` - gets current client or init new if current client not set. Client cached.
+If you client in retry loop, please call `Client` on every iteration. 
+And please do not save client in your structures, please call `Client` with every kube-api routine. 
+And do not stop this client directly.
+- `NewAdditionalClient` - initialize new client. Need use if you do not want affect current client.
+If you do not need a client, you can call `kube.Stop` method for stop client and its inferiors.
+All clients created with this method saved in provider.
+- `NewAdditionalClientWithoutInitialize` - create new client, but not initialize it. For start client
+please use `client.InitContext`. Need use if you do not want affect current client.
+All clients created with this method saved in provider.
+- `Cleanup` - stops all additional clients got from NewAdditionalClient and NewAdditionalClientWithoutInitialize
+also current client also stop, but not fully because if we use over ssh current client can use in another routines.
+Call `Cleanup` is safe for call on stopped clients.
+
+Now, we have next implementations:
+- `DefaultKubeProvider` - provide default client with its config
+- `FakeKubeProvider` - provide fake clients for using in tests.
+
+#### DefaultKubeProvider
+
+DefaultKubeProvider creates kube provider dependent on passed user configuration.
+Configuration described [here](./pkg/kube/config.go)
+
+Kube client creates with in next order:
+- if set `config.KubeConfigInCluster` provider will use `in-cluster` configuration. This
+should use for creating kube client in containers in k8s cluster
+- if set `config.KubeConfig` (path to kubeconfig) uses this kubeconfig for connection
+- if set `config.RestConfig` uses this configuration for connect to kube API. It needs
+if you want to use BearerToken for connect. 
+- if set `config.LocalKubeClient` use directly connection on same host
+- by default uses kube proxy over ssh.
+
+##### Parse configuration from flags
+
+You can use `kube.FlagsParser` for extract configuration from cli flags.
+This parser have same rules as [ssh flags parser](#parseflags). Client can provide
+kubeconfig path with context in kubeconfig or `in-cluster` mode only. For another options like
+local or rest config you can prepare configuration in code.
+`FlagsParser` have next additional checks:
+- fail if `in-cluster` mode pass with kubeconfig path
+- if kubeconfig provided, parser checks that provide valid kubeconfig
+- if pass context, provider checks that kubeconfig contains this context.
+
+Warning! Parser also checks `KUBECONFIG` env. If this env sets, parser use value from env as
+kubeconfig path.
+
+##### Provider initialization and logic
+
+For init provider, you can pass special interface `RunnerInterface` this interface provide routines
+to additional logic used depend on configuration. For getting implementation use `GetRunnerInterface`
+This function checks that configuration is not conflicted (use one connection method)
+For kubeconfig, `in-cluster` and rest config modes, implementations does not contain complex logic.
+But for ssh logic is complex.
+
+###### Kube-proxy (over ssh) mode
+
+`RunnerInterfaceSSH` got `SSHProvider` for provide client for starting kube-proxy
+
+For call `Client` provider (in fact `RunnerInterfaceSSH`) use `SSHProvider.Client()` method.
+For every call, provider checks that ssh-client configuration is same with current.
+If it is same, returns current saved kube client. Otherwise, provider initialize new kube client
+with got `SSHClient`. Also, during initialization it checks that ssh host available and switch to
+another host if it needs. After initialize new kube client stops current kube-client, but not fully.
+This logic needs for simple usage `KubeProvider` you do not need track ssh switches in your logic.
+And that's why you need `Client` call for every kube API interaction.
+
+`NewAdditionalClient` and `NewAdditionalClientWithoutInitialize` always create new ssh-client with
+`sshProvider.NewAdditionalClient`. That's why you can stop this kube-clients fully. All these clients
+saved to internals for cleanup.
+
+Before returns new kube-client, provider checks, that kube API is available.
+
+`Cleanup` - stops all additional clients fully, but current stop not fully (only kube-proxy), because
+current kube-client uses current ssh-client but this client can use in the next operations in your code.
+
+#### FakeKubeProvider
+
+Provides fake kube client.
+
+In creation, `FakeKubeProvider` creates current kube-client and returns this client for all methods.
+It needs for test resources if you use additional clients in one place without saving additional
+clients in your code. You can use `Client` call for getting kube client after test your methods and
+asserts resources after test. 
+`KubernetesClient.InitContext` is save for call with fake client

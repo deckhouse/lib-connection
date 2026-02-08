@@ -23,6 +23,8 @@ import (
 	//nolint:goimports
 	"github.com/deckhouse/lib-dhctl/pkg/retry"
 	//nolint:goimports
+	"k8s.io/client-go/kubernetes/fake"
+	//nolint:goimports
 	klient "github.com/flant/kube-client/client"
 	//nolint:goimports
 	"github.com/name212/govalue"
@@ -143,6 +145,16 @@ func (k *KubernetesClient) initContext(ctx context.Context, params *Config, opts
 
 	for _, opt := range opts {
 		opt(options)
+	}
+
+	if !govalue.Nil(k.KubeClient) {
+		client, ok := k.KubeClient.(*klient.Client)
+		if ok && !govalue.Nil(client.Interface) {
+			_, isFake := client.Interface.(*fake.Clientset)
+			if isFake {
+				return nil
+			}
+		}
 	}
 
 	kubeClient := klient.New()
