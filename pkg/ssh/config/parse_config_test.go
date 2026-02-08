@@ -150,6 +150,44 @@ sudoPassword: "not_secure_password"
 		},
 
 		{
+			name: "only connection: with unknown kind and skip it",
+			input: `
+apiVersion: dhctl.deckhouse.io/v1
+kind: SSHConfig
+sshPort: 22
+sshUser: ubuntu
+sudoPassword: "not_secure_password"
+---
+apiVersion: dhctl.deckhouse.io/v1
+kind: Unknown
+key: key
+val: 1
+---
+apiVersion: dhctl.deckhouse.io/v1
+kind: SSHHost
+host: "192.168.0.10"
+`,
+			hasErrorContains: "",
+			opts: []ValidateOption{
+				ParseWithRequiredSSHHost(true),
+				ParseWithSkipUnknownKinds(true),
+			},
+			expected: &ConnectionConfig{
+				Config: &Config{
+					Port:         intPtr(22),
+					User:         "ubuntu",
+					SudoPassword: "not_secure_password",
+					BastionPort:  nil,
+				},
+				Hosts: []Host{
+					{
+						Host: "192.168.0.10",
+					},
+				},
+			},
+		},
+
+		{
 			name: "only connection: force agent",
 			input: `
 apiVersion: dhctl.deckhouse.io/v1
