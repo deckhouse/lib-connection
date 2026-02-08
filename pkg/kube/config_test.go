@@ -15,6 +15,7 @@
 package kube
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -122,5 +123,50 @@ func TestConfigIsConflict(t *testing.T) {
 				require.Error(t, err, "should conflict")
 			})
 		}
+	})
+}
+
+func TestOverSSH(t *testing.T) {
+	type testCase struct {
+		name   string
+		config *Config
+	}
+
+	configs := []testCase{
+		{
+			name: "kube config",
+			config: &Config{
+				KubeConfig: "/tmp/not-exists.rgg4g4.yaml",
+			},
+		},
+		{
+			name: "in cluster",
+			config: &Config{
+				KubeConfigInCluster: true,
+			},
+		},
+		{
+			name: "local",
+			config: &Config{
+				LocalKubeClient: true,
+			},
+		},
+		{
+			name: "rest",
+			config: &Config{
+				RestConfig: &rest.Config{},
+			},
+		},
+	}
+
+	for _, c := range configs {
+		t.Run(fmt.Sprintf("set %s", c.name), func(t *testing.T) {
+			require.False(t, c.config.OverSSH(), "should not over ssh")
+		})
+	}
+
+	t.Run("over ssh", func(t *testing.T) {
+		cfg := &Config{}
+		require.True(t, cfg.OverSSH(), "should over ssh")
 	})
 }

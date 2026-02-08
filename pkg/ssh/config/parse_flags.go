@@ -518,13 +518,7 @@ func (p *FlagsParser) ExtractConfigAfterParse(flags *Flags, opts ...ValidateOpti
 	}
 
 	if flags.forceNoPrivateKeys && flags.useAgentWithNoPrivateKeys {
-		envExtractor, err := flags.baseFlags.ShouldEnvExtractor()
-		if err != nil {
-			return nil, err
-		}
-
-		authSockPath := ""
-		envExtractor.StringWithoutPrefix(settings.SSHAgentAuthSockEnv, &authSockPath)
+		authSockPath := p.Settings().AuthSock()
 		if err := file.IsExists(authSockPath, "auth socket from env "+settings.SSHAgentAuthSockEnv); err != nil {
 			return nil, err
 		}

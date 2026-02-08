@@ -6,6 +6,25 @@ Library provide interfaces and own implementations for SSH and kubernetes client
 Also library provide special providers for getting clients (more information about this below).
 Please DO NOT CREATE implementations of clients directly without need. Please use providers for it.
 
+## Global settings
+
+Library routines needs some global settings for running routines.
+It describes as Settings interface [here](./pkg/settings/settings.go). Implementation can create
+with `NewBaseProviders` constructor. Now we have next settings:
+- `LoggerProvider` - func that provide logger. By default, uses silent logger
+If you need debug logs you need to provide logger with debug logging enable.
+- `NodeTmpDir` - uses for upload bundles and some additional temp files to remote node
+default - `/opt/deckhouse/tmp`
+- `NodeBinPath` - now, uses only for kube-proxy to add this path to PATH env, because
+we use your own path to safe kubectl on node. Default - `/opt/deckhouse/bin`
+- `IsDebug` - enable some routines with debug
+- `TmpDir`  - root tmp dir default `os.TmpDir() + "/dhctl"`
+- `AuthSock` - ssh-agent auth sock, if not set uses `os.Getenv("SSH_AUTH_SOCK")` for every call
+- `EnvsPrefix` - envs prefix for flags parsers. Default - empty string
+- `OnShutdown` - function to add some routines on end of your logic. Default empty function.
+You can use `tomb` package in dhctl for this.
+- 
+
 ## SSH client
 
 Interface of SSH client (`SSHClient`) described [here](./pkg/ssh.go).
@@ -173,6 +192,10 @@ you can get new flag set with `FlagSet` method and parse flag set by your hand.
 After parse, extract `ConnectionConfig` with `ExtractConfigAfterParse` method.
 
 By default, hosts is not required for parse, you can rewrite with `ParseWithRequiredSSHHost`.
+It needs because we can parse ssh configuration and kube configuration both and if we have kubeconfig
+path we should skip all ssh flags and empty flag set for ssh is valid in this case. 
+But we can use `OverSSH` method in kube configuration. But Warning, you can use ssh routines and kube
+in one logic, and we can use kubeconfig for kube connection.
 `ExtractConfigAfterParse` add some defaults if some flags not passes, like port and bastion port (22 by default),
 user and bastion user (current user from USER env or getting with sys cals).
 Also, by default flags parser add `~/.ssh/id_rsa` private key. In some cases it is not required:

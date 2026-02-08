@@ -598,16 +598,13 @@ func TestParseFlags(t *testing.T) {
 				"--use-agent-with-no-private-keys",
 			},
 
-			envsPrefix: "USE_AGENT",
-			envs:       map[string]string{},
-
 			hasErrorContains: "",
 
 			privateKeyExtractor: defaultPrivateKeyExtractor(currentHomeDir),
 
 			before: func(t *testing.T, ts *test, logger log.Logger) {
 				p := ts.test.MustCreateTmpFile(t, "", false, "auth_sock")
-				ts.envs["SSH_AUTH_SOCK"] = p
+				ts.test.WithAuthSock(p)
 			},
 
 			expected: &ConnectionConfig{
@@ -930,9 +927,6 @@ sshBastionPassword: "not_secure_password_bastion"
 				"--use-agent-with-no-private-keys",
 			},
 
-			envsPrefix: "USE_AGENT_NO_SET",
-			envs:       map[string]string{},
-
 			hasErrorContains: "pass empty path for auth socket from env SSH_AUTH_SOCK",
 
 			privateKeyExtractor: defaultPrivateKeyExtractor(currentHomeDir),
@@ -946,16 +940,13 @@ sshBastionPassword: "not_secure_password_bastion"
 				"--use-agent-with-no-private-keys",
 			},
 
-			envsPrefix: "USE_AGENT_NO_SET",
-			envs:       map[string]string{},
-
 			hasErrorContains: "auth socket from env SSH_AUTH_SOCK path",
 
 			privateKeyExtractor: defaultPrivateKeyExtractor(currentHomeDir),
 
 			before: func(t *testing.T, ts *test, logger log.Logger) {
 				p := ts.test.MustMkSubDirs(t, "auth_sock")
-				ts.envs["SSH_AUTH_SOCK"] = p
+				ts.test.WithAuthSock(p)
 			},
 		},
 	}
@@ -963,8 +954,7 @@ sshBastionPassword: "not_secure_password_bastion"
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
 			tst := tests.ShouldNewTest(t, testCase.name)
-			sett := tst.Settings()
-			logger := sett.Logger()
+			logger := tst.Settings().Logger()
 
 			testCase.test = tst
 
@@ -974,6 +964,8 @@ sshBastionPassword: "not_secure_password_bastion"
 			if testCase.before != nil {
 				testCase.before(t, &testCase, logger)
 			}
+
+			sett := tst.Settings()
 
 			parser := NewFlagsParser(sett)
 			parser.WithEnvsPrefix(testCase.envsPrefix)

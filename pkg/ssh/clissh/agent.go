@@ -17,7 +17,6 @@ package clissh
 import (
 	"fmt"
 	"net"
-	"os"
 	"sync"
 	"time"
 
@@ -98,7 +97,7 @@ func (a *Agent) Start() error {
 	a.agent = cmd.NewAgent(a.sshSettings, a.agentSettings)
 
 	if len(a.agentSettings.PrivateKeys) == 0 {
-		a.agent.WithAuthSock(os.Getenv(settings.SSHAgentAuthSockEnv))
+		a.agent.WithAuthSock(a.sshSettings.AuthSock())
 		return nil
 	}
 

@@ -134,6 +134,12 @@ func CloneWithEnvsPrefix(prefix string) CloneOpt {
 	}
 }
 
+func CloneWithAuthSock(path string) CloneOpt {
+	return func(p *BaseProviders) {
+		p.params.AuthSock = path
+	}
+}
+
 func (b *BaseProviders) Clone(opts ...CloneOpt) *BaseProviders {
 	clone := *b
 
