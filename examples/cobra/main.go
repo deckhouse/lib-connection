@@ -87,6 +87,8 @@ func main() {
 				"--log-type",
 				// kube flags
 				" --kube-client-from-cluster",
+				// envs prefix
+				envsPrefix + "_",
 			},
 		},
 		"ssh": {
@@ -98,6 +100,8 @@ func main() {
 				"--kubeconfig-context",
 				// ssh flags
 				"--ssh-legacy-mode",
+				// envs prefix
+				envsPrefix + "_",
 			},
 		},
 	}

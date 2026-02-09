@@ -1311,6 +1311,38 @@ func TestSSHProviderClient(t *testing.T) {
 			)
 		})
 
+		t.Run("set no init agent if force own agent", func(t *testing.T) {
+			test := newTest(t)
+			config := testCreateSSHConnectionConfigWithPrivateKeyPaths(t, connectionConfigParams{
+				mode: sshconfig.Mode{
+					ForceLegacy: true,
+				},
+				test:        test,
+				bastionPort: nil,
+				port:        nil,
+			})
+
+			config.Config.ForceUseSSHAgent = true
+
+			sett := test.Settings()
+
+			provider := newTestProvider(sett, config)
+			ctx := context.TODO()
+
+			client, err := provider.Client(ctx)
+			require.NoError(t, err, "should get client")
+
+			cliClient, ok := client.(*clissh.Client)
+			require.True(t, ok, "client should be cli client")
+
+			require.False(t, cliClient.InitializeNewAgent, "should not initialize new agent")
+			tests.AssertLogMessage(
+				t,
+				sett,
+				"Force no init new agent because ForceUseSSHAgent in default config set",
+			)
+		})
+
 		t.Run("pass no init agent to cli-ssh", func(t *testing.T) {
 			test := newTest(t)
 			config := testCreateSSHConnectionConfigWithPrivateKeyPaths(t, connectionConfigParams{

@@ -336,7 +336,13 @@ func (p *DefaultSSHProvider) constructClient(ctx context.Context, sess *session.
 			WithLoopsParams(p.options.LoopsParams).WithID(p.options.ClientID)
 	}
 
-	return clissh.NewClient(p.sett, sess, privateKeys, p.options.InitializeNewAgent).WithID(p.options.ClientID)
+	initNewAgent := p.options.InitializeNewAgent
+	if p.defaultConfig.Config.ForceUseSSHAgent {
+		p.debug("Force no init new agent because ForceUseSSHAgent in default config set")
+		initNewAgent = false
+	}
+
+	return clissh.NewClient(p.sett, sess, privateKeys, initNewAgent).WithID(p.options.ClientID)
 }
 
 func (p *DefaultSSHProvider) stopCurrentClientIfNeed() {
@@ -452,7 +458,7 @@ func (p *DefaultSSHProvider) newSession(parent *session.Session, privateKeys []s
 	}
 
 	if len(input.AvailableHosts) == 0 {
-		return nil, nil, fmt.Errorf("Cannot pass hosts to connection in session or default config")
+		return nil, nil, fmt.Errorf("hosts is empty in session or default config")
 	}
 
 	resPrivateKeys := make([]session.AgentPrivateKey, 0, len(privateKeys))
