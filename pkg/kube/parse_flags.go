@@ -234,7 +234,7 @@ func (p *FlagsParser) validateKubeConfigWithContext(flags *Flags, logger log.Log
 		return nil
 	}
 
-	content, err := file.ReadFile(kubeConfigFile, "kube config", logger)
+	content, fullPath, err := file.ReadFile(kubeConfigFile, "kube config", logger)
 	if err != nil {
 		return err
 	}
@@ -250,6 +250,8 @@ func (p *FlagsParser) validateKubeConfigWithContext(flags *Flags, logger log.Log
 			return fmt.Errorf("Cannot find context '%s' in kube config %s", context, kubeConfigFile)
 		}
 	}
+
+	flags.KubeConfig = fullPath
 
 	return nil
 }

@@ -140,6 +140,18 @@ func CloneWithAuthSock(path string) CloneOpt {
 	}
 }
 
+func CloneWithLoggerProvider(provider log.LoggerProvider) CloneOpt {
+	return func(p *BaseProviders) {
+		p.params.LoggerProvider = provider
+	}
+}
+
+func CloneWithTmpDir(dir string) CloneOpt {
+	return func(p *BaseProviders) {
+		p.params.TmpDir = dir
+	}
+}
+
 func (b *BaseProviders) Clone(opts ...CloneOpt) *BaseProviders {
 	clone := *b
 
