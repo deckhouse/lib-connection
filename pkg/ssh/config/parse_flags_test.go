@@ -61,20 +61,19 @@ func TestParseFlags(t *testing.T) {
 	}
 
 	type test struct {
-		name                  string
-		passwords             *passwordsFromUser
-		envsPrefix            string
-		envs                  map[string]string
-		arguments             []string
-		opts                  []ValidateOption
-		hasErrorContains      string
-		hasParseErrorContains string
-		expected              *ConnectionConfig
-		privateKeys           []*testPrivateKey
-		before                func(*testing.T, *test, log.Logger)
-		privateKeyExtractor   PrivateKeyExtractorFunc
-		test                  *tests.Test
-		defaultAsk            bool
+		name                string
+		passwords           *passwordsFromUser
+		envsPrefix          string
+		envs                map[string]string
+		arguments           []string
+		opts                []ValidateOption
+		hasErrorContains    string
+		expected            *ConnectionConfig
+		privateKeys         []*testPrivateKey
+		before              func(*testing.T, *test, log.Logger)
+		privateKeyExtractor PrivateKeyExtractorFunc
+		test                *tests.Test
+		defaultAsk          bool
 	}
 
 	beforeAddPrivateKeys := func(_ *testing.T, tst *test, _ log.Logger) {
@@ -147,8 +146,7 @@ func TestParseFlags(t *testing.T) {
 				"--ssh-host=192.168.0.1",
 				"--unknown=value",
 			},
-			hasParseErrorContains: "",
-			hasErrorContains:      "",
+			hasErrorContains: "",
 
 			privateKeyExtractor: defaultPrivateKeyExtractor(currentHomeDir),
 
@@ -749,7 +747,7 @@ sshBastionPassword: "not_secure_password_bastion"
 			arguments: []string{
 				"--ssh-bastion-port=portstr",
 			},
-			hasParseErrorContains: `flag: strconv.ParseInt: parsing "portstr": invalid syntax`,
+			hasErrorContains: `invalid argument "portstr" for "--ssh-bastion-port" flag: strconv.ParseInt: parsing "portstr": invalid syntax`,
 		},
 
 		{
@@ -1006,16 +1004,7 @@ sshBastionPassword: "not_secure_password_bastion"
 			flags, err := parser.InitFlags(fset)
 			require.NoError(t, err, "init flags")
 
-			err = flags.Parse(testCase.arguments)
-			if testCase.hasParseErrorContains != "" {
-				require.Error(t, err, "should parse error")
-				require.Contains(t, err.Error(), testCase.hasParseErrorContains, "should parse error contains")
-				return
-			} else {
-				require.NoError(t, err, "parse flags")
-			}
-
-			config, err := parser.ExtractConfigAfterParse(flags, testCase.opts...)
+			config, err := flags.ExtractConfig(testCase.arguments, testCase.opts...)
 			assertConnectionConfig(t, connectionConfigAssertParams{
 				hasErrorContains: testCase.hasErrorContains,
 				err:              err,
@@ -1210,7 +1199,7 @@ func TestParseFlagsAndExtractConfigNoArgs(t *testing.T) {
 func TestParseFlagsHelp(t *testing.T) {
 	tests.AssertParseFlagsHelp(t, tests.AssertParseFlagsHelpParams{
 		ExpectedFlags: 15,
-		Name:          "ssh-flags",
+		Name:          "lib-connection-ssh-internal",
 		Provider: func(sett settings.Settings, envsPrefix string) tests.TestFlagsParser {
 			parser := NewFlagsParser(sett)
 			parser.WithEnvsPrefix(envsPrefix)

@@ -21,9 +21,10 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/deckhouse/lib-dhctl/pkg/log"
+
 	"github.com/deckhouse/lib-connection/pkg/utils/defaults"
 	"github.com/deckhouse/lib-connection/pkg/utils/env"
-	"github.com/deckhouse/lib-dhctl/pkg/log"
 )
 
 func Reader(path string, fileType string) (io.ReadCloser, error) {

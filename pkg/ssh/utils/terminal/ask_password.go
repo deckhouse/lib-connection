@@ -29,7 +29,7 @@ func AskPassword(logger log.Logger, prompt string) ([]byte, error) {
 		return nil, fmt.Errorf("stdin is not a terminal, error reading password")
 	}
 
-	logger.InfoF(prompt)
+	logger.InfoFWithoutLn(prompt)
 	data, err := terminal.ReadPassword(fd)
 	logger.InfoF("")
 

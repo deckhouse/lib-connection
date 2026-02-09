@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/deckhouse/lib-connection/examples/cobra/cmd"
 	"github.com/deckhouse/lib-connection/pkg/settings"
@@ -26,6 +27,11 @@ import (
 )
 
 type CommandProvider func(cmd.SettingsProvider, *cobra.Command) (*cobra.Command, error)
+
+type command struct {
+	shouldContainsInHelp []string
+	provider             CommandProvider
+}
 
 func main() {
 	const envsPrefix = "COBRA"
@@ -58,8 +64,8 @@ func main() {
 		EnvsPrefix:     envsPrefix,
 	})
 
-	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
-		newSett, err := initSettings(cmd, sett, global)
+	rootCmd.PersistentPreRunE = func(*cobra.Command, []string) error {
+		newSett, err := initSettings(sett, global)
 		if err != nil {
 			return err
 		}
@@ -73,16 +79,44 @@ func main() {
 		return sett
 	}
 
-	subCommands := map[string]CommandProvider{
-		"kube": cmd.AppendKubeCommand,
+	subCommands := map[string]command{
+		"kube": {
+			provider: cmd.AppendKubeCommand,
+			shouldContainsInHelp: []string{
+				// global flags
+				"--log-type",
+				// kube flags
+				" --kube-client-from-cluster",
+			},
+		},
+		"ssh": {
+			provider: cmd.AppendSSHCommand,
+			shouldContainsInHelp: []string{
+				// global flags
+				"--tmp-dir",
+				// kube flags
+				"--kubeconfig-context",
+				// ssh flags
+				"--ssh-legacy-mode",
+			},
+		},
 	}
 
-	for name, provideCommand := range subCommands {
-		_, err := provideCommand(settingsProvider, rootCmd)
+	for name, c := range subCommands {
+		cc, err := c.provider(settingsProvider, rootCmd)
 		if err != nil {
 			sett.Logger().ErrorF("Failed to append command %s: %s", name, err)
 			os.Exit(1)
 			return
+		}
+
+		// unnecessary check
+		help := cc.UsageString()
+		for _, h := range c.shouldContainsInHelp {
+			if !strings.Contains(help, h) {
+				sett.Logger().ErrorF("Failed to append command %s, help should contains %s", name, h)
+				os.Exit(1)
+			}
 		}
 	}
 
@@ -100,7 +134,7 @@ type globalArgs struct {
 	tmpDir     string
 }
 
-func initSettings(cmd *cobra.Command, sett *settings.BaseProviders, args *globalArgs) (*settings.BaseProviders, error) {
+func initSettings(sett *settings.BaseProviders, args *globalArgs) (*settings.BaseProviders, error) {
 	tmpDir := args.tmpDir
 
 	sett.Logger().InfoF("Got tmp dir: %s", tmpDir)

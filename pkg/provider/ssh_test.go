@@ -76,6 +76,21 @@ func TestSSHProviderClient(t *testing.T) {
 			assertPrivateKeysAddedInSession(t, client, config.Config.PrivateKeys)
 		})
 
+		t.Run("no pass hosts", func(t *testing.T) {
+			test := newTest(t)
+			config := testCreateSSHConnectionConfigWithPrivateKeyPaths(t, connectionConfigParams{
+				test:        test,
+				bastionPort: nil,
+				port:        nil,
+			})
+
+			config.Hosts = make([]sshconfig.Host, 0)
+
+			provider := newTestProvider(test.Settings(), config)
+			_, err := provider.Client(context.TODO())
+			require.Error(t, err, "client should not be created")
+		})
+
 		t.Run("private keys paths force cli-ssh no write", func(t *testing.T) {
 			test := newTest(t)
 			config := testCreateSSHConnectionConfigWithPrivateKeyPaths(t, connectionConfigParams{
@@ -306,6 +321,35 @@ func TestSSHProviderClient(t *testing.T) {
 
 			assertSwitchClient(t, params, defaultClient)
 		}
+
+		t.Run("no pass hosts to session", func(t *testing.T) {
+			test := newTest(t)
+			config := testCreateSSHConnectionConfigWithPrivateKeyPaths(t, connectionConfigParams{
+				mode: sshconfig.Mode{
+					ForceModern: true,
+				},
+				test:        test,
+				bastionPort: nil,
+				port:        nil,
+			})
+
+			ctx := context.TODO()
+
+			provider := newTestProvider(test.Settings(), config)
+			_, err := provider.Client(ctx)
+			require.NoError(t, err, "default client should be provided")
+
+			sess := session.NewSession(session.Input{
+				User: "default",
+			})
+
+			_, err = provider.SwitchClient(ctx, sess, nil)
+			require.Error(t, err, "switch client should fail")
+
+			client, err := provider.Client(ctx)
+			require.NoError(t, err, "default client should be provided")
+			require.False(t, client.IsStopped(), "default client should not be stopped")
+		})
 
 		t.Run("go-ssh without additional private keys", func(t *testing.T) {
 			test := newTest(t)

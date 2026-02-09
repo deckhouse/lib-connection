@@ -87,6 +87,7 @@ type Flags struct {
 	useAgentWithNoPrivateKeys bool
 
 	baseFlags *baseflags.BaseFlags
+	parser    *FlagsParser
 }
 
 // Parse
@@ -197,12 +198,27 @@ func (f *Flags) RewriteFromEnvs() error {
 	return nil
 }
 
-func (f *Flags) FlagSet() (*flag.FlagSet, error) {
-	if err := f.baseFlags.IsInitialized(); err != nil {
+// ExtractConfig
+// if args is nil used os.Args
+func (f *Flags) ExtractConfig(args []string, opts ...ValidateOption) (*ConnectionConfig, error) {
+	if err := f.baseFlags.IsValid(); err != nil {
 		return nil, err
 	}
 
-	return f.baseFlags.FlagSet(), nil
+	if govalue.Nil(f.parser) {
+		return nil, fmt.Errorf("flag parser cannot be set")
+	}
+
+	var cmdArgs []string
+	if len(args) > 0 {
+		cmdArgs = args
+	}
+
+	if err := f.baseFlags.Parse(cmdArgs); err != nil {
+		return nil, err
+	}
+
+	return f.parser.ExtractConfigAfterParse(f, opts...)
 }
 
 func (f *Flags) userExtractor() func() (string, error) {
@@ -295,14 +311,181 @@ func (p *FlagsParser) InitFlags(set *flag.FlagSet) (*Flags, error) {
 		return nil, fmt.Errorf("Flags already parsed")
 	}
 
+	internalSet := flag.NewFlagSet("lib-connection-ssh-internal", flag.ContinueOnError)
+
 	envsExtractor := p.NewEnvsExtractor()
 
 	flags := &Flags{
-		baseFlags: baseflags.NewBaseFlags(set, envsExtractor, baseflags.BaseFlagsSkipUnknownFlags()),
+		baseFlags: baseflags.NewBaseFlags(internalSet, envsExtractor, baseflags.BaseFlagsSkipUnknownFlags()),
+		parser:    p,
 	}
 
-	set = flags.baseFlags.FlagSet()
+	internalSet = flags.baseFlags.FlagSet()
 
+	p.fillFlagsToSet(internalSet, flags, envsExtractor)
+
+	// we need fake set for prevent writing flags multiple times
+	// but we should provide helps to parent set
+	fakeSet := flag.NewFlagSet("lib-connection-ssh", flag.ExitOnError)
+	fakeFlags := &Flags{}
+
+	p.fillFlagsToSet(fakeSet, fakeFlags, envsExtractor)
+
+	set.AddFlagSet(fakeSet)
+
+	return flags, nil
+}
+
+// ExtractConfigAfterParse
+// extract ConnectionConfig from flags
+// Flags contains copy of set. For parse use Flags.Parse
+// if flag.FlagSet in Flags is not parse returns error
+func (p *FlagsParser) ExtractConfigAfterParse(flags *Flags, opts ...ValidateOption) (*ConnectionConfig, error) {
+	if err := flags.baseFlags.IsInitialized(); err != nil {
+		return nil, err
+	}
+
+	if err := flags.RewriteFromEnvs(); err != nil {
+		return nil, err
+	}
+
+	if err := flags.IsConflictBetweenFlags(); err != nil {
+		return nil, err
+	}
+
+	sett := p.Settings()
+	logger := sett.Logger()
+
+	if flags.ConnectionConfigPath != "" {
+		configReader, err := file.Reader(flags.ConnectionConfigPath, "connection config")
+		if err != nil {
+			return nil, err
+		}
+
+		defer func() {
+			if err := configReader.Close(); err != nil {
+				logger.DebugF("Error closing config file: %v", err)
+			}
+		}()
+
+		return ParseConnectionConfig(configReader, sett, opts...)
+	}
+
+	if err := flags.FillDefaults(); err != nil {
+		return nil, err
+	}
+
+	options := &validateOptions{}
+	for _, o := range opts {
+		o(options)
+	}
+
+	// TODO prepare connection configuration and use ParseConnectionConfig
+	// for one place check
+	// unfortunately we cannot handle error from ParseConnectionConfig
+	// we should parse error string but it is hard in current time
+
+	hosts := make([]Host, 0, len(flags.Hosts))
+	for _, h := range flags.Hosts {
+		hosts = append(hosts, Host{
+			Host: h,
+		})
+	}
+
+	if flags.forceNoPrivateKeys && flags.useAgentWithNoPrivateKeys {
+		authSockPath := p.Settings().AuthSock()
+		if err := file.IsExists(authSockPath, "auth socket from env "+settings.SSHAgentAuthSockEnv); err != nil {
+			return nil, err
+		}
+	}
+
+	err := validateOnlyUniqueHosts(hosts, options).flagsError()
+	if err != nil {
+		return nil, err
+	}
+
+	if flags.ForceLegacy && flags.ForceModern {
+		return nil, fmt.Errorf("--%s and --%s cannot be use both", legacyModeFlag, modernModeFlag)
+	}
+
+	privateKeys, err := p.readPrivateKeysFromFlags(flags, logger)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to read private keys from flags: %w", err)
+	}
+
+	passwords, err := p.getPasswordsFromUser(flags)
+
+	if err != nil {
+		return nil, err
+	}
+
+	res := &ConnectionConfig{
+		Config: &Config{
+			Mode: Mode{
+				ForceLegacy: flags.ForceLegacy,
+				ForceModern: flags.ForceModern,
+			},
+
+			User: flags.User,
+			Port: intPtr(flags.Port),
+
+			PrivateKeys: privateKeys,
+
+			ExtraArgs: flags.ExtraArgs,
+
+			BastionHost:     flags.BastionHost,
+			BastionPort:     intPtr(flags.BastionPort),
+			BastionUser:     flags.BastionUser,
+			BastionPassword: passwords.Bastion,
+
+			SudoPassword: passwords.Sudo,
+
+			ForceUseSSHAgent: flags.useAgentWithNoPrivateKeys,
+		},
+		Hosts: hosts,
+	}
+
+	if !res.Config.HaveAuthMethods() {
+		return nil, fmt.Errorf(
+			"No auth methods configured. Please pass --%s and/or --%s or --%s with --%s or --%s with --%s",
+			privateKeysFlag,
+			askSudoPasswordFlag,
+			forceNoPrivateKeysFlag,
+			askSudoPasswordFlag,
+			forceNoPrivateKeysFlag,
+			useAgentWithNoPrivateKeysFlag,
+		)
+	}
+
+	return res, nil
+}
+
+// ParseFlagsAndExtractConfig
+// initialize, parse and extract ConnectionConfig from flags
+// set flag.FlagSet can be nil. If nil, func initialize new flag.FlagSet
+// if arguments is nil extract arguments from os.Args
+func (p *FlagsParser) ParseFlagsAndExtractConfig(arguments []string, set *flag.FlagSet, opts ...ValidateOption) (*ConnectionConfig, error) {
+	if govalue.Nil(set) {
+		set = flag.NewFlagSet("ssh-connection", flag.ExitOnError)
+	}
+
+	flags, err := p.InitFlags(set)
+	if err != nil {
+		return nil, err
+	}
+
+	internalSet := flags.baseFlags.FlagSet()
+	internalSet.AddFlagSet(set)
+
+	// nil arguments will rewrite from os.Args
+	if err := flags.Parse(arguments); err != nil {
+		return nil, err
+	}
+
+	return p.ExtractConfigAfterParse(flags, opts...)
+}
+
+func (p *FlagsParser) fillFlagsToSet(set *flag.FlagSet, flags *Flags, envsExtractor *env.Extractor) {
 	set.StringSliceVar(
 		&flags.PrivateKeysPaths,
 		privateKeysFlag,
@@ -457,154 +640,6 @@ func (p *FlagsParser) InitFlags(set *flag.FlagSet) (*Flags, error) {
 			UseAgentWithNoPrivateKeysEnv,
 		),
 	)
-
-	return flags, nil
-}
-
-// ExtractConfigAfterParse
-// extract ConnectionConfig from flags
-// Flags contains copy of set. For parse use Flags.Parse
-// if flag.FlagSet in Flags is not parse returns error
-func (p *FlagsParser) ExtractConfigAfterParse(flags *Flags, opts ...ValidateOption) (*ConnectionConfig, error) {
-	if err := flags.baseFlags.IsInitialized(); err != nil {
-		return nil, err
-	}
-
-	if err := flags.RewriteFromEnvs(); err != nil {
-		return nil, err
-	}
-
-	if err := flags.IsConflictBetweenFlags(); err != nil {
-		return nil, err
-	}
-
-	sett := p.Settings()
-	logger := sett.Logger()
-
-	if flags.ConnectionConfigPath != "" {
-		configReader, err := file.Reader(flags.ConnectionConfigPath, "connection config")
-		if err != nil {
-			return nil, err
-		}
-
-		defer func() {
-			if err := configReader.Close(); err != nil {
-				logger.DebugF("Error closing config file: %v", err)
-			}
-		}()
-
-		return ParseConnectionConfig(configReader, sett, opts...)
-	}
-
-	if err := flags.FillDefaults(); err != nil {
-		return nil, err
-	}
-
-	options := &validateOptions{}
-	for _, o := range opts {
-		o(options)
-	}
-
-	// TODO prepare connection configuration and use ParseConnectionConfig
-	// for one place check
-	// unfortunately we cannot handle error from ParseConnectionConfig
-	// we should parse error string but it is hard in current time
-
-	hosts := make([]Host, 0, len(flags.Hosts))
-	for _, h := range flags.Hosts {
-		hosts = append(hosts, Host{
-			Host: h,
-		})
-	}
-
-	if flags.forceNoPrivateKeys && flags.useAgentWithNoPrivateKeys {
-		authSockPath := p.Settings().AuthSock()
-		if err := file.IsExists(authSockPath, "auth socket from env "+settings.SSHAgentAuthSockEnv); err != nil {
-			return nil, err
-		}
-	}
-
-	err := validateOnlyUniqueHosts(hosts, options).flagsError()
-	if err != nil {
-		return nil, err
-	}
-
-	if flags.ForceLegacy && flags.ForceModern {
-		return nil, fmt.Errorf("--%s and --%s cannot be use both", legacyModeFlag, modernModeFlag)
-	}
-
-	privateKeys, err := p.readPrivateKeysFromFlags(flags, logger)
-	if err != nil {
-		return nil, fmt.Errorf("Failed to read private keys from flags: %w", err)
-	}
-
-	passwords, err := p.getPasswordsFromUser(flags)
-
-	if err != nil {
-		return nil, err
-	}
-
-	res := &ConnectionConfig{
-		Config: &Config{
-			Mode: Mode{
-				ForceLegacy: flags.ForceLegacy,
-				ForceModern: flags.ForceModern,
-			},
-
-			User: flags.User,
-			Port: intPtr(flags.Port),
-
-			PrivateKeys: privateKeys,
-
-			ExtraArgs: flags.ExtraArgs,
-
-			BastionHost:     flags.BastionHost,
-			BastionPort:     intPtr(flags.BastionPort),
-			BastionUser:     flags.BastionUser,
-			BastionPassword: passwords.Bastion,
-
-			SudoPassword: passwords.Sudo,
-
-			ForceUseSSHAgent: flags.useAgentWithNoPrivateKeys,
-		},
-		Hosts: hosts,
-	}
-
-	if !res.Config.HaveAuthMethods() {
-		return nil, fmt.Errorf(
-			"No auth methods configured. Please pass --%s and/or --%s or --%s with --%s or --%s with --%s",
-			privateKeysFlag,
-			askSudoPasswordFlag,
-			forceNoPrivateKeysFlag,
-			askSudoPasswordFlag,
-			forceNoPrivateKeysFlag,
-			useAgentWithNoPrivateKeysFlag,
-		)
-	}
-
-	return res, nil
-}
-
-// ParseFlagsAndExtractConfig
-// initialize, parse and extract ConnectionConfig from flags
-// set flag.FlagSet can be nil. If nil, func initialize new flag.FlagSet
-// if arguments is nil extract arguments from os.Args
-func (p *FlagsParser) ParseFlagsAndExtractConfig(arguments []string, set *flag.FlagSet, opts ...ValidateOption) (*ConnectionConfig, error) {
-	if govalue.Nil(set) {
-		set = flag.NewFlagSet("ssh-connection", flag.ExitOnError)
-	}
-
-	flags, err := p.InitFlags(set)
-	if err != nil {
-		return nil, err
-	}
-
-	// nil arguments will rewrite from os.Args
-	if err := flags.Parse(arguments); err != nil {
-		return nil, err
-	}
-
-	return p.ExtractConfigAfterParse(flags, opts...)
 }
 
 func (p *FlagsParser) readPrivateKeysFromFlags(flags *Flags, logger log.Logger) ([]AgentPrivateKey, error) {

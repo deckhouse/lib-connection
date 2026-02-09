@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/deckhouse/lib-connection/examples/cobra/flag"
 	"github.com/deckhouse/lib-connection/pkg/kube"
 	"github.com/deckhouse/lib-connection/pkg/provider"
 	"github.com/deckhouse/lib-connection/pkg/settings"
@@ -45,8 +44,8 @@ func AppendKubeCommand(settProvider SettingsProvider, rootCmd *cobra.Command) (*
 		rootCmd.AddCommand(kubeCmd)
 	}
 
+	// example of usage another flags in command is allowed
 	flagSet := kubeCmd.PersistentFlags()
-
 	flagSet.BoolVar(&printWarning, "print-warning", false, "Print warning messages.")
 
 	flags, err := parser.InitFlags(flagSet)
@@ -54,14 +53,9 @@ func AppendKubeCommand(settProvider SettingsProvider, rootCmd *cobra.Command) (*
 		return nil, err
 	}
 
-	combine := &flag.KubeFlags{
-		Flags:  flags,
-		Parser: parser,
-	}
-
 	kubeCmd.RunE = func(cmd *cobra.Command, args []string) error {
 		err := runKube(&runKubeParams{
-			flags:        combine,
+			flags:        flags,
 			printWarn:    &printWarning,
 			settProvider: settProvider,
 			cmd:          cmd,
@@ -79,7 +73,7 @@ func AppendKubeCommand(settProvider SettingsProvider, rootCmd *cobra.Command) (*
 }
 
 type runKubeParams struct {
-	flags        *flag.KubeFlags
+	flags        *kube.Flags
 	printWarn    *bool
 	settProvider SettingsProvider
 	cmd          *cobra.Command
@@ -87,14 +81,11 @@ type runKubeParams struct {
 }
 
 func runKube(params *runKubeParams) error {
+	ctx := params.cmd.Context()
+
 	sett := params.settProvider()
 
-	// you should call flags.Parse because flags uses copy
-	if err := params.flags.Flags.Parse(params.commandArgs); err != nil {
-		return fmt.Errorf("cannot parse kube flags: %w", err)
-	}
-
-	conf, err := params.flags.Parser.ExtractConfigAfterParse(params.flags.Flags)
+	conf, err := params.flags.ExtractConfig(params.commandArgs...)
 	if err != nil {
 		return fmt.Errorf("failed to extract kube provider config: %v", err)
 	}
@@ -102,8 +93,6 @@ func runKube(params *runKubeParams) error {
 	providerErr := fmt.Errorf("should not use over ssh")
 	runner, err := provider.GetRunnerInterface(conf, sett, provider.NewErrorSSHProvider(providerErr))
 	kubeProvider := provider.NewDefaultKubeProvider(sett, conf, runner)
-
-	ctx := params.cmd.Context()
 
 	defer func() {
 		logger := sett.Logger()

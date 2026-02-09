@@ -451,6 +451,10 @@ func (p *DefaultSSHProvider) newSession(parent *session.Session, privateKeys []s
 		input.AvailableHosts = hosts
 	}
 
+	if len(input.AvailableHosts) == 0 {
+		return nil, nil, fmt.Errorf("Cannot pass hosts to connection in session or default config")
+	}
+
 	resPrivateKeys := make([]session.AgentPrivateKey, 0, len(privateKeys))
 	privateKeysInSession := make(map[string]struct{})
 

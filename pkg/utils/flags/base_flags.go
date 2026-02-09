@@ -72,7 +72,7 @@ func (f *BaseFlags) Parse(args []string) error {
 	return f.flagSet.Parse(args)
 }
 
-func (f *BaseFlags) IsInitialized() error {
+func (f *BaseFlags) IsValid() error {
 	if govalue.Nil(f) {
 		return notInitializedError("baseFlags")
 	}
@@ -83,6 +83,14 @@ func (f *BaseFlags) IsInitialized() error {
 
 	if govalue.Nil(f.flagSet) {
 		return notInitializedError("flagSet")
+	}
+
+	return nil
+}
+
+func (f *BaseFlags) IsInitialized() error {
+	if err := f.IsValid(); err != nil {
+		return err
 	}
 
 	if !f.flagSet.Parsed() {

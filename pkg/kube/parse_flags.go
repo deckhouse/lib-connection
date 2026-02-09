@@ -44,6 +44,7 @@ type Flags struct {
 	Config
 
 	baseFlags *baseflags.BaseFlags
+	parser    *FlagsParser
 }
 
 // Parse
@@ -97,12 +98,27 @@ func (f *Flags) RewriteFromEnvs() error {
 	return nil
 }
 
-func (f *Flags) FlagSet() (*flag.FlagSet, error) {
-	if err := f.baseFlags.IsInitialized(); err != nil {
+// ExtractConfig
+// if args not passed uses os.Args
+func (f *Flags) ExtractConfig(args ...string) (*Config, error) {
+	if err := f.baseFlags.IsValid(); err != nil {
 		return nil, err
 	}
 
-	return f.baseFlags.FlagSet(), nil
+	if govalue.Nil(f.parser) {
+		return nil, fmt.Errorf("flag parser cannot be set")
+	}
+
+	var cmdArgs []string
+	if len(args) > 0 {
+		cmdArgs = args
+	}
+
+	if err := f.baseFlags.Parse(cmdArgs); err != nil {
+		return nil, err
+	}
+
+	return f.parser.ExtractConfigAfterParse(f)
 }
 
 type FlagsParser struct {
@@ -128,43 +144,27 @@ func (p *FlagsParser) InitFlags(set *flag.FlagSet) (*Flags, error) {
 		return nil, fmt.Errorf("Flags already parsed")
 	}
 
+	internalSet := flag.NewFlagSet("lib-connection-kube-internal", flag.ContinueOnError)
+
 	envsExtractor := p.NewEnvsExtractor()
 
 	flags := &Flags{
-		baseFlags: baseflags.NewBaseFlags(set, envsExtractor, baseflags.BaseFlagsSkipUnknownFlags()),
+		baseFlags: baseflags.NewBaseFlags(internalSet, envsExtractor, baseflags.BaseFlagsSkipUnknownFlags()),
+		parser:    p,
 	}
 
-	set = flags.baseFlags.FlagSet()
+	internalSet = flags.baseFlags.FlagSet()
 
-	set.StringVar(
-		&flags.KubeConfig,
-		kubeConfigFlag,
-		"",
-		envsExtractor.AddEnvToUsage(
-			"Path to kubernetes config file.",
-			ConfigContextEnv,
-		),
-	)
+	p.fillFlagsToSet(internalSet, flags, envsExtractor)
 
-	set.StringVar(
-		&flags.KubeConfigContext,
-		kubeConfigContextFlag,
-		"",
-		envsExtractor.AddEnvToUsage(
-			"Context from kubernetes config to connect to Kubernetes API.",
-			ConfigContextEnv,
-		),
-	)
+	// we need fake set for prevent writing flags multiple times
+	// but we should provide helps to parent set
+	fakeSet := flag.NewFlagSet("lib-connection-kube", flag.ExitOnError)
+	fakeFlags := &Flags{}
 
-	set.BoolVar(
-		&flags.KubeConfigInCluster,
-		clientFromClusterFlag,
-		false,
-		envsExtractor.AddEnvToUsage(
-			"Use in-cluster Kubernetes API access.",
-			ClientFromClusterEnv,
-		),
-	)
+	p.fillFlagsToSet(fakeSet, fakeFlags, envsExtractor)
+
+	set.AddFlagSet(fakeSet)
 
 	return flags, nil
 }
@@ -214,12 +214,47 @@ func (p *FlagsParser) ParseFlagsAndExtractConfig(arguments []string, set *flag.F
 		return nil, err
 	}
 
+	internalSet := flags.baseFlags.FlagSet()
+	internalSet.AddFlagSet(set)
+
 	// nil arguments will rewrite from os.Args
 	if err := flags.Parse(arguments); err != nil {
 		return nil, err
 	}
 
 	return p.ExtractConfigAfterParse(flags)
+}
+
+func (p *FlagsParser) fillFlagsToSet(set *flag.FlagSet, flags *Flags, envsExtractor *env.Extractor) {
+	set.StringVar(
+		&flags.KubeConfig,
+		kubeConfigFlag,
+		"",
+		envsExtractor.AddEnvToUsage(
+			"Path to kubernetes config file.",
+			ConfigContextEnv,
+		),
+	)
+
+	set.StringVar(
+		&flags.KubeConfigContext,
+		kubeConfigContextFlag,
+		"",
+		envsExtractor.AddEnvToUsage(
+			"Context from kubernetes config to connect to Kubernetes API.",
+			ConfigContextEnv,
+		),
+	)
+
+	set.BoolVar(
+		&flags.KubeConfigInCluster,
+		clientFromClusterFlag,
+		false,
+		envsExtractor.AddEnvToUsage(
+			"Use in-cluster Kubernetes API access.",
+			ClientFromClusterEnv,
+		),
+	)
 }
 
 func (p *FlagsParser) validateKubeConfigWithContext(flags *Flags, logger log.Logger) error {

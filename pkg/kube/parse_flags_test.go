@@ -386,10 +386,7 @@ func TestParseFlags(t *testing.T) {
 			flags, err := parser.InitFlags(fset)
 			require.NoError(t, err, "init flags")
 
-			err = flags.Parse(testCase.arguments)
-			require.NoError(t, err, "should parse flags")
-
-			config, err := parser.ExtractConfigAfterParse(flags)
+			config, err := flags.ExtractConfig(testCase.arguments...)
 			if assertError(t, err, testCase.hasErrorContains) {
 				return
 			}
@@ -598,7 +595,7 @@ func TestParseKubeFlagsAndExtractConfigNoArgs(t *testing.T) {
 func TestParseFlagsHelp(t *testing.T) {
 	tests.AssertParseFlagsHelp(t, tests.AssertParseFlagsHelpParams{
 		ExpectedFlags: 3,
-		Name:          "kube-flags",
+		Name:          "lib-connection-kube-internal",
 		Provider: func(sett settings.Settings, envsPrefix string) tests.TestFlagsParser {
 			parser := NewFlagsParser(sett)
 			parser.WithEnvsPrefix(envsPrefix)
