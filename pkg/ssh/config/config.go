@@ -46,6 +46,8 @@ type Config struct {
 	BastionPassword string `json:"sshBastionPassword,omitempty"`
 
 	ExtraArgs string `json:"sshExtraArgs,omitempty"`
+
+	ForceUseSSHAgent bool `json:"forceUseSSHAgent,omitempty"`
 }
 
 func (c *Config) FillDefaults() *Config {
@@ -94,6 +96,8 @@ func (c *Config) Clone() *Config {
 		BastionPassword: c.BastionPassword,
 
 		ExtraArgs: c.ExtraArgs,
+
+		ForceUseSSHAgent: c.ForceUseSSHAgent,
 	}
 }
 
@@ -114,7 +118,7 @@ func (c *Config) BastionPortString() string {
 }
 
 func (c *Config) HaveAuthMethods() bool {
-	if len(c.PrivateKeys) > 0 || c.SudoPassword != "" {
+	if len(c.PrivateKeys) > 0 || c.SudoPassword != "" || c.ForceUseSSHAgent {
 		return true
 	}
 

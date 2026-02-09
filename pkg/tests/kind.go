@@ -15,75 +15,450 @@
 package tests
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
-	"os"
 	"os/exec"
+	"regexp"
+	"strings"
+	"testing"
 	"time"
 
 	"github.com/deckhouse/lib-dhctl/pkg/retry"
+	"github.com/stretchr/testify/require"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
+
+	connection "github.com/deckhouse/lib-connection/pkg"
 )
 
 const (
-	KindConfigPath  = "../../../hack/kind/cluster-kube-proxy.yml"
-	KindClusterName = "k8s-test"
-	KindBinary      = "../../../bin/kind"
+	KindBinary = "../../../bin/kind"
+	kindConfig = `
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+`
 )
 
-func CreateKINDCluster() error {
-	// checking out, what kind config exists
-	_, err := os.Stat(KindConfigPath)
+var (
+	extractPortRe = regexp.MustCompile(`server:\s+https:\/\/127\.0\.0\.1:([0-9]{2,5})`)
+)
+
+type SSHContainersForKind struct {
+	Client    connection.SSHClient
+	Container *TestContainerWrapper
+}
+
+type KINDClusterCreateParams struct {
+	Test        *Test
+	ClusterName string
+	Containers  []*SSHContainersForKind
+
+	NoPrepareLocalKubectlInSSHContainer bool
+}
+
+type KINDCluster struct {
+	Name             string
+	ControlPlaneIP   string
+	ControlPlanePort string
+
+	test       *Test
+	kubeconfig string
+	restConfig *rest.Config
+}
+
+func (c *KINDCluster) appendClusterNameArg(args []string) []string {
+	return append(args, fmt.Sprintf("--name=%s", c.Name))
+}
+
+func (c *KINDCluster) runKind(args ...string) (string, error) {
+	cmd := exec.Command(KindBinary, c.appendClusterNameArg(args)...)
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+func (c *KINDCluster) RegisterCleanup(t *testing.T) {
+	t.Cleanup(func() {
+		if err := c.Delete(); err != nil {
+			c.test.GetLogger().ErrorF("Failed to delete cluster %s: %s", c.Name, err)
+		}
+	})
+}
+
+func (c *KINDCluster) Delete() error {
+	logger := c.test.GetLogger()
+	logger.InfoF("Deleting KIND cluster %s...", c.Name)
+	out, err := c.runKind("delete", "cluster")
 	if err != nil {
+		logger.ErrorF("Failed to delete KIND cluster %s: %v:\n%s", c.Name, err, out)
 		return err
 	}
-	// args to command
-	args := []string{"create", "cluster", "--name=" + KindClusterName, "--config=" + KindConfigPath}
-	cmd := exec.Command(KindBinary, args...)
-	out, err := cmd.CombinedOutput()
+
+	logger.InfoF("KIND Cluster %s deleted:\n%s", c.Name, out)
+	return nil
+}
+
+// extractPort
+// first port, second whole server string
+func (c *KINDCluster) extractPort() (string, string) {
+	submatches := extractPortRe.FindStringSubmatch(c.kubeconfig)
+	if len(submatches) != 2 {
+		return "", ""
+	}
+
+	return submatches[1], submatches[0]
+}
+
+func (c *KINDCluster) containerName() string {
+	return fmt.Sprintf("%s-control-plane", c.Name)
+}
+
+func (c *KINDCluster) Kubeconfig() string {
+	return c.kubeconfig
+}
+
+// KubeconfigWithIP
+// ip and port can empty if empty returns raw
+func (c *KINDCluster) KubeconfigWithIP(ip string, port string) string {
+	if ip == "" {
+		return c.kubeconfig
+	}
+
+	extractedPort, full := c.extractPort()
+
+	if port == "" {
+		port = extractedPort
+	}
+
+	replace := fmt.Sprintf("server: https://%s:%s", ip, port)
+
+	return strings.ReplaceAll(c.kubeconfig, full, replace)
+}
+
+func (c *KINDCluster) RESTConfig() (*rest.Config, error) {
+	if c.restConfig != nil {
+		return c.copyREST(), nil
+	}
+
+	config, err := clientcmd.Load([]byte(c.Kubeconfig()))
 	if err != nil {
-		return fmt.Errorf("could not create kind cluster: %s: %w\n", out, err)
+		return nil, err
 	}
 
-	return err
-}
-
-func DeleteKindCluster() error {
-	args := []string{"delete", "cluster", "--name=" + KindClusterName}
-	cmd := exec.Command(KindBinary, args...)
-
-	return cmd.Run()
-}
-
-func GetKINDControlPlaneIP() (string, error) {
-	getIPCmd := []string{
-		"inspect",
-		"-f", "{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}",
-		KindClusterName + "-control-plane",
+	cluster, ok := config.Clusters[fmt.Sprintf("kind-%s", c.Name)]
+	if !ok {
+		return nil, fmt.Errorf("cluster %s not found in kubeconfig", c.Name)
 	}
-	ip := ""
 
-	err := retry.NewSilentLoop("discovering IP of control plane noe", 10, 2*time.Second).Run(func() error {
-		cmd := exec.Command("docker", getIPCmd...)
-		out, err := cmd.Output()
-		if err != nil {
-			return err
+	ca := cluster.CertificateAuthorityData
+	if len(ca) == 0 {
+		return nil, fmt.Errorf("no CA data for cluster %s", c.Name)
+	}
+
+	saName := "test-kube-admin"
+
+	_, err = c.runKubectlInSystemNs("Create SA for token", "create", "serviceaccount", saName)
+	if err != nil {
+		return nil, err
+	}
+
+	roleBindingArgs := []string{
+		"create",
+		"clusterrolebinding",
+		"test-kube-admin-binding",
+		"--clusterrole=cluster-admin",
+		fmt.Sprintf("--serviceaccount=kube-system:%s", saName),
+	}
+
+	_, err = c.runKubectlInSystemNs("Create role binding", roleBindingArgs...)
+	if err != nil {
+		return nil, err
+	}
+
+	token, err := c.runKubectlInSystemNs("Create token", "create", "token", saName)
+	if err != nil {
+		return nil, err
+	}
+
+	c.restConfig = &rest.Config{
+		Host:        fmt.Sprintf("https://127.0.0.1:%s", c.ControlPlanePort),
+		BearerToken: token,
+		TLSClientConfig: rest.TLSClientConfig{
+			CAData: ca,
+		},
+	}
+
+	return c.copyREST(), nil
+}
+
+func (c *KINDCluster) copyREST() *rest.Config {
+	ca := c.restConfig.TLSClientConfig.CAData
+
+	cpy := *c.restConfig
+	cpyCA := make([]byte, len(ca))
+	copy(cpyCA, ca)
+
+	cpy.TLSClientConfig.CAData = cpyCA
+
+	return &cpy
+}
+
+func (c *KINDCluster) runKubectlInSystemNs(name string, args ...string) (string, error) {
+	runArgs := []string{
+		"kubectl",
+		"-n",
+		"kube-system",
+	}
+
+	runArgs = append(runArgs, args...)
+
+	return execInKINDContainer(c, name, runArgs...)
+}
+
+func CreateKINDCluster(t *testing.T, params *KINDClusterCreateParams) *KINDCluster {
+	test := params.Test
+
+	configPath := test.MustCreateTmpFile(t, kindConfig, false, "kind-config.yaml")
+	clusterName := fmt.Sprintf("test-connection-%s", params.ClusterName)
+
+	cluster := &KINDCluster{
+		test: test,
+		Name: clusterName,
+	}
+
+	// args to command
+	args := []string{
+		"create",
+		"cluster",
+		fmt.Sprintf("--config=%s", configPath),
+	}
+
+	test.GetLogger().InfoF("Creating KIND cluster %s...", clusterName)
+
+	out, err := cluster.runKind(args...)
+	require.NoError(t, err, "not create kind cluster: %w:%s\n", out)
+
+	test.GetLogger().InfoF("KIND cluster %s created:\n%s", clusterName, out)
+
+	cluster.ControlPlaneIP, err = getKINDControlPlaneIP(cluster)
+	checkErrorDuringCreateCluster(t, cluster, err, "failed to get kind control plane IP")
+
+	cluster.kubeconfig, err = getKINDKubeconfig(cluster)
+	checkErrorDuringCreateCluster(t, cluster, err, "failed to get kind control plane IP")
+
+	cluster.ControlPlanePort, _ = cluster.extractPort()
+
+	kubectlPreparator := newLocalKubectlPreparator(cluster)
+
+	for _, sshContainer := range params.Containers {
+		container := sshContainer.Container.Container
+		containerName := container.ContainerSettings().ContainerName
+
+		err = container.DockerNetworkConnect(false, "kind")
+		checkErrorDuringCreateCluster(t, cluster, err, "failed to connect ssh container %s to kind cluster", containerName)
+
+		if !params.NoPrepareLocalKubectlInSSHContainer {
+			kubectlPreparator.prepareLocalKubeCtlInSSHContainer(t, sshContainer)
+		} else {
+			params.Test.GetLogger().InfoF("Skipping prepare local kubectl in ssh container %s", containerName)
 		}
-		ip = string(out)
-		return nil
+	}
+
+	return cluster
+}
+
+func execInKINDContainer(cluster *KINDCluster, name string, args ...string) (string, error) {
+	a := []string{
+		"exec",
+		cluster.containerName(),
+	}
+
+	a = append(a, args...)
+
+	return runDockerForKINDContainer(cluster, name, a...)
+}
+
+func runDockerForKINDContainer(cluster *KINDCluster, name string, args ...string) (string, error) {
+	params := retry.NewEmptyParams(
+		retry.WithName("%s", name),
+		retry.WithAttempts(10),
+		retry.WithWait(2*time.Second),
+		retry.WithLogger(cluster.test.GetLogger()),
+	)
+
+	out := ""
+
+	err := retry.NewLoopWithParams(params).Run(func() error {
+		var err error
+		out, err = RunDockerWithOut(args...)
+		out = strings.TrimSpace(out)
+		return err
 	})
+
 	if err != nil {
 		return "", err
 	}
 
-	return ip, nil
+	return out, nil
 }
 
-func GetKINDKubeconfig() (string, error) {
-	args := []string{"get", "kubeconfig", "--name=" + KindClusterName}
-	cmd := exec.Command(KindBinary, args...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("couldn't get kind kubeconfig: %s: %w", string(out), err)
+func getKubectlVersion(cluster *KINDCluster) (string, error) {
+	args := []string{
+		"kubectl",
+		"version",
+		"--client",
+		"-o",
+		"json",
 	}
 
-	return string(out), nil
+	out, err := execInKINDContainer(cluster, "Get kubectl version", args...)
+	if err != nil {
+		return "", err
+	}
+
+	type clientVersion struct {
+		GitVersion string `json:"gitVersion"`
+	}
+
+	type version struct {
+		ClientVersion clientVersion `json:"clientVersion"`
+	}
+
+	v := version{}
+	err = json.Unmarshal([]byte(out), &v)
+	if err != nil {
+		return "", err
+	}
+
+	if v.ClientVersion.GitVersion == "" {
+		return "", fmt.Errorf("failed to get kubectl version")
+	}
+
+	return v.ClientVersion.GitVersion, nil
+}
+
+func getKINDControlPlaneIP(cluster *KINDCluster) (string, error) {
+	args := []string{
+		"inspect",
+		"-f", "{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}",
+		cluster.containerName(),
+	}
+
+	return runDockerForKINDContainer(cluster, "Discovering IP of control plane node", args...)
+}
+
+func getKINDKubeconfig(cluster *KINDCluster) (string, error) {
+	out, err := cluster.runKind("get", "kubeconfig")
+	if err != nil {
+		return "", fmt.Errorf("couldn't get kind kubeconfig: %s: %w", out, err)
+	}
+
+	return out, nil
+}
+
+func checkErrorDuringCreateCluster(t *testing.T, cluster *KINDCluster, err error, msg string, args ...any) {
+	t.Helper()
+
+	if err == nil {
+		return
+	}
+
+	deleteErr := cluster.Delete()
+	if deleteErr != nil {
+		cluster.test.GetLogger().ErrorF("Cannot delete kind cluster %s after create fail: %w", cluster.Name, deleteErr)
+	}
+
+	require.NoError(t, err, fmt.Sprintf(msg, args...))
+}
+
+type localKubectlPreparator struct {
+	kubectlVersion string
+	configPath     string
+	cluster        *KINDCluster
+}
+
+func newLocalKubectlPreparator(cluster *KINDCluster) *localKubectlPreparator {
+	return &localKubectlPreparator{
+		cluster: cluster,
+	}
+}
+
+func (p *localKubectlPreparator) getKubectlVersion(t *testing.T) string {
+	if p.kubectlVersion != "" {
+		return p.kubectlVersion
+	}
+
+	kubectlVersion, err := getKubectlVersion(p.cluster)
+	checkErrorDuringCreateCluster(t, p.cluster, err, "failed to get kubectl version")
+
+	p.kubectlVersion = kubectlVersion
+	return kubectlVersion
+}
+
+func (p *localKubectlPreparator) getKubeConfigPath(t *testing.T) string {
+	if p.configPath != "" {
+		return p.configPath
+	}
+
+	cluster := p.cluster
+
+	newKubeconfig := cluster.KubeconfigWithIP(cluster.ControlPlaneIP, "6443")
+
+	configTmp, err := cluster.test.CreateTmpFile(newKubeconfig, false, "kubeconfig")
+	checkErrorDuringCreateCluster(t, cluster, err, "failed to create kind config file to upload")
+
+	p.configPath = configTmp
+	return configTmp
+}
+
+func (p *localKubectlPreparator) prepareLocalKubeCtlInSSHContainer(t *testing.T, sshContainer *SSHContainersForKind) {
+	container := sshContainer.Container.Container
+	containerName := container.ContainerSettings().ContainerName
+	cluster := p.cluster
+	test := cluster.test
+
+	kubectlVersion := p.getKubectlVersion(t)
+
+	downloadKubectlParams := retry.NewEmptyParams(
+		retry.WithName("Download kubectl to ssh container %s", containerName),
+		retry.WithAttempts(10),
+		retry.WithWait(2*time.Second),
+		retry.WithLogger(test.GetLogger()),
+	)
+	err := retry.NewLoopWithParams(downloadKubectlParams).Run(func() error {
+		return container.DownloadKubectl(kubectlVersion)
+	})
+	checkErrorDuringCreateCluster(t, cluster, err, "failed to download kubectl to ssh container %s", containerName)
+
+	err = container.CreateDirectory("/config/.kube")
+	checkErrorDuringCreateCluster(t, cluster, err, "failed to create kube config directory in ssh container %s", containerName)
+
+	file := sshContainer.Client.File()
+	uploadParams := retry.NewEmptyParams(
+		retry.WithName("Upload kubeconfig to ssh container %s", containerName),
+		retry.WithAttempts(10),
+		retry.WithWait(2*time.Second),
+		retry.WithLogger(test.GetLogger()),
+	)
+
+	configTmp := p.getKubeConfigPath(t)
+
+	err = retry.NewLoopWithParams(uploadParams).Run(func() error {
+		return file.Upload(context.Background(), configTmp, "/config/.kube/config")
+	})
+	checkErrorDuringCreateCluster(t, cluster, err, "failed to upload kubeconfig to ssh container")
+
+	err = container.CreateDirectory("/etc/kubernetes/")
+	checkErrorDuringCreateCluster(t, cluster, err, "failed to create directory /etc/kubernetes on ssh container %s", containerName)
+
+	err = container.ExecToContainer(
+		"symlink of kubeconfig",
+		"ln",
+		"-s",
+		"/config/.kube/config",
+		"/etc/kubernetes/admin.conf",
+	)
+	checkErrorDuringCreateCluster(t, cluster, err, "failed to create link to kube config on ssh container %s", containerName)
 }

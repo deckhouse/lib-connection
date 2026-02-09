@@ -17,10 +17,11 @@ package config
 const DefaultPort = 22
 
 type validateOptions struct {
-	omitDocInError  bool
-	strictUnmarshal bool
-	requiredSSHHost bool
-	noPrettyError   bool
+	omitDocInError   bool
+	strictUnmarshal  bool
+	requiredSSHHost  bool
+	noPrettyError    bool
+	skipUnknownKinds bool
 }
 
 type ValidateOption func(o *validateOptions)
@@ -46,5 +47,11 @@ func ParseWithRequiredSSHHost(v bool) ValidateOption {
 func ParseWithNoPrettyError(v bool) ValidateOption {
 	return func(o *validateOptions) {
 		o.noPrettyError = v
+	}
+}
+
+func ParseWithSkipUnknownKinds(v bool) ValidateOption {
+	return func(o *validateOptions) {
+		o.skipUnknownKinds = v
 	}
 }

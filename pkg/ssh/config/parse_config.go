@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	"github.com/deckhouse/lib-dhctl/pkg/log"
@@ -32,6 +33,8 @@ const (
 	sshConfigKind = "SSHConfig"
 	sshHostKind   = "SSHHost"
 )
+
+var supportedKinds = []string{sshConfigKind, sshHostKind}
 
 func ParseConnectionConfig(reader io.Reader, sett settings.Settings, opts ...ValidateOption) (*ConnectionConfig, error) {
 	options := &validateOptions{
@@ -73,6 +76,16 @@ func ParseConnectionConfig(reader io.Reader, sett settings.Settings, opts ...Val
 		index, err := validation.ParseIndex(strings.NewReader(doc))
 		if err != nil {
 			errs.appendError(err, i, "Extract index from document")
+			continue
+		}
+
+		if !slices.Contains(supportedKinds, index.Kind) {
+			if options.skipUnknownKinds {
+				logger.DebugF("Skip document %d with unknown kind %s", i, index.Kind)
+			} else {
+				errs.appendUnknownKind(index, i)
+			}
+
 			continue
 		}
 

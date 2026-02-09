@@ -109,6 +109,8 @@ type Client struct {
 
 	silent  bool
 	stopped bool
+
+	id string
 }
 
 func (s *Client) WithLoopsParams(p ClientLoopsParams) *Client {
@@ -137,14 +139,14 @@ func (s *Client) Command(name string, arg ...string) connection.Command {
 
 // KubeProxy is used to start kubectl proxy and create a tunnel from local port to proxy port
 func (s *Client) KubeProxy() connection.KubeProxy {
-	p := NewKubeProxy(s, s.sessionClient)
+	p := NewKubeProxy(s)
 	s.kubeProxies = append(s.kubeProxies, p)
 	return p
 }
 
 // File is used to upload and download files and directories
 func (s *Client) File() connection.File {
-	return NewSSHFile(s.settings, s.sshClient)
+	return NewSSHFile(s.settings, s)
 }
 
 // UploadScript is used to upload script and execute it on remote server
@@ -257,6 +259,11 @@ func (s *Client) UnregisterSession(sess *gossh.Session) {
 
 func (s *Client) IsStopped() bool {
 	return s.stopped
+}
+
+func (s *Client) WithID(id string) *Client {
+	s.id = id
+	return s
 }
 
 func (s *Client) stopAfterStartFailed(cause string, err error) error {
@@ -538,7 +545,7 @@ func (s *Client) authMethods(password string) ([]gossh.AuthMethod, error) {
 	}
 
 	if len(authMethods) == 0 {
-		return nil, fmt.Errorf("Private keys or SSH_AUTH_SOCK environment variable or become password should passed")
+		return nil, fmt.Errorf("Private keys or %s environment variable or become password should passed", settings.SSHAgentAuthSockEnv)
 	}
 
 	return authMethods, nil

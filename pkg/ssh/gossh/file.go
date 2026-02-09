@@ -41,10 +41,10 @@ var (
 
 type SSHFile struct {
 	settings  settings.Settings
-	sshClient *gossh.Client
+	sshClient *Client
 }
 
-func NewSSHFile(sett settings.Settings, client *gossh.Client) *SSHFile {
+func NewSSHFile(sett settings.Settings, client *Client) *SSHFile {
 	return &SSHFile{
 		sshClient: client,
 		settings:  sett,
@@ -59,11 +59,12 @@ func (f *SSHFile) Upload(ctx context.Context, srcPath, remotePath string) error 
 		return fmt.Errorf("failed to open local file: %w", err)
 	}
 
-	session, err := f.sshClient.NewSession()
+	session, cleanup, err := f.newSession()
 	if err != nil {
 		return err
 	}
-	defer session.Close()
+
+	defer cleanup()
 
 	if fType != "DIR" {
 		localFile, err := os.Open(srcPath)
@@ -72,7 +73,7 @@ func (f *SSHFile) Upload(ctx context.Context, srcPath, remotePath string) error 
 		}
 		defer localFile.Close()
 
-		rType, err := getRemoteFileStat(f.sshClient, remotePath, logger)
+		rType, err := f.getRemoteFileStat(remotePath, logger)
 		if err != nil {
 			if !strings.ContainsAny(err.Error(), "No such file or directory") {
 				return err
@@ -131,7 +132,7 @@ func (f *SSHFile) UploadBytes(ctx context.Context, data []byte, remotePath strin
 func (f *SSHFile) Download(ctx context.Context, remotePath, dstPath string) error {
 	logger := f.settings.Logger()
 
-	fType, err := getRemoteFileStat(f.sshClient, remotePath, logger)
+	fType, err := f.getRemoteFileStat(remotePath, logger)
 	if err != nil {
 		return err
 	}
@@ -152,12 +153,12 @@ func (f *SSHFile) Download(ctx context.Context, remotePath, dstPath string) erro
 			return fmt.Errorf("failed to open local file: %w", err)
 		}
 		defer localFile.Close()
-		if err := CopyFromRemote(ctx, localFile, remotePath, f.sshClient); err != nil {
+		if err := f.copyFromRemote(ctx, localFile, remotePath); err != nil {
 			return fmt.Errorf("failed to copy file from remote host: %w", err)
 		}
 	} else {
 		// recursive copy logic
-		filesString, err := getRemoteFilesList(f.sshClient, remotePath)
+		filesString, err := f.getRemoteFilesList(remotePath)
 		if err != nil {
 			return err
 		}
@@ -210,16 +211,30 @@ func (f *SSHFile) DownloadBytes(ctx context.Context, remotePath string) ([]byte,
 	return data, nil
 }
 
-func getRemoteFileStat(client *gossh.Client, remoteFilePath string, logger log.Logger) (string, error) {
+func (f *SSHFile) newSession() (*gossh.Session, func(), error) {
+	session, err := f.sshClient.NewSSHSession()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	cleanup := func() {
+		f.sshClient.UnregisterSession(session)
+		_ = session.Close()
+	}
+
+	return session, cleanup, nil
+}
+
+func (f *SSHFile) getRemoteFileStat(remoteFilePath string, logger log.Logger) (string, error) {
 	if remoteFilePath == "." {
 		return "DIR", nil
 	}
 
-	session, err := client.NewSession()
+	session, cleanup, err := f.newSession()
 	if err != nil {
 		return "", fmt.Errorf("failed to create session: %w", err)
 	}
-	defer session.Close()
+	defer cleanup()
 
 	command := fmt.Sprint("LC_ALL=en_US.utf8 stat -c %F " + remoteFilePath)
 	output, err := session.CombinedOutput(command)
@@ -237,12 +252,12 @@ func getRemoteFileStat(client *gossh.Client, remoteFilePath string, logger log.L
 	return "", err
 }
 
-func getRemoteFilesList(client *gossh.Client, remoteFilePath string) (string, error) {
-	session, err := client.NewSession()
+func (f *SSHFile) getRemoteFilesList(remoteFilePath string) (string, error) {
+	session, cleanup, err := f.newSession()
 	if err != nil {
 		return "", fmt.Errorf("failed to create session: %w", err)
 	}
-	defer session.Close()
+	defer cleanup()
 
 	command := fmt.Sprint("ls " + remoteFilePath)
 	output, err := session.CombinedOutput(command)
@@ -411,12 +426,12 @@ func wait(wg *sync.WaitGroup, ctx context.Context) error {
 	}
 }
 
-func CopyFromRemote(ctx context.Context, file *os.File, remotePath string, sshClient *gossh.Client) error {
-	session, err := sshClient.NewSession()
+func (f *SSHFile) copyFromRemote(ctx context.Context, file *os.File, remotePath string) error {
+	session, cleanup, err := f.newSession()
 	if err != nil {
 		return fmt.Errorf("Error creating ssh session in copy from remote: %v", err)
 	}
-	defer session.Close()
+	defer cleanup()
 
 	wg := sync.WaitGroup{}
 	errCh := make(chan error, 4)

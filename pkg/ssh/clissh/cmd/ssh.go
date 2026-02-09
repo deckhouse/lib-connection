@@ -71,7 +71,9 @@ func (s *SSH) WithCommand(name string, arg ...string) *SSH {
 // TODO move connection settings from ExecuteCmd
 func (s *SSH) Cmd(ctx context.Context) *exec.Cmd {
 	env := append(os.Environ(), s.Env...)
-	env = append(env, s.Session.AgentSettings.AuthSockEnv())
+	if s.Session.AgentSettings != nil {
+		env = append(env, s.Session.AgentSettings.AuthSockEnv())
+	}
 
 	// ssh connection settings
 	//   ANSIBLE_SSH_ARGS="${ANSIBLE_SSH_ARGS:-"-C

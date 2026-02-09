@@ -732,7 +732,7 @@ func (c *SSHContainer) defaultRetryParams(name string) retry.Params {
 func (c *SSHContainer) DownloadKubectl(version string) error {
 	args := []string{"curl", "-LO", "https://dl.k8s.io/release/" + version + "/bin/linux/amd64/kubectl"}
 
-	if err := c.ExecToContainer("kubectl", args...); err != nil {
+	if err := c.ExecToContainer("download kubectl", args...); err != nil {
 		return err
 	}
 

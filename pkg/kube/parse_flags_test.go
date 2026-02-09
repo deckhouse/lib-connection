@@ -314,7 +314,7 @@ func TestParseFlags(t *testing.T) {
 				appendKubeConfigArgument(ts, "/tmp/not-exsists-2dfr.yaml")
 			},
 
-			hasErrorContains: "Cannot get kube config file info for /tmp/not-exsists-2dfr.yaml",
+			hasErrorContains: "cannot get kube config file info for /tmp/not-exsists-2dfr.yaml",
 		},
 
 		{
@@ -325,7 +325,7 @@ func TestParseFlags(t *testing.T) {
 				appendKubeConfigArgument(ts, dir)
 			},
 
-			hasErrorContains: "should be regular file",
+			hasErrorContains: "should be a file not dir",
 		},
 
 		{

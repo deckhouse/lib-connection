@@ -82,6 +82,10 @@ func RandPassword(n int) string {
 	return randString(n, passwordRunes)
 }
 
+func RandString(n int) string {
+	return randString(n, lettersRunes)
+}
+
 func randString(n int, letters []rune) string {
 	randomizer := getRand()
 

@@ -35,30 +35,32 @@ import (
 )
 
 const (
-	AgentPrivateKeysEnv   = "SSH_AGENT_PRIVATE_KEYS"
-	BastionHostEnv        = "SSH_BASTION_HOST"
-	BastionUserEnv        = "SSH_BASTION_USER"
-	BastionPortEnv        = "SSH_BASTION_PORT"
-	UserEnv               = "SSH_USER"
-	HostsEnv              = "SSH_HOSTS"
-	PortEnv               = "SSH_PORT"
-	ExtraArgsEnv          = "SSH_EXTRA_ARGS"
-	ConnectionConfigEnv   = "CONNECTION_CONFIG"
-	LegacyModeEnv         = "SSH_LEGACY_MODE"
-	ModernModeEnv         = "SSH_MODERN_MODE"
-	AskBastionPasswordEnv = "ASK_BASTION_PASS"
-	AskSudoPasswordEnv    = "ASK_BECOME_PASS"
-	ForceNoPrivateKeysEnv = "FORCE_NO_PRIVATE_KEYS"
+	AgentPrivateKeysEnv          = "SSH_AGENT_PRIVATE_KEYS"
+	BastionHostEnv               = "SSH_BASTION_HOST"
+	BastionUserEnv               = "SSH_BASTION_USER"
+	BastionPortEnv               = "SSH_BASTION_PORT"
+	UserEnv                      = "SSH_USER"
+	HostsEnv                     = "SSH_HOSTS"
+	PortEnv                      = "SSH_PORT"
+	ExtraArgsEnv                 = "SSH_EXTRA_ARGS"
+	ConnectionConfigEnv          = "CONNECTION_CONFIG"
+	LegacyModeEnv                = "SSH_LEGACY_MODE"
+	ModernModeEnv                = "SSH_MODERN_MODE"
+	AskBastionPasswordEnv        = "ASK_BASTION_PASS"
+	AskSudoPasswordEnv           = "ASK_BECOME_PASS"
+	ForceNoPrivateKeysEnv        = "FORCE_NO_PRIVATE_KEYS"
+	UseAgentWithNoPrivateKeysEnv = "USE_AGENT_WITH_NO_PRIVATE_KEYS"
 )
 
 const (
-	sshHostsFlag           = "ssh-host"
-	legacyModeFlag         = "ssh-legacy-mode"
-	modernModeFlag         = "ssh-modern-mode"
-	connectionConfigFlag   = "connection-config"
-	askSudoPasswordFlag    = "ask-become-pass"
-	privateKeysFlag        = "ssh-agent-private-keys"
-	forceNoPrivateKeysFlag = "force-no-private-keys"
+	sshHostsFlag                  = "ssh-host"
+	legacyModeFlag                = "ssh-legacy-mode"
+	modernModeFlag                = "ssh-modern-mode"
+	connectionConfigFlag          = "connection-config"
+	askSudoPasswordFlag           = "ask-become-pass"
+	privateKeysFlag               = "ssh-agent-private-keys"
+	forceNoPrivateKeysFlag        = "force-no-private-keys"
+	useAgentWithNoPrivateKeysFlag = "use-agent-with-no-private-keys"
 )
 
 type Flags struct {
@@ -81,7 +83,8 @@ type Flags struct {
 	AskBastionPass bool
 	AskSudoPass    bool
 
-	forceNoPrivateKeys bool
+	forceNoPrivateKeys        bool
+	useAgentWithNoPrivateKeys bool
 
 	baseFlags *baseflags.BaseFlags
 }
@@ -146,8 +149,10 @@ func (f *Flags) FillDefaults() error {
 	}
 
 	// if not use private keys force ask sudo pass
-	if f.forceNoPrivateKeys && !f.AskSudoPass {
-		f.AskSudoPass = true
+	if f.forceNoPrivateKeys {
+		if !f.AskSudoPass && !f.useAgentWithNoPrivateKeys {
+			f.AskSudoPass = true
+		}
 	}
 
 	return nil
@@ -165,6 +170,7 @@ func (f *Flags) RewriteFromEnvs() error {
 		env.NewVar(BastionPortEnv, &f.BastionPort),
 		env.NewVar(PortEnv, &f.Port),
 		env.NewVar(ForceNoPrivateKeysEnv, &f.forceNoPrivateKeys),
+		env.NewVar(UseAgentWithNoPrivateKeysEnv, &f.useAgentWithNoPrivateKeys),
 		privateKeysVal,
 		env.NewVar(BastionHostEnv, &f.BastionHost),
 		env.NewVar(BastionUserEnv, &f.BastionUser),
@@ -189,6 +195,14 @@ func (f *Flags) RewriteFromEnvs() error {
 	}
 
 	return nil
+}
+
+func (f *Flags) FlagSet() (*flag.FlagSet, error) {
+	if err := f.baseFlags.IsInitialized(); err != nil {
+		return nil, err
+	}
+
+	return f.baseFlags.FlagSet(), nil
 }
 
 func (f *Flags) userExtractor() func() (string, error) {
@@ -430,6 +444,20 @@ func (p *FlagsParser) InitFlags(set *flag.FlagSet) (*Flags, error) {
 		),
 	)
 
+	set.BoolVar(
+		&flags.useAgentWithNoPrivateKeys,
+		useAgentWithNoPrivateKeysFlag,
+		false,
+		envsExtractor.AddEnvToUsage(
+			fmt.Sprintf(
+				"Do not ask sudo password if private keys did not provided. Use with '--%s' Force use ssh agent over %s",
+				forceNoPrivateKeysFlag,
+				settings.SSHAgentAuthSockEnv,
+			),
+			UseAgentWithNoPrivateKeysEnv,
+		),
+	)
+
 	return flags, nil
 }
 
@@ -489,6 +517,13 @@ func (p *FlagsParser) ExtractConfigAfterParse(flags *Flags, opts ...ValidateOpti
 		})
 	}
 
+	if flags.forceNoPrivateKeys && flags.useAgentWithNoPrivateKeys {
+		authSockPath := p.Settings().AuthSock()
+		if err := file.IsExists(authSockPath, "auth socket from env "+settings.SSHAgentAuthSockEnv); err != nil {
+			return nil, err
+		}
+	}
+
 	err := validateOnlyUniqueHosts(hosts, options).flagsError()
 	if err != nil {
 		return nil, err
@@ -529,17 +564,21 @@ func (p *FlagsParser) ExtractConfigAfterParse(flags *Flags, opts ...ValidateOpti
 			BastionPassword: passwords.Bastion,
 
 			SudoPassword: passwords.Sudo,
+
+			ForceUseSSHAgent: flags.useAgentWithNoPrivateKeys,
 		},
 		Hosts: hosts,
 	}
 
 	if !res.Config.HaveAuthMethods() {
 		return nil, fmt.Errorf(
-			"No auth methods configured. Please pass --%s and/or --%s or --%s and --%s",
+			"No auth methods configured. Please pass --%s and/or --%s or --%s with --%s or --%s with --%s",
 			privateKeysFlag,
 			askSudoPasswordFlag,
 			forceNoPrivateKeysFlag,
 			askSudoPasswordFlag,
+			forceNoPrivateKeysFlag,
+			useAgentWithNoPrivateKeysFlag,
 		)
 	}
 

@@ -40,6 +40,7 @@ type testOpts struct {
 	logBuffer     *bytes.Buffer
 	prettyLogger  bool
 	isIntegration bool
+	authSock      string
 }
 type TestOpt func(opts *testOpts)
 
@@ -70,6 +71,12 @@ func TestWithPrettyLogger(f bool) TestOpt {
 func TestWithParallelRun(p bool) TestOpt {
 	return func(opts *testOpts) {
 		opts.parallelRun = p
+	}
+}
+
+func TestWithAuthSock(p string) TestOpt {
+	return func(opts *testOpts) {
+		opts.authSock = p
 	}
 }
 
@@ -153,11 +160,17 @@ func NewTest(testName string, opts ...TestOpt) (*Test, error) {
 
 	resTest.Logger.InfoF("Created tmp dir '%s' for test '%s'", resTest.tmpDir, resTest.testName)
 
-	resTest.settings = settings.NewBaseProviders(settings.ProviderParams{
+	params := settings.ProviderParams{
 		LoggerProvider: log.SimpleLoggerProvider(resTest.Logger),
 		IsDebug:        options.isDebug,
 		TmpDir:         resTest.tmpDir,
-	})
+	}
+
+	if options.authSock != "" {
+		params.AuthSock = options.authSock
+	}
+
+	resTest.settings = settings.NewBaseProviders(params)
 
 	return resTest, nil
 }
@@ -172,6 +185,11 @@ func (s *Test) Settings() settings.Settings {
 
 func (s *Test) WithEnvsPrefix(p string) *Test {
 	s.settings = s.settings.Clone(settings.CloneWithEnvsPrefix(p))
+	return s
+}
+
+func (s *Test) WithAuthSock(p string) *Test {
+	s.settings = s.settings.Clone(settings.CloneWithAuthSock(p))
 	return s
 }
 

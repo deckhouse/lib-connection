@@ -14,12 +14,59 @@
 
 package kube
 
-import "k8s.io/client-go/rest"
+import (
+	"fmt"
+	"strings"
+
+	"github.com/name212/govalue"
+	"k8s.io/client-go/rest"
+)
 
 type Config struct {
-	KubeConfig          string
-	KubeConfigContext   string
+	KubeConfig        string
+	KubeConfigContext string
+
 	KubeConfigInCluster bool
+	LocalKubeClient     bool
 
 	RestConfig *rest.Config
+}
+
+func (c *Config) IsConflict() error {
+	modesSet := c.getModes()
+
+	if len(modesSet) > 1 {
+		return fmt.Errorf("conflicting kube flags: set modes: %s", strings.Join(modesSet, " "))
+	}
+
+	return nil
+}
+
+func (c *Config) IsRest() bool {
+	return !govalue.Nil(c.RestConfig)
+}
+
+func (c *Config) OverSSH() bool {
+	modesSet := c.getModes()
+
+	return len(modesSet) == 0
+}
+
+func (c *Config) getModes() []string {
+	modes := map[string]bool{
+		"kubeconfig": c.KubeConfig != "",
+		"in-cluster": c.KubeConfigInCluster,
+		"local":      c.LocalKubeClient,
+		"rest":       c.IsRest(),
+	}
+
+	modesSet := make([]string, 0)
+
+	for mode, isSet := range modes {
+		if isSet {
+			modesSet = append(modesSet, mode)
+		}
+	}
+
+	return modesSet
 }

@@ -162,4 +162,89 @@ func TestConfigClone(t *testing.T) {
 			c.BastionPort = intPtr(3335)
 		})
 	})
+
+	t.Run("force use ssh agent", func(t *testing.T) {
+		cfg := &Config{
+			Mode: Mode{
+				ForceLegacy: false,
+				ForceModern: true,
+			},
+
+			User: "user",
+			Port: intPtr(2220),
+
+			ForceUseSSHAgent: true,
+		}
+
+		cpy := cfg.Clone()
+
+		assertCloned(t, cfg, cpy)
+		assertNotAffected(t, cfg, cpy, func(c *Config) {
+			c.ForceModern = false
+			c.Port = intPtr(2222)
+			c.ForceUseSSHAgent = false
+		})
+	})
+}
+
+func TestHaveAuthMethod(t *testing.T) {
+	type testCase struct {
+		name     string
+		cfg      *Config
+		expected bool
+	}
+
+	tests := []testCase{
+		{
+			name: "have private keys",
+			cfg: &Config{
+				User: "user",
+				Port: intPtr(2228),
+				PrivateKeys: []AgentPrivateKey{
+					{
+						Key:        "content",
+						Passphrase: "not secure key",
+						IsPath:     false,
+					},
+				},
+			},
+			expected: true,
+		},
+
+		{
+			name: "have sudo password",
+			cfg: &Config{
+				User:         "user",
+				Port:         intPtr(2228),
+				SudoPassword: "not secure",
+			},
+			expected: true,
+		},
+
+		{
+			name: "force agent",
+			cfg: &Config{
+				User:             "user",
+				Port:             intPtr(2228),
+				ForceUseSSHAgent: true,
+			},
+			expected: true,
+		},
+
+		{
+			name: "no methods",
+			cfg: &Config{
+				User: "user",
+				Port: intPtr(2228),
+			},
+			expected: false,
+		},
+	}
+
+	for _, tst := range tests {
+		t.Run(tst.name, func(t *testing.T) {
+			r := tst.cfg.HaveAuthMethods()
+			require.Equal(t, tst.expected, r, "have valid result of HaveAuthMethods")
+		})
+	}
 }
