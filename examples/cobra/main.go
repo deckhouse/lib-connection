@@ -36,6 +36,8 @@ type command struct {
 func main() {
 	const envsPrefix = "COBRA"
 
+	// it needs for running all hooks
+	// for all parents
 	cobra.EnableTraverseRunHooks = true
 
 	rootCmd := &cobra.Command{
@@ -49,6 +51,7 @@ func main() {
 		tmpDir:     filepath.Join(os.TempDir(), "cobra-example"),
 	}
 
+	// example usage global flags with sub commands using with our flags
 	rootCmd.PersistentFlags().StringVar(&global.loggerType, "log-type", global.loggerType, "log type")
 	rootCmd.PersistentFlags().StringVar(&global.tmpDir, "tmp-dir", global.tmpDir, "Temp directory")
 
@@ -64,6 +67,10 @@ func main() {
 		EnvsPrefix:     envsPrefix,
 	})
 
+	// you can use PersistentPreRunE method for initialize globals
+	// and global library setting. If you use this method, you should
+	// pass provider settings function to your sub command because
+	// it rewrite sett variable
 	rootCmd.PersistentPreRunE = func(*cobra.Command, []string) error {
 		newSett, err := initSettings(sett, global)
 		if err != nil {
@@ -79,6 +86,8 @@ func main() {
 		return sett
 	}
 
+	// shouldContainsInHelp is not necessary
+	// using for testing help in this example
 	subCommands := map[string]command{
 		"kube": {
 			provider: cmd.AppendKubeCommand,
@@ -124,6 +133,8 @@ func main() {
 		}
 	}
 
+	// by default cobra out error
+	// if you use your logging we can skip it
 	rootCmd.SilenceErrors = true
 	rootCmd.TraverseChildren = true
 
@@ -163,6 +174,10 @@ func initSettings(sett *settings.BaseProviders, args *globalArgs) (*settings.Bas
 		settings.CloneWithTmpDir(tmpDir),
 	)
 
+	// unfortunately PersistentPostRun will not run
+	// if command fail with error, you should use
+	// global finalize function
+	// but you should use defer func in sub commands for cleanup
 	cobra.OnFinalize(func() {
 		tmpDir = sett.TmpDir()
 		logger := sett.Logger()

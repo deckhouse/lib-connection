@@ -29,10 +29,8 @@ import (
 
 type SettingsProvider func() settings.Settings
 
-func AppendKubeCommand(settProvider SettingsProvider, rootCmd *cobra.Command) (*cobra.Command, error) {
+func AppendKubeCommand(settProvider SettingsProvider, parent *cobra.Command) (*cobra.Command, error) {
 	printWarning := false
-
-	parser := kube.NewFlagsParser(settProvider())
 
 	kubeCmd := &cobra.Command{
 		Use:   "kube-only",
@@ -40,18 +38,30 @@ func AppendKubeCommand(settProvider SettingsProvider, rootCmd *cobra.Command) (*
 		Long:  "Run kube example without ssh.",
 	}
 
-	if rootCmd != nil {
-		rootCmd.AddCommand(kubeCmd)
+	// you should add cmd to parent
+	if parent != nil {
+		parent.AddCommand(kubeCmd)
 	}
 
 	// example of usage another flags in command is allowed
+	// you should use PersistentFlags for getting flags from parent
 	flagSet := kubeCmd.PersistentFlags()
 	flagSet.BoolVar(&printWarning, "print-warning", false, "Print warning messages.")
 
+	// initialize our flags
+	// InitFlags add fake flagSet for:
+	// prevent of multiple initialization flags
+	// for available flags in help
+	// unknown flags not allowed by default
+	parser := kube.NewFlagsParser(settProvider())
 	flags, err := parser.InitFlags(flagSet)
 	if err != nil {
 		return nil, err
 	}
+
+	// flags should pass to handler
+	// because in handler we have all parsed keys
+	// and we should extract configs in handler
 
 	kubeCmd.RunE = func(cmd *cobra.Command, args []string) error {
 		err := runKube(&runKubeParams{
@@ -63,6 +73,8 @@ func AppendKubeCommand(settProvider SettingsProvider, rootCmd *cobra.Command) (*
 		})
 
 		if err != nil {
+			// by default, cobra out usage string
+			// if command was failed
 			cmd.SilenceUsage = true
 		}
 
@@ -90,10 +102,12 @@ func runKube(params *runKubeParams) error {
 		return fmt.Errorf("failed to extract kube provider config: %v", err)
 	}
 
+	// default initialization way
 	providerErr := fmt.Errorf("should not use over ssh")
 	runner, err := provider.GetRunnerInterface(conf, sett, provider.NewErrorSSHProvider(providerErr))
 	kubeProvider := provider.NewDefaultKubeProvider(sett, conf, runner)
 
+	// please clean up providers in the end of handler
 	defer func() {
 		logger := sett.Logger()
 
@@ -105,6 +119,7 @@ func runKube(params *runKubeParams) error {
 		logger.InfoF("kube provider cleaned up successfully")
 	}()
 
+	// example that additional flags also parsed
 	if *params.printWarn {
 		sett.Logger().WarnF("WARNING: printing warnings flag set")
 	}
@@ -129,6 +144,8 @@ func getNodes(ctx context.Context, sett settings.Settings, kubeProvider *provide
 	)
 
 	return retry.NewLoopWithParams(loopParams).RunContext(ctx, func() error {
+		// please call Client for kube provider in every iteration
+		// kube provider tracks ssh switches and provide new client if switch happened
 		client, err := kubeProvider.Client(ctx)
 		if err != nil {
 			return fmt.Errorf("cannot extract kube client: %w", err)

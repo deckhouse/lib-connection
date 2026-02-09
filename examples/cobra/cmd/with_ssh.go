@@ -32,14 +32,18 @@ func AppendSSHCommand(settProvider SettingsProvider, rootCmd *cobra.Command) (*c
 		Long:  "Run example ssh",
 	}
 
+	// you should add cmd to parent
 	if rootCmd != nil {
 		rootCmd.AddCommand(sshCmd)
 	}
 
+	// example of usage another flags in command is allowed
+	// you should use PersistentFlags for getting flags from parent
 	flagSet := sshCmd.PersistentFlags()
-
 	useStandaloneKube := false
 	flagSet.BoolVar(&useStandaloneKube, "use-standalone-kube", false, "Use provided kube settings not over ssh")
+
+	// default initialization way for flags
 
 	kubeParser := kube.NewFlagsParser(settProvider())
 	kubeFlags, err := kubeParser.InitFlags(flagSet)
@@ -52,6 +56,10 @@ func AppendSSHCommand(settProvider SettingsProvider, rootCmd *cobra.Command) (*c
 	if err != nil {
 		return nil, err
 	}
+
+	// flags should pass to handler
+	// because in handler we have all parsed keys
+	// and we should extract configs in handler
 
 	sshCmd.RunE = func(cmd *cobra.Command, args []string) error {
 		err := runSSH(&runSSHParams{
@@ -103,6 +111,8 @@ func runSSH(params *runSSHParams) error {
 	}
 
 	sshProvider := provider.NewDefaultSSHProvider(sett, sshConfig, provider.SSHClientWithStartAfterCreate(true))
+
+	// please clean up providers in the end of handler
 	defer func() {
 		logger := sett.Logger()
 
@@ -114,6 +124,12 @@ func runSSH(params *runSSHParams) error {
 		logger.InfoF("SSH provider cleaned up successfully")
 	}()
 
+	// example logic if you can use over ssh client and not
+	// in one handler
+	// also you can track if you should use over ssh connection
+	// with kubeConfig.OverSSH() method
+	// but keep in mind, that your handler can use connection to kube API
+	// with kubeconfig, but also your handler can do some actions over ssh
 	var sshProviderForKube connection.SSHProvider = sshProvider
 	if *params.useStandaloneKube {
 		providerErr := fmt.Errorf("should not use over ssh")
@@ -122,6 +138,8 @@ func runSSH(params *runSSHParams) error {
 
 	runner, err := provider.GetRunnerInterface(kubeConfig, sett, sshProviderForKube)
 	kubeProvider := provider.NewDefaultKubeProvider(sett, kubeConfig, runner)
+
+	// please clean up providers in the end of handler
 	defer func() {
 		logger := sett.Logger()
 
