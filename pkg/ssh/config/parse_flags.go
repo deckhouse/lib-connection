@@ -659,14 +659,19 @@ func (p *FlagsParser) readPrivateKeysFromFlags(flags *Flags, logger log.Logger) 
 
 		pathsParsed[path] = struct{}{}
 
-		keysPassword, err := p.extractPrivateKey(path, logger)
+		fullPath, err := file.FullPath(path, "private key")
+		if err != nil {
+			return nil, err
+		}
+
+		keysPassword, err := p.extractPrivateKey(fullPath, logger)
 		if err != nil {
 			parseErr = multierror.Append(parseErr, fmt.Errorf("cannot parse private key file %s: %w", path, err))
 			continue
 		}
 
 		res = append(res, AgentPrivateKey{
-			Key:        path,
+			Key:        fullPath,
 			Passphrase: keysPassword,
 			IsPath:     true,
 		})

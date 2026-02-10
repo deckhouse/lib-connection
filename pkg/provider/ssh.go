@@ -32,6 +32,7 @@ import (
 	sshconfig "github.com/deckhouse/lib-connection/pkg/ssh/config"
 	"github.com/deckhouse/lib-connection/pkg/ssh/gossh"
 	"github.com/deckhouse/lib-connection/pkg/ssh/session"
+	"github.com/deckhouse/lib-connection/pkg/utils/file"
 )
 
 var (
@@ -563,17 +564,18 @@ func (p *DefaultSSHProvider) prepareConfigPrivateKeys() error {
 func (p *DefaultSSHProvider) appendPrivateKeyPath(key sshconfig.AgentPrivateKey) error {
 	path := key.Key
 
-	exists, err := fileExists(path)
+	var err error
+	path, err = file.FullPath(path, "private key")
 	if err != nil {
 		return err
 	}
 
-	if !exists {
-		return fmt.Errorf("private key %s does not exist", path)
+	if err := file.IsExists(path, "private key"); err != nil {
+		return err
 	}
 
 	p.defaultPrivateKeysWithPaths = append(p.defaultPrivateKeysWithPaths, session.AgentPrivateKey{
-		Key:        key.Key,
+		Key:        path,
 		Passphrase: key.Passphrase,
 	})
 

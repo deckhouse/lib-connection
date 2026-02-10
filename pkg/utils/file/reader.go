@@ -59,19 +59,9 @@ func IsExists(path string, fileType string) error {
 }
 
 func isExists(path string, fileType string, shouldRegular bool) (string, error) {
-	if path == "" {
-		return "", fmt.Errorf("pass empty path for %s", fileType)
-	}
-
-	var err error
-	path, err = resolveTilda(path)
+	fullPath, err := FullPath(path, fileType)
 	if err != nil {
 		return "", err
-	}
-
-	fullPath, err := filepath.Abs(path)
-	if err != nil {
-		return "", fmt.Errorf("cannot get abs path for %s: %w", path, err)
 	}
 
 	stat, err := os.Stat(fullPath)
@@ -85,6 +75,24 @@ func isExists(path string, fileType string, shouldRegular bool) (string, error) 
 
 	if shouldRegular && !stat.Mode().IsRegular() {
 		return "", fmt.Errorf("%s path '%s' should be regular file", fileType, fullPath)
+	}
+
+	return fullPath, nil
+}
+
+func FullPath(path string, fileType string) (string, error) {
+	if path == "" {
+		return "", fmt.Errorf("pass empty path for %s", fileType)
+	}
+
+	fullPath, err := resolveTilda(path, fileType)
+	if err != nil {
+		return fullPath, err
+	}
+
+	fullPath, err = filepath.Abs(fullPath)
+	if err != nil {
+		return fullPath, fmt.Errorf("cannot get abs path for %s for type %s: %w", path, fileType, err)
 	}
 
 	return fullPath, nil
@@ -104,7 +112,7 @@ func getReader(path string, fileType string) (io.ReadCloser, string, error) {
 	return r, fullPath, nil
 }
 
-func resolveTilda(path string) (string, error) {
+func resolveTilda(path string, fileType string) (string, error) {
 	if !strings.HasPrefix(path, "~") {
 		return path, nil
 	}
@@ -112,7 +120,7 @@ func resolveTilda(path string) (string, error) {
 	extractor := env.NewOsExtractor("")
 	home, err := defaults.HomeDir(extractor)
 	if err != nil {
-		return "", fmt.Errorf("path contains ~. cannot resolve it: %w", err)
+		return "", fmt.Errorf("path %s for %s contains ~ cannot resolve it: %w", path, fileType, err)
 	}
 
 	return filepath.Join(home, path[1:]), nil

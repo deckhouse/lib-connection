@@ -271,10 +271,7 @@ func TestSSHProviderClient(t *testing.T) {
 
 			provider := newTestProvider(sett, config)
 
-			expectedErr := fmt.Sprintf(
-				"Cannot prepare private keys: private key %s does not exist",
-				notExistsPrivateKeyPath,
-			)
+			expectedErr := "no such file or directory"
 
 			assertClientAndMultipleClientCall(t, assertParams{
 				sett:               sett,
@@ -308,7 +305,7 @@ func TestSSHProviderClient(t *testing.T) {
 				sett:               sett,
 				writeKeys:          false,
 				provider:           provider,
-				shouldContainError: fmt.Sprintf("Cannot prepare private keys: path %s not regular file", path),
+				shouldContainError: "should be a file not dir",
 				config:             config,
 			})
 		})
