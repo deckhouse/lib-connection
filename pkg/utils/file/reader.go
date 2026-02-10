@@ -19,23 +19,23 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/deckhouse/lib-dhctl/pkg/log"
+
+	"github.com/deckhouse/lib-connection/pkg/utils/defaults"
+	"github.com/deckhouse/lib-connection/pkg/utils/env"
 )
 
 func Reader(path string, fileType string) (io.ReadCloser, error) {
-	fullPath, err := isExists(path, fileType, true)
-	if err != nil {
-		return nil, err
-	}
-
-	return os.Open(fullPath)
+	r, _, err := getReader(path, fileType)
+	return r, err
 }
 
-func ReadFile(path string, fileType string, logger ...log.Logger) ([]byte, error) {
-	reader, err := Reader(path, fileType)
+func ReadFile(path string, fileType string, logger ...log.Logger) ([]byte, string, error) {
+	reader, fullPath, err := getReader(path, fileType)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	defer func() {
@@ -45,7 +45,12 @@ func ReadFile(path string, fileType string, logger ...log.Logger) ([]byte, error
 		}
 	}()
 
-	return io.ReadAll(reader)
+	content, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, "", err
+	}
+
+	return content, fullPath, nil
 }
 
 func IsExists(path string, fileType string) error {
@@ -54,13 +59,9 @@ func IsExists(path string, fileType string) error {
 }
 
 func isExists(path string, fileType string, shouldRegular bool) (string, error) {
-	if path == "" {
-		return "", fmt.Errorf("pass empty path for %s", fileType)
-	}
-
-	fullPath, err := filepath.Abs(path)
+	fullPath, err := FullPath(path, fileType)
 	if err != nil {
-		return "", fmt.Errorf("cannot get abs path for %s: %w", path, err)
+		return "", err
 	}
 
 	stat, err := os.Stat(fullPath)
@@ -77,4 +78,50 @@ func isExists(path string, fileType string, shouldRegular bool) (string, error) 
 	}
 
 	return fullPath, nil
+}
+
+func FullPath(path string, fileType string) (string, error) {
+	if path == "" {
+		return "", fmt.Errorf("pass empty path for %s", fileType)
+	}
+
+	fullPath, err := resolveTilda(path, fileType)
+	if err != nil {
+		return fullPath, err
+	}
+
+	fullPath, err = filepath.Abs(fullPath)
+	if err != nil {
+		return fullPath, fmt.Errorf("cannot get abs path for %s for type %s: %w", path, fileType, err)
+	}
+
+	return fullPath, nil
+}
+
+func getReader(path string, fileType string) (io.ReadCloser, string, error) {
+	fullPath, err := isExists(path, fileType, true)
+	if err != nil {
+		return nil, "", err
+	}
+
+	r, err := os.Open(fullPath)
+	if err != nil {
+		return nil, "", err
+	}
+
+	return r, fullPath, nil
+}
+
+func resolveTilda(path string, fileType string) (string, error) {
+	if !strings.HasPrefix(path, "~") {
+		return path, nil
+	}
+
+	extractor := env.NewOsExtractor("")
+	home, err := defaults.HomeDir(extractor)
+	if err != nil {
+		return "", fmt.Errorf("path %s for %s contains ~ cannot resolve it: %w", path, fileType, err)
+	}
+
+	return filepath.Join(home, path[1:]), nil
 }

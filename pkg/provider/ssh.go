@@ -32,6 +32,7 @@ import (
 	sshconfig "github.com/deckhouse/lib-connection/pkg/ssh/config"
 	"github.com/deckhouse/lib-connection/pkg/ssh/gossh"
 	"github.com/deckhouse/lib-connection/pkg/ssh/session"
+	"github.com/deckhouse/lib-connection/pkg/utils/file"
 )
 
 var (
@@ -336,7 +337,13 @@ func (p *DefaultSSHProvider) constructClient(ctx context.Context, sess *session.
 			WithLoopsParams(p.options.LoopsParams).WithID(p.options.ClientID)
 	}
 
-	return clissh.NewClient(p.sett, sess, privateKeys, p.options.InitializeNewAgent).WithID(p.options.ClientID)
+	initNewAgent := p.options.InitializeNewAgent
+	if p.defaultConfig.Config.ForceUseSSHAgent {
+		p.debug("Force no init new agent because ForceUseSSHAgent in default config set")
+		initNewAgent = false
+	}
+
+	return clissh.NewClient(p.sett, sess, privateKeys, initNewAgent).WithID(p.options.ClientID)
 }
 
 func (p *DefaultSSHProvider) stopCurrentClientIfNeed() {
@@ -451,6 +458,10 @@ func (p *DefaultSSHProvider) newSession(parent *session.Session, privateKeys []s
 		input.AvailableHosts = hosts
 	}
 
+	if len(input.AvailableHosts) == 0 {
+		return nil, nil, fmt.Errorf("hosts is empty in session or default config")
+	}
+
 	resPrivateKeys := make([]session.AgentPrivateKey, 0, len(privateKeys))
 	privateKeysInSession := make(map[string]struct{})
 
@@ -553,17 +564,18 @@ func (p *DefaultSSHProvider) prepareConfigPrivateKeys() error {
 func (p *DefaultSSHProvider) appendPrivateKeyPath(key sshconfig.AgentPrivateKey) error {
 	path := key.Key
 
-	exists, err := fileExists(path)
+	var err error
+	path, err = file.FullPath(path, "private key")
 	if err != nil {
 		return err
 	}
 
-	if !exists {
-		return fmt.Errorf("private key %s does not exist", path)
+	if err := file.IsExists(path, "private key"); err != nil {
+		return err
 	}
 
 	p.defaultPrivateKeysWithPaths = append(p.defaultPrivateKeysWithPaths, session.AgentPrivateKey{
-		Key:        key.Key,
+		Key:        path,
 		Passphrase: key.Passphrase,
 	})
 

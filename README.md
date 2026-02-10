@@ -3,7 +3,7 @@
 Deckhouse connection to nodes over SSH and kube-api over SSH and directly implementations.
 
 Library provide interfaces and own implementations for SSH and kubernetes client.
-Also library provide special providers for getting clients (more information about this below).
+Also, library provide special providers for getting clients (more information about this below).
 Please DO NOT CREATE implementations of clients directly without need. Please use providers for it.
 
 ## Global settings
@@ -126,7 +126,7 @@ This files will delete in this call. Also, it stops current client and all addit
 additional clients. Also, it is safe if some or all clients were stopped. Current client and all additional
 will remove from provider. Use this method in end of your logic.
 
-Now we have two implementations of `SSHProvider`: `DefaultSSHProvider`, `SSHProvider` in `testssh` package
+Now we have three implementations of `SSHProvider`: `DefaultSSHProvider`, `SSHProvider` in `testssh` package
 and `ErrorSSHProvider`.
 
 #### DefaultSSHProvider
@@ -141,7 +141,11 @@ or with [parse flags](./pkg/ssh/config/parse_flags.go) or with parse
 [here](./pkg/ssh/config/openapi/). If you need to provide configuration in your project 
 (for example, render documentation by specs), you can download these schemas in CI or makefile or directly.
 You can see can you download specs over GitHub API in [makefile](./Makefile) `validation/license/download`
-target. 
+target.
+You should not get these schemas for validation. Library embed these schemas and load them if it needs.
+But you can get strings of schemas in code with `ConfigurationOpenAPISpec` and
+`HostOpenAPISpec` functions.
+
 
 ###### ParseConnectionConfig
 
@@ -153,7 +157,7 @@ password if password set) and that `legacyMode` and `modernMode` set both.
 
 ###### ParseFlags
 
-`FlagsParser` provide `ConnectionConfig` from cli arguments. It is use `https://github.com/spf13/pflag` package for parse it.
+`FlagsParser` provide `ConnectionConfig` from cli arguments. It is use [pflag lib](https://github.com/spf13/pflag) for parse it.
 All flags can rewrite with env variables [described in](./pkg/ssh/config/parse_flags.go). You can 
 provide prefix for envs variables with `WithEnvsPrefix` method. Parse flags doing in next order:
 ```go
@@ -171,15 +175,15 @@ func do() error {
 	if err != nil {
 		return err
 	}
-	// or you can provide your ouwn arguments slice
-	err = flags.Parse(os.Args[1:])
-	if err != nil {
-		return err
-	}
 
 	// you can use ValidateOption for configure parse
-	config, err := parser.ExtractConfigAfterParse(flags)
+	config, err := flags.ExtractConfig(os.Args[1:])
 	if err != nil {
+		return err
+    }
+	
+	// if you need to parse you flag set you should parse it by hand
+	if err := fset.Parse(); err != nil {
 		return err
     }
 	
@@ -187,16 +191,19 @@ func do() error {
 }
 ```
 
-Flags parsers uses copy of passed flag set for parsing. If you need parse with you another flags set
-you can get new flag set with `FlagSet` method and parse flag set by your hand.
-After parse, extract `ConnectionConfig` with `ExtractConfigAfterParse` method.
+Flags parsers uses internal flag set for parsing. If you need parse with you another flags set
+you should parse your flag set by your hand. But, parser add "fake" flag set
+to passed flag set. It needs for adding information about own flags for out.
+If we were using your flag set, parser can add multiple values in slices, for example.
+in help. Your flags can be parsed before or after parse own flags. 
+
 
 By default, hosts is not required for parse, you can rewrite with `ParseWithRequiredSSHHost`.
 It needs because we can parse ssh configuration and kube configuration both and if we have kubeconfig
 path we should skip all ssh flags and empty flag set for ssh is valid in this case. 
-But we can use `OverSSH` method in kube configuration. But Warning, you can use ssh routines and kube
+But we can use `OverSSH` method in kube configuration. But warning, you can use ssh routines and kube
 in one logic, and we can use kubeconfig for kube connection.
-`ExtractConfigAfterParse` add some defaults if some flags not passes, like port and bastion port (22 by default),
+`ExtractConfig` add some defaults if some flags not passes, like port and bastion port (22 by default),
 user and bastion user (current user from USER env or getting with sys cals).
 Also, by default flags parser add `~/.ssh/id_rsa` private key. In some cases it is not required:
 if user uses password auth (without private key) or if user want to use ssh agent private keys only.
@@ -257,6 +264,9 @@ password authentification
 - by default returns cli-ssh. Warning! this behaviour can change in the future.
 
 By default, provider not start client if you need you can pass `SSHClientWithStartAfterCreate` option.
+
+`DefaultSSHProvider` init new agent by default for cli-ssh, but if set `ForceUseSSHAgent` new agent does not start. 
+Also, we can skip run agent with `SSHClientWithNoInitializeAgent` option. 
 
 ##### ErrorSSHProvider
 
@@ -354,3 +364,34 @@ It needs for test resources if you use additional clients in one place without s
 clients in your code. You can use `Client` call for getting kube client after test your methods and
 asserts resources after test. 
 `KubernetesClient.InitContext` is save for call with fake client
+
+## Flags parse and another examples
+
+Because we are using [pflag](https://github.com/spf13/pflag) library you can use it with cobra library. 
+
+Full example for init and simple using library provided [here](./examples).
+Please show code comments for getting more information about usage of library.
+
+## Testing
+
+We added a lot of tests unit and integration. For running full test suit use command:
+```bash
+make test
+```
+
+But full test suit is required long time (now about 30 minutes), because we are running ssh and kind containers
+for integration testing and tests have long sleeps for prove logic. 
+
+If you do not need to run integration tests you can use:
+```bash
+make test/no-integration
+```
+
+In pull requests on GitHub you can use `test/no-integration` label. 
+
+For full cleanup test resource you can use command:
+```bash
+make clean/test
+```
+
+It will remove all containers and kind cluster and also remove all temp files.

@@ -12,30 +12,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package terminal
+package kube
 
 import (
-	"fmt"
-	"os"
+	"context"
+	"testing"
 
-	"github.com/deckhouse/lib-dhctl/pkg/log"
-	terminal "golang.org/x/term"
+	"github.com/stretchr/testify/require"
 )
 
-func AskPassword(logger log.Logger, prompt string) ([]byte, error) {
-	fd := int(os.Stdin.Fd())
+func TestFakeClient(t *testing.T) {
+	t.Run("InitContext does not panics and no rewrite client", func(t *testing.T) {
+		client := NewFakeKubernetesClient()
+		innerClient := client.KubeClient
 
-	if !terminal.IsTerminal(fd) {
-		return nil, fmt.Errorf("stdin is not a terminal, error reading password")
-	}
-
-	logger.InfoFWithoutLn(prompt)
-	data, err := terminal.ReadPassword(fd)
-	logger.InfoF("")
-
-	if err != nil {
-		return nil, fmt.Errorf("read secret: %w", err)
-	}
-
-	return data, nil
+		doInit := func() {
+			err := client.InitContext(context.TODO(), &Config{})
+			require.NoError(t, err, "init context should not fail")
+		}
+		require.NotPanics(t, doInit, "init context should not panic")
+		require.True(t, client.KubeClient == innerClient, "should not rewrite client")
+	})
 }

@@ -293,7 +293,7 @@ func IsLive(ctx context.Context, client connection.KubeClient, loopParams ...ret
 		if err == nil {
 			return nil
 		}
-		return fmt.Errorf("kubernetes API is not Ready: %w", err)
+		return fmt.Errorf("kubernetes API is not ready: %w", err)
 	})
 }
 
