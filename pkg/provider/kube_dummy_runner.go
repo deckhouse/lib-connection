@@ -35,4 +35,3 @@ func (*RunnerInterfaceNoAction) SetNodeInterface(context.Context, *kube.Kubernet
 func (*RunnerInterfaceNoAction) InitOptions() []kube.InitOpt {
 	return nil
 }
-
