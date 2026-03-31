@@ -15,14 +15,16 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
+
+	"github.com/spf13/cobra"
 
 	connection "github.com/deckhouse/lib-connection/pkg"
 	"github.com/deckhouse/lib-connection/pkg/kube"
 	"github.com/deckhouse/lib-connection/pkg/provider"
 	sshconfig "github.com/deckhouse/lib-connection/pkg/ssh/config"
-	"github.com/spf13/cobra"
 )
 
 func AppendSSHCommand(settProvider SettingsProvider, rootCmd *cobra.Command) (*cobra.Command, error) {
@@ -136,7 +138,9 @@ func runSSH(params *runSSHParams) error {
 		sshProviderForKube = provider.NewErrorSSHProvider(providerErr)
 	}
 
-	runner, err := provider.GetRunnerInterface(kubeConfig, sett, sshProviderForKube)
+	initializer := provider.NewSimpleSSHProviderInitializer(sshProviderForKube)
+
+	runner, err := provider.GetRunnerInterface(ctx, kubeConfig, sett, initializer)
 	kubeProvider := provider.NewDefaultKubeProvider(sett, kubeConfig, runner)
 
 	// please clean up providers in the end of handler
@@ -152,7 +156,7 @@ func runSSH(params *runSSHParams) error {
 	}()
 
 	if err != nil {
-		return fmt.Errorf("failed to setup kube client", err)
+		return fmt.Errorf("failed to setup kube client: %w", err)
 	}
 
 	if err := getNodes(ctx, sett, kubeProvider); err != nil {
@@ -170,6 +174,16 @@ func runSSH(params *runSSHParams) error {
 		return fmt.Errorf("failed to setup ssh client: %w", err)
 	}
 
+	if err := doSSHCommand(ctx, sshClient); err != nil {
+		return err
+	}
+
+	sett.Logger().InfoF("SSH command succeeded")
+
+	return nil
+}
+
+func doSSHCommand(ctx context.Context, sshClient connection.SSHClient) error {
 	const echoStr = "SUCCESS"
 
 	cmd := sshClient.Command("echo", "-n", echoStr)
@@ -182,8 +196,6 @@ func runSSH(params *runSSHParams) error {
 	if string(strOut) != echoStr {
 		return fmt.Errorf("failed to run echo command, got output: %s", string(strOut))
 	}
-
-	sett.Logger().InfoF("SSH command succeeded")
 
 	return nil
 }

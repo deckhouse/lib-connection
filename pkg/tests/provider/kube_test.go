@@ -839,7 +839,10 @@ func registerCleanupKubeProvider(t *testing.T, test *tests.Test, p *provider.Def
 
 func getKubeProvider(t *testing.T, test *tests.Test, config *kube.Config, sshProvider connection.SSHProvider, opts ...provider.RunnerInterfaceOpt) (*provider.DefaultKubeProvider, provider.RunnerInterface) {
 	sett := test.Settings()
-	ri, err := provider.GetRunnerInterface(config, sett, sshProvider, opts...)
+
+	initializer := provider.NewSimpleSSHProviderInitializer(sshProvider)
+
+	ri, err := provider.GetRunnerInterface(context.TODO(), config, sett, initializer, opts...)
 	require.NoError(t, err, "runner interface should provided")
 
 	loopParams := retry.NewEmptyParams(

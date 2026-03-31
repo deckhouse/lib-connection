@@ -113,6 +113,19 @@ func main() {
 				envsPrefix + "_",
 			},
 		},
+		"ssh-additional": {
+			provider: cmd.AppendSSHAdditionalCommand,
+			shouldContainsInHelp: []string{
+				// global flags
+				"--tmp-dir",
+				// kube flags
+				"--kubeconfig-context",
+				// ssh flags
+				"--ssh-legacy-mode",
+				// envs prefix
+				envsPrefix + "_",
+			},
+		},
 	}
 
 	for name, c := range subCommands {
