@@ -19,12 +19,14 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/spf13/cobra"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	
+	connection "github.com/deckhouse/lib-connection/pkg"
 	"github.com/deckhouse/lib-connection/pkg/kube"
 	"github.com/deckhouse/lib-connection/pkg/provider"
 	"github.com/deckhouse/lib-connection/pkg/settings"
 	"github.com/deckhouse/lib-dhctl/pkg/retry"
-	"github.com/spf13/cobra"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 type SettingsProvider func() settings.Settings
@@ -103,8 +105,8 @@ func runKube(params *runKubeParams) error {
 	}
 
 	// default initialization way
-	providerErr := fmt.Errorf("should not use over ssh")
-	runner, err := provider.GetRunnerInterface(conf, sett, provider.NewErrorSSHProvider(providerErr))
+	initializer := provider.NewErrorSSHProviderForKubeInitializer(fmt.Errorf("should not use over ssh"))
+	runner, err := provider.GetRunnerInterface(ctx, conf, sett, initializer)
 	kubeProvider := provider.NewDefaultKubeProvider(sett, conf, runner)
 
 	// please clean up providers in the end of handler
@@ -135,7 +137,7 @@ func runKube(params *runKubeParams) error {
 	return nil
 }
 
-func getNodes(ctx context.Context, sett settings.Settings, kubeProvider *provider.DefaultKubeProvider) error {
+func getNodes(ctx context.Context, sett settings.Settings, kubeProvider connection.KubeProvider) error {
 	loopParams := retry.NewEmptyParams(
 		retry.WithName("Getting nodes"),
 		retry.WithAttempts(5),
