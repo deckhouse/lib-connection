@@ -29,11 +29,11 @@ type SSHProviderInitializer interface {
 
 type SSHProviderInitializerWithCleanup interface {
 	SSHProviderInitializer
+	Cleanup(ctx context.Context) error
 }
 
 type KubeProviderInitializer interface {
 	GetKubeProvider(ctx context.Context) (connection.KubeProvider, error)
-	Cleanup(ctx context.Context) error
 }
 
 type KubeProviderInitializerWithCleanup interface {

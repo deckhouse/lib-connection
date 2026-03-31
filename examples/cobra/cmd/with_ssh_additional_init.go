@@ -104,8 +104,8 @@ func runSSHAdditional(params *runSSHParams) error {
 }
 
 type providersConsumer interface {
-	provider.SSHProviderInitializer
-	provider.KubeProviderInitializer
+	provider.SSHProviderInitializerWithCleanup
+	provider.KubeProviderInitializerWithCleanup
 }
 
 func doSSHAdditional(ctx context.Context, sett settings.Settings, consumer providersConsumer) error {
