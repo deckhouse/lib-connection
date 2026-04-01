@@ -61,6 +61,10 @@ func main() {
 		IsDebug: isDebug,
 	})
 
+	if isDebug {
+		log.InitKlog(logger, log.WithKlogVerbose("10"))
+	}
+
 	sett := settings.NewBaseProviders(settings.ProviderParams{
 		LoggerProvider: log.SimpleLoggerProvider(logger),
 		IsDebug:        isDebug,

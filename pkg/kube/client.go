@@ -177,6 +177,13 @@ func (k *KubernetesClient) initContext(ctx context.Context, params *Config, opts
 		}
 	}
 
+	// allow only accept json for prevent
+	// return protobuf from server
+	// because we log all requests/responses to log
+	// debug log is "broken" because protobuf response
+	// output as formatted byte array
+	kubeClient.WithAcceptOnlyJSONContentType(true)
+
 	// Initialize kube client for kube events hooks.
 	err := kubeClient.Init()
 	if err != nil {
