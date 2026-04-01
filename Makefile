@@ -108,7 +108,13 @@ go-deps/update: go-installed
 	fi; \
 	go get "$(DEP)@$(VER)"; \
 	cd ./tests; \
+	go get "$(DEP)@$(VER)";
+	ls -lh;
+	cd ./examples/cobra;
 	go get "$(DEP)@$(VER)"
+
+go-deps/tidy: go-installed
+	go mod tidy && cd ./tests && go mod tidy && cd ../examples/cobra && go mod tidy
 
 test: go-installed docker-installed bin/kind
 	./hack/run_tests.sh
