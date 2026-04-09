@@ -20,13 +20,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/deckhouse/lib-dhctl/pkg/retry"
 	"github.com/stretchr/testify/require"
 
-	"github.com/deckhouse/lib-connection/pkg"
+	connection "github.com/deckhouse/lib-connection/pkg"
 	"github.com/deckhouse/lib-connection/pkg/settings"
 	"github.com/deckhouse/lib-connection/pkg/ssh/clissh"
 	"github.com/deckhouse/lib-connection/pkg/ssh/gossh"
@@ -36,7 +37,7 @@ import (
 
 const expectedFileContent = "Some test data"
 
-func registerStopClient(t *testing.T, sshClient pkg.SSHClient) {
+func registerStopClient(t *testing.T, sshClient connection.SSHClient) {
 	t.Cleanup(func() {
 		sshClient.Stop()
 	})
@@ -51,7 +52,7 @@ func newSessionTestLoopParams() gossh.ClientLoopsParams {
 	}
 }
 
-func initBothClients(t *testing.T, ctx context.Context, setting settings.Settings, sess *session.Session, keys []session.AgentPrivateKey) (pkg.SSHClient, error) {
+func initBothClients(t *testing.T, ctx context.Context, setting settings.Settings, sess *session.Session, keys []session.AgentPrivateKey) (connection.SSHClient, error) {
 	goSSHClient := gossh.NewClient(ctx, setting, sess, keys).
 		WithLoopsParams(newSessionTestLoopParams())
 	err := goSSHClient.Start()
@@ -77,6 +78,16 @@ func initContexts(dur time.Duration) (context.Context, context.Context, context.
 	return ctx, ctx2, cancel, cancel2
 }
 
+func assertFilesOut(t *testing.T, sshClient connection.SSHClient, container *tests.TestContainerWrapper, expectedOutput string, cmd ...string) {
+	out, err := container.Container.ExecToContainerWithOut("get content", cmd...)
+	require.NoError(t, err, "%v should exec", cmd)
+	require.Equal(t, expectedOutput, string(out), "contents should equality with docker")
+
+	outSSH, _, err := sshClient.Command(cmd[0], cmd[1:]...).Output(context.TODO())
+	require.NoError(t, err, "%v should exec via client")
+	require.Equal(t, expectedOutput, string(outSSH), "contents should equality with client")
+}
+
 // todo mount local directory to container and assert via local exec
 func assertFilesViaRemoteRun(t *testing.T, sshClient *gossh.Client, cmd string, expectedOutput string) {
 	s, err := sshClient.NewSSHSession()
@@ -88,7 +99,120 @@ func assertFilesViaRemoteRun(t *testing.T, sshClient *gossh.Client, cmd string, 
 	require.Equal(t, expectedOutput, string(out))
 }
 
-func startTwoContainersWithClients(t *testing.T, test *tests.Test, createDeckhouseDirs bool) (pkg.SSHClient, pkg.SSHClient, pkg.SSHClient, error) {
+func startTargetOnlyForSSH(t *testing.T, test *tests.Test, baseName string) *tests.TestContainerWrapper {
+	targetName := baseName + "_target"
+	target := tests.NewTestContainerWrapper(
+		t,
+		test,
+		tests.WithContainerName(targetName),
+	)
+
+	return target
+}
+
+func startTargetWithBastionForSSH(t *testing.T, test *tests.Test, baseName string) (*tests.TestContainerWrapper, *tests.TestContainerWrapper) {
+	target := startTargetOnlyForSSH(t, test, baseName)
+	bastionName := baseName + "_bastion"
+	bastion := tests.NewTestContainerWrapper(
+		t,
+		test,
+		tests.WithContainerName(bastionName),
+		tests.WithConnectToContainerNetwork(target),
+	)
+
+	return bastion, target
+}
+
+func startSSHClient(t *testing.T, test *tests.Test, rt runTest, target *tests.TestContainerWrapper, bastion ...*tests.TestContainerWrapper) connection.SSHClient {
+	keys := target.AgentPrivateKeys()
+	var sess *session.Session
+
+	if len(bastion) > 0 {
+		b := bastion[0]
+		sess = tests.SessionWithBastion(target, b)
+		keys = append(keys, b.AgentPrivateKeys()...)
+	} else {
+		sess = tests.Session(target)
+	}
+
+	defaultLoop := retry.NewEmptyParams(
+		retry.WithWait(2*time.Second),
+		retry.WithAttempts(7),
+	)
+
+	sshSettings := test.Settings()
+	ctx := context.TODO()
+
+	var sshClient connection.SSHClient
+
+	if rt.mode.ForceModern {
+		sshClient = gossh.NewClient(ctx, sshSettings, sess, keys).WithLoopsParams(gossh.ClientLoopsParams{
+			ConnectToBastion:        defaultLoop.Clone(),
+			ConnectToHostViaBastion: defaultLoop.Clone(),
+			ConnectToHostDirectly:   defaultLoop.Clone(),
+			NewSession:              defaultLoop.Clone(),
+			CheckReverseTunnel:      defaultLoop.Clone(),
+		})
+		registerStopClient(t, sshClient)
+	} else {
+		sshClient = clissh.NewClient(sshSettings, sess, keys, true)
+		prepareScp(t)
+
+		func(t *testing.T) {
+			// check connection
+			waitClient := gossh.NewClient(ctx, sshSettings, sess, keys).
+				WithLoopsParams(newSessionTestLoopParams())
+			defer waitClient.Stop()
+			err := waitClient.Start()
+			require.NoError(t, err, "sshd should start")
+		}(t)
+	}
+
+	err := sshClient.Start()
+	// expecting no error on client start
+	require.NoError(t, err)
+
+	return sshClient
+}
+
+type sshTestClientProvider struct {
+	name     string
+	provider func(t *testing.T, test *tests.Test, rt runTest) (connection.SSHClient, *tests.TestContainerWrapper)
+}
+
+var (
+	onlyTargetSSHClientProvider = sshTestClientProvider{
+		name: "only target",
+		provider: func(t *testing.T, test *tests.Test, rt runTest) (connection.SSHClient, *tests.TestContainerWrapper) {
+			baseName := fmt.Sprintf(
+				"%s_%s_only_target",
+				strings.ToLower(test.FullNameForContainer()),
+				strings.ToLower(rt.name),
+			)
+			container := startTargetOnlyForSSH(t, test, baseName)
+			client := startSSHClient(t, test, rt, container)
+
+			return client, container
+		},
+	}
+
+	viaBastionSSHClientProvider = sshTestClientProvider{
+		name: "via bastion",
+		provider: func(t *testing.T, test *tests.Test, rt runTest) (connection.SSHClient, *tests.TestContainerWrapper) {
+			baseName := fmt.Sprintf(
+				"%s_%s_via_bastion",
+				strings.ToLower(test.FullNameForContainer()),
+				strings.ToLower(rt.name),
+			)
+			bastion, target := startTargetWithBastionForSSH(t, test, baseName)
+			client := startSSHClient(t, test, rt, target, bastion)
+
+			return client, target
+		},
+	}
+)
+
+func startTwoContainersWithClients(t *testing.T, test *tests.Test, createDeckhouseDirs bool) (connection.SSHClient, connection.SSHClient, connection.SSHClient, error) {
 	// first container for gossh client
 	container := tests.NewTestContainerWrapper(t, test)
 	ctx := context.Background()
@@ -148,7 +272,7 @@ func prepareScp(t *testing.T) {
 	})
 }
 
-func mustPrepareData(t *testing.T, sshClient pkg.SSHClient) {
+func mustPrepareData(t *testing.T, sshClient connection.SSHClient) {
 	err := sshClient.Command("mkdir  -p /tmp/testdata").Run(context.Background())
 	require.NoError(t, err)
 	err = sshClient.Command(fmt.Sprintf(`echo -n '%s' > /tmp/testdata/first`, expectedFileContent)).Run(context.Background())
@@ -161,7 +285,7 @@ func mustPrepareData(t *testing.T, sshClient pkg.SSHClient) {
 	require.NoError(t, err)
 }
 
-func chmodTmpDir(sshClient pkg.SSHClient, nodeTmpPath string) error {
+func chmodTmpDir(sshClient connection.SSHClient, nodeTmpPath string) error {
 	cmd := sshClient.Command("chmod", "700", nodeTmpPath)
 	cmd.Sudo(context.Background())
 	return cmd.Run(context.Background())
