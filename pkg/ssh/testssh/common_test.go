@@ -81,7 +81,7 @@ func initContexts(dur time.Duration) (context.Context, context.Context, context.
 func assertFilesOut(t *testing.T, sshClient connection.SSHClient, container *tests.TestContainerWrapper, expectedOutput string, cmd ...string) {
 	out, err := container.Container.ExecToContainerWithOut("get content", cmd...)
 	require.NoError(t, err, "%v should exec", cmd)
-	require.Equal(t, expectedOutput, string(out), "contents should equality with docker")
+	require.Equal(t, expectedOutput, out, "contents should equality with docker")
 
 	outSSH, _, err := sshClient.Command(cmd[0], cmd[1:]...).Output(context.TODO())
 	require.NoError(t, err, "%v should exec via client")

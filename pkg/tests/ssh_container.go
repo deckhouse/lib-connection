@@ -632,11 +632,6 @@ func (c *SSHContainer) logDebug(format string, args ...any) {
 	c.settings.Logger.DebugF(format, args...)
 }
 
-func (c *SSHContainer) logInfo(format string, args ...any) {
-	format += fmt.Sprintf(" (%s)", c.settings.String())
-	c.settings.Logger.InfoF(format, args...)
-}
-
 func (c *SSHContainer) runDockerNetworkConnect(isDisconnect bool) error {
 	cmdName := "connect"
 	if isDisconnect {
