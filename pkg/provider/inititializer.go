@@ -87,7 +87,7 @@ func (i *SimpleSSHProviderInitializer) Cleanup(ctx context.Context) error {
 }
 
 // ErrorSSHProviderInitializer
-// provide ErrorSSHProvider 
+// provide ErrorSSHProvider
 // this provider returns error for every
 // SSHProvider methods call
 type ErrorSSHProviderInitializer struct {
