@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -193,7 +194,7 @@ func doSSHCommand(ctx context.Context, sshClient connection.SSHClient) error {
 		return fmt.Errorf("failed to run echo command: %w", err)
 	}
 
-	if string(strOut) != echoStr {
+	if !strings.Contains(string(strOut), echoStr) {
 		return fmt.Errorf("failed to run echo command, got output: %s", string(strOut))
 	}
 

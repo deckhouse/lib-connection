@@ -16,11 +16,34 @@ package provider
 
 import (
 	"context"
+	"errors"
+	"fmt"
 
 	"github.com/name212/govalue"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	connection "github.com/deckhouse/lib-connection/pkg"
+)
+
+var (
+	_ SSHProviderInitializer            = &SimpleSSHProviderInitializer{}
+	_ SSHProviderInitializerWithCleanup = &SimpleSSHProviderInitializer{}
+
+	_ SSHProviderInitializer            = &ErrorSSHProviderInitializer{}
+	_ SSHProviderInitializerWithCleanup = &ErrorSSHProviderInitializer{}
+
+	_ SSHProviderInitializer            = &ProvideErrorSSHProviderInitializer{}
+	_ SSHProviderInitializerWithCleanup = &ProvideErrorSSHProviderInitializer{}
+
+	_ KubeProviderInitializer            = &SimpleKubeProviderInitializer{}
+	_ KubeProviderInitializerWithCleanup = &SimpleKubeProviderInitializer{}
+
+	_ KubeProviderInitializer            = &FakeKubeProviderInitializer{}
+	_ KubeProviderInitializerWithCleanup = &FakeKubeProviderInitializer{}
+)
+
+var (
+	ErrCannotProvideSSHProvider = errors.New("cannot provide ssh provider initializer")
 )
 
 type SSHProviderInitializer interface {
@@ -63,16 +86,45 @@ func (i *SimpleSSHProviderInitializer) Cleanup(ctx context.Context) error {
 	return i.provider.Cleanup(ctx)
 }
 
+// ErrorSSHProviderInitializer
+// provide ErrorSSHProvider 
+// this provider returns error for every
+// SSHProvider methods call
 type ErrorSSHProviderInitializer struct {
 	*SimpleSSHProviderInitializer
 }
 
-func NewErrorSSHProviderForKubeInitializer(err error) *ErrorSSHProviderInitializer {
+func NewErrorSSHProviderInitializer(err error) *ErrorSSHProviderInitializer {
 	return &ErrorSSHProviderInitializer{
 		SimpleSSHProviderInitializer: NewSimpleSSHProviderInitializer(
 			NewErrorSSHProvider(err),
 		),
 	}
+}
+
+// ProvideErrorSSHProviderInitializer
+// this provider returns error for every GetSSHProvider call
+// for fail fast in GetRunnerInterface func
+type ProvideErrorSSHProviderInitializer struct {
+	err error
+}
+
+func NewProvideErrorSSHProviderInitializer(err error) *ProvideErrorSSHProviderInitializer {
+	if err == nil {
+		err = errors.New("unknown error")
+	}
+
+	return &ProvideErrorSSHProviderInitializer{
+		err: err,
+	}
+}
+
+func (i *ProvideErrorSSHProviderInitializer) GetSSHProvider(_ context.Context) (connection.SSHProvider, error) {
+	return nil, fmt.Errorf("%w: %w", ErrCannotProvideSSHProvider, i.err)
+}
+
+func (i *ProvideErrorSSHProviderInitializer) Cleanup(_ context.Context) error {
+	return nil
 }
 
 type SimpleKubeProviderInitializer struct {

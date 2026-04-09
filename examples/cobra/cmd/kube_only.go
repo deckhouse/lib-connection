@@ -16,12 +16,13 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/spf13/cobra"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	
+
 	connection "github.com/deckhouse/lib-connection/pkg"
 	"github.com/deckhouse/lib-connection/pkg/kube"
 	"github.com/deckhouse/lib-connection/pkg/provider"
@@ -105,7 +106,7 @@ func runKube(params *runKubeParams) error {
 	}
 
 	// default initialization way
-	initializer := provider.NewErrorSSHProviderForKubeInitializer(fmt.Errorf("should not use over ssh"))
+	initializer := provider.NewErrorSSHProviderInitializer(fmt.Errorf("should not use over ssh"))
 	runner, err := provider.GetRunnerInterface(ctx, conf, sett, initializer)
 	kubeProvider := provider.NewDefaultKubeProvider(sett, conf, runner)
 
@@ -121,17 +122,52 @@ func runKube(params *runKubeParams) error {
 		logger.InfoF("kube provider cleaned up successfully")
 	}()
 
+	logger := sett.Logger()
+
 	// example that additional flags also parsed
 	if *params.printWarn {
-		sett.Logger().WarnF("WARNING: printing warnings flag set")
+		logger.WarnF("WARNING: printing warnings flag set")
 	}
 
 	if err != nil {
-		return fmt.Errorf("failed to setup kube client", err)
+		return fmt.Errorf("failed to setup kube client: %w", err)
 	}
 
 	if err := getNodes(ctx, sett, kubeProvider); err != nil {
 		return fmt.Errorf("failed to get nodes: %w", err)
+	}
+
+	useSSHKubeConfig := &kube.Config{}
+
+	// example that returns error with SSHErrorProvider
+	runnerSSH, err := provider.GetRunnerInterface(ctx, useSSHKubeConfig, sett, initializer)
+	if err != nil {
+		return fmt.Errorf("cannot provide runner with ssh")
+	}
+
+	kubeErrProvider := provider.NewDefaultKubeProvider(sett, useSSHKubeConfig, runnerSSH)
+	_, err = kubeErrProvider.Client(ctx)
+	if err != nil {
+		if errors.Is(err, provider.ErrSSHClientCannotProvided) {
+			logger.InfoF("Cannot provide kube client because %v", err)
+		} else {
+			logger.ErrorF("Cannot provide kube client with unknown %v", err)
+		}
+	} else {
+		logger.ErrorF("Kube client should not provided")
+	}
+
+	// example fail fast with ProvideErrorSSHProviderInitializer
+	failFastInitializer := provider.NewProvideErrorSSHProviderInitializer(fmt.Errorf("should not use over ssh"))
+	_, err = provider.GetRunnerInterface(ctx, useSSHKubeConfig, sett, failFastInitializer)
+	if err != nil {
+		if errors.Is(err, provider.ErrCannotProvideSSHProvider) {
+			logger.InfoF("Cannot provide kube runner provider because %v", err)
+		} else {
+			logger.ErrorF("Cannot provide kube runner with unknown %v", err)
+		}
+	} else {
+		logger.ErrorF("Kube runner should not provided")
 	}
 
 	return nil

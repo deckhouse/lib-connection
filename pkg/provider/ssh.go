@@ -16,6 +16,7 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	mathrand "math/rand"
 	"os"
@@ -700,6 +701,8 @@ type ErrorSSHProvider struct {
 	err error
 }
 
+var ErrSSHClientCannotProvided = errors.New("cannot provide ssh client")
+
 // NewErrorSSHProvider
 // Special provider that always return error for all operations
 // expected cleanup
@@ -707,7 +710,7 @@ type ErrorSSHProvider struct {
 // you do not use KubeClient over SSH
 func NewErrorSSHProvider(err error) *ErrorSSHProvider {
 	if err == nil {
-		err = fmt.Errorf("ErrorSSHProvider: error not provided")
+		err = fmt.Errorf("%w ErrorSSHProvider: error not provided", ErrSSHClientCannotProvided)
 	}
 	return &ErrorSSHProvider{err: err}
 }
@@ -737,5 +740,5 @@ func (p *ErrorSSHProvider) Cleanup(context.Context) error {
 }
 
 func (p *ErrorSSHProvider) returnError(op string) error {
-	return fmt.Errorf("cannot provide ssh client with %s: %w", op, p.err)
+	return fmt.Errorf("%w with %s: %w", ErrSSHClientCannotProvided, op, p.err)
 }

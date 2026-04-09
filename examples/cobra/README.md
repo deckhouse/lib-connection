@@ -13,15 +13,19 @@ go build -o bin/cobra main.go
 ```bash
 bin/cobra kube-only --tmp-dir=/tmp/my-cobra --kubeconfig=~/my.kind.kubeconfig --kubeconfig-context=kind-my --print-warning
 
-bin/cobra ssh --ssh-user=ubuntu --ssh-host=0.0.0.0
+bin/cobra ssh --tmp-dir=/tmp/my-cobra --ssh-user=ubuntu --ssh-host=0.0.0.0
 
-bin/cobra ssh --ssh-user=ubuntu --ssh-host=0.0.0.0 --use-standalone-kube --kubeconfig=~/my.kind.kubeconfig
+COBRA_SSH_MODERN_MODE=true bin/cobra ssh --tmp-dir=/tmp/my-cobra --ssh-user=ubuntu --ssh-host=0.0.0.0
 
-bin/cobra ssh --ssh-user=ubuntu --ssh-host=0.0.0.0 --ssh-agent-private-keys=~/.ssh/id_rsa --ssh-agent-private-keys=~/.ssh/another
+bin/cobra ssh --tmp-dir=/tmp/my-cobra --ssh-user=ubuntu --ssh-host=0.0.0.0 --use-agent-with-no-private-keys --force-no-private-keys
 
-bin/cobra ssh-additional --ssh-user=ubuntu --kubeconfig=~/my.kind.kubeconfig
+bin/cobra ssh --tmp-dir=/tmp/my-cobra --ssh-user=ubuntu --ssh-host=0.0.0.0 --use-standalone-kube --kubeconfig=~/my.kind.kubeconfig
 
-SSH_HOST_CONNECT=0.0.0.0 bin/cobra ssh-additional --ssh-user=ubuntu
+bin/cobra ssh --tmp-dir=/tmp/my-cobra --ssh-user=ubuntu --ssh-host=0.0.0.0 --ssh-agent-private-keys=~/.ssh/id_rsa --ssh-agent-private-keys=~/.ssh/another
 
-SSH_HOST_CONNECT=0.0.0.0 bin/cobra ssh-additional --ssh-user=ubuntu --kubeconfig=~/kind.kubeconfig
+bin/cobra ssh-additional --tmp-dir=/tmp/my-cobra --ssh-user=ubuntu --kubeconfig=~/my.kind.kubeconfig
+
+SSH_HOST_CONNECT=0.0.0.0 bin/cobra --tmp-dir=/tmp/my-cobra ssh-additional --ssh-user=ubuntu
+
+SSH_HOST_CONNECT=0.0.0.0 bin/cobra --tmp-dir=/tmp/my-cobra ssh-additional --ssh-user=ubuntu --kubeconfig=~/kind.kubeconfig
 ```
