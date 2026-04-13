@@ -106,9 +106,15 @@ func runSSHAdditional(params *runSSHParams) error {
 type providersConsumer interface {
 	provider.SSHProviderInitializerWithCleanup
 	provider.KubeProviderInitializerWithCleanup
+	SetSSHHost(h string)
 }
 
 func doSSHAdditional(ctx context.Context, sett settings.Settings, consumer providersConsumer) error {
+	hostFromEnv := os.Getenv("SSH_HOST_CONNECT")
+	if hostFromEnv != "" {
+		consumer.SetSSHHost(hostFromEnv)
+	}
+
 	kubeProvider, err := consumer.GetKubeProvider(ctx)
 	if err != nil {
 		return fmt.Errorf("Cannot initialize kube providder")
@@ -147,6 +153,8 @@ type additionalProvidersConsumer struct {
 
 	sshProvider  connection.SSHProvider
 	kubeProvider connection.KubeProvider
+
+	sshHost string
 }
 
 func newAdditionalProvidersConsumer(params *runSSHParams, kubeConfig *kube.Config) *additionalProvidersConsumer {
@@ -186,13 +194,12 @@ func (i *additionalProvidersConsumer) GetSSHProvider(_ context.Context) (connect
 	}
 
 	if len(sshConfig.Hosts) == 0 {
-		hostFromEnv := os.Getenv("SSH_HOST_CONNECT")
-		if hostFromEnv == "" {
+		if i.sshHost == "" {
 			return nil, errNotPassedSSHHost
 		}
 
 		sshConfig.Hosts = append(sshConfig.Hosts, sshconfig.Host{
-			Host: hostFromEnv,
+			Host: i.sshHost,
 		})
 	}
 
@@ -225,4 +232,8 @@ func (i *additionalProvidersConsumer) Cleanup(ctx context.Context) error {
 	i.kubeProvider = nil
 
 	return nil
+}
+
+func (i *additionalProvidersConsumer) SetSSHHost(h string) {
+	i.sshHost = h
 }

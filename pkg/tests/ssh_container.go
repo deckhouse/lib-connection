@@ -278,6 +278,16 @@ func (c *SSHContainer) ExecToContainer(description string, command ...string) er
 	return c.runDocker(description, args...)
 }
 
+func (c *SSHContainer) ExecToContainerWithOut(description string, command ...string) (string, error) {
+	if err := c.isContainerStarted(description); err != nil {
+		return "", err
+	}
+
+	args := append([]string{"exec", c.GetContainerId()}, command...)
+
+	return c.runDockerWithOut(description, args...)
+}
+
 func (c *SSHContainer) CreateDeckhouseDirs() error {
 	description := func(name string) string {
 		d := "node tmp dir"

@@ -263,6 +263,11 @@ func (s *Test) FullName() string {
 	return res
 }
 
+func (s *Test) FullNameForContainer() string {
+	f := s.FullName()
+	return strings.ReplaceAll(f, "/", "_")
+}
+
 func (s *Test) Name() string {
 	return s.testName
 }

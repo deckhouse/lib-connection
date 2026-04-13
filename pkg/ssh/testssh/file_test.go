@@ -25,179 +25,208 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	connection "github.com/deckhouse/lib-connection/pkg"
+	sshconfig "github.com/deckhouse/lib-connection/pkg/ssh/config"
 	"github.com/deckhouse/lib-connection/pkg/ssh/gossh"
 	"github.com/deckhouse/lib-connection/pkg/tests"
 )
 
 func TestFileUpload(t *testing.T) {
-	test := tests.ShouldNewIntegrationTest(t, "TestFileUpload")
-
-	const uploadDir = "upload_dir"
-	const testFileContent = "Hello World"
-	const notExec = false
-
-	filePath := func(subPath ...string) []string {
-		require.NotEmpty(t, subPath, "subPath is empty for filePath")
-		return append([]string{uploadDir}, subPath...)
+	type uploadTest struct {
+		unaccessibleDir string
+		dir             string
+		file            string
+		symlink         string
+		fileContent     string
 	}
 
-	testFile := test.MustCreateTmpFile(t, testFileContent, notExec, filePath("upload")...)
-	testDir := filepath.Dir(testFile)
-	test.MustCreateTmpFile(t, "second", notExec, filePath("second")...)
-	test.MustCreateTmpFile(t, "empty", notExec, filePath("second")...)
-	test.MustCreateTmpFile(t, "sub", notExec, filePath("sub", "third")...)
+	createTest := func(t *testing.T) (*tests.Test, uploadTest) {
+		test := tests.ShouldNewIntegrationTest(t, "TestFileUpload")
 
-	symlink := filepath.Join(test.TmpDir(), "symlink")
-	err := os.Symlink(testFile, symlink)
-	require.NoError(t, err)
+		const uploadDir = "upload_dir"
+		const testFileContent = "Hello World"
+		const notExec = false
 
-	const unaccessibleDirectoryName = "unaccessible"
-	test.MustCreateUnaccessibleDir(t, unaccessibleDirectoryName)
-	unaccessibleDirectoryPath := filepath.Join(test.TmpDir(), unaccessibleDirectoryName)
-
-	goSSHClient, cliSSHClient, goSSHClient2, err := startTwoContainersWithClients(t, test, false)
-	require.NoError(t, err)
-
-	prepareScp(t)
-
-	t.Run("Upload files and directories to container via existing ssh client", func(t *testing.T) {
-		cases := []struct {
-			title   string
-			srcPath string
-			dstPath string
-			wantErr bool
-			err     string
-		}{
-			{
-				title:   "Single file",
-				srcPath: testFile,
-				dstPath: ".",
-				wantErr: false,
-			},
-			{
-				title:   "Directory",
-				srcPath: testDir,
-				dstPath: "/tmp",
-				wantErr: false,
-			},
-			{
-				title:   "Nonexistent",
-				srcPath: "/path/to/nonexistent/flie",
-				dstPath: "/tmp",
-				wantErr: true,
-			},
-			{
-				title:   "File to root",
-				srcPath: testFile,
-				dstPath: "/any",
-				wantErr: true,
-			},
-			{
-				title:   "File to /var/lib",
-				srcPath: testFile,
-				dstPath: "/var/lib",
-				wantErr: true,
-			},
-			{
-				title:   "File to unaccessible file",
-				srcPath: testFile,
-				dstPath: "/path/what/not/exists.txt",
-				wantErr: true,
-			},
-			{
-				title:   "Directory to root",
-				srcPath: testDir,
-				dstPath: "/",
-				wantErr: true,
-			},
-			{
-				title:   "Symlink",
-				srcPath: symlink,
-				dstPath: ".",
-				wantErr: false,
-			},
-			{
-				title:   "Device",
-				srcPath: "/dev/zero",
-				dstPath: "/",
-				wantErr: true,
-				err:     "is not a directory or file",
-			},
-			{
-				title:   "Unaccessible dir",
-				srcPath: unaccessibleDirectoryPath,
-				dstPath: ".",
-				wantErr: true,
-			},
-			{
-				title:   "Unaccessible file",
-				srcPath: "/etc/sudoers",
-				dstPath: ".",
-				wantErr: true,
-			},
+		filePath := func(subPath ...string) []string {
+			require.NotEmpty(t, subPath, "subPath is empty for filePath")
+			return append([]string{uploadDir}, subPath...)
 		}
 
-		for _, c := range cases {
-			t.Run(c.title, func(t *testing.T) {
-				f := goSSHClient.File()
-				f2 := cliSSHClient.File()
-				err = f.Upload(context.Background(), c.srcPath, c.dstPath)
-				err2 := f2.Upload(context.Background(), c.srcPath, c.dstPath)
-				if !c.wantErr {
+		testFile := test.MustCreateTmpFile(t, testFileContent, notExec, filePath("upload")...)
+		testDir := filepath.Dir(testFile)
+		test.MustCreateTmpFile(t, "second", notExec, filePath("second")...)
+		test.MustCreateTmpFile(t, "empty", notExec, filePath("second")...)
+		test.MustCreateTmpFile(t, "sub", notExec, filePath("sub", "third")...)
+
+		symlink := filepath.Join(test.TmpDir(), "symlink")
+		err := os.Symlink(testFile, symlink)
+		require.NoError(t, err)
+
+		const unaccessibleDirectoryName = "unaccessible"
+		test.MustCreateUnaccessibleDir(t, unaccessibleDirectoryName)
+		unaccessibleDirectoryPath := filepath.Join(test.TmpDir(), unaccessibleDirectoryName)
+
+		return test, uploadTest{
+			unaccessibleDir: unaccessibleDirectoryPath,
+			dir:             testDir,
+			file:            testFile,
+			symlink:         symlink,
+			fileContent:     testFileContent,
+		}
+	}
+
+	providers := []sshTestClientProvider{
+		onlyTargetSSHClientProvider,
+		viaBastionSSHClientProvider,
+	}
+
+	runTests := []runTest{
+		{
+			name: "Go",
+			mode: sshconfig.Mode{
+				ForceModern: true,
+			},
+		},
+
+		{
+			name: "Cli",
+			mode: sshconfig.Mode{
+				ForceLegacy: true,
+			},
+		},
+	}
+
+	runUpload := func(t *testing.T, sshClient connection.SSHClient, ut uploadTest) {
+		t.Run("Upload files and directories to container via existing ssh client", func(t *testing.T) {
+			cases := []struct {
+				title   string
+				srcPath string
+				dstPath string
+				wantErr bool
+				err     string
+			}{
+				{
+					title:   "Single file",
+					srcPath: ut.file,
+					dstPath: ".",
+					wantErr: false,
+				},
+				{
+					title:   "Directory",
+					srcPath: ut.dir,
+					dstPath: "/tmp",
+					wantErr: false,
+				},
+				{
+					title:   "Nonexistent",
+					srcPath: "/path/to/nonexistent/flie",
+					dstPath: "/tmp",
+					wantErr: true,
+				},
+				{
+					title:   "File to root",
+					srcPath: ut.file,
+					dstPath: "/any",
+					wantErr: true,
+				},
+				{
+					title:   "File to /var/lib",
+					srcPath: ut.file,
+					dstPath: "/var/lib",
+					wantErr: true,
+				},
+				{
+					title:   "File to unaccessible file",
+					srcPath: ut.file,
+					dstPath: "/path/what/not/exists.txt",
+					wantErr: true,
+				},
+				{
+					title:   "Directory to root",
+					srcPath: ut.dir,
+					dstPath: "/",
+					wantErr: true,
+				},
+				{
+					title:   "Symlink",
+					srcPath: ut.symlink,
+					dstPath: ".",
+					wantErr: false,
+				},
+				{
+					title:   "Device",
+					srcPath: "/dev/zero",
+					dstPath: "/",
+					wantErr: true,
+					err:     "is not a directory or file",
+				},
+				{
+					title:   "Unaccessible dir",
+					srcPath: ut.unaccessibleDir,
+					dstPath: ".",
+					wantErr: true,
+				},
+				{
+					title:   "Unaccessible file",
+					srcPath: "/etc/sudoers",
+					dstPath: ".",
+					wantErr: true,
+				},
+			}
+
+			for _, c := range cases {
+				t.Run(c.title, func(t *testing.T) {
+					f := sshClient.File()
+					err := f.Upload(context.Background(), c.srcPath, c.dstPath)
+					if c.wantErr {
+						require.Error(t, err)
+						require.Contains(t, err.Error(), c.err)
+						return
+					}
+
 					require.NoError(t, err)
-					require.NoError(t, err2)
-				} else {
-					require.Error(t, err)
-					require.Contains(t, err.Error(), c.err)
-					require.Error(t, err2)
-					require.Contains(t, err2.Error(), c.err)
-				}
-			})
-		}
-	})
+				})
+			}
+		})
+	}
 
-	t.Run("Equality of uploaded and local file content", func(t *testing.T) {
-		f := goSSHClient.File()
-		err := f.Upload(context.Background(), testFile, "/tmp/testfile.txt")
-		// testFile contains "Hello world" string
-		require.NoError(t, err)
+	runContentEquality := func(t *testing.T, sshClient connection.SSHClient, container *tests.TestContainerWrapper, ut uploadTest) {
+		t.Run("Equality of uploaded and local file content", func(t *testing.T) {
+			f := sshClient.File()
+			err := f.Upload(context.Background(), ut.file, "/tmp/testfile.txt")
+			require.NoError(t, err, "should upload file")
 
-		assertFilesViaRemoteRun(t, goSSHClient.(*gossh.Client), "cat /tmp/testfile.txt", testFileContent)
+			assertFilesOut(t, sshClient, container, ut.fileContent, "cat", "/tmp/testfile.txt")
+		})
+	}
 
-		// clissh check
-		f = cliSSHClient.File()
-		err = f.Upload(context.Background(), testFile, "/tmp/testfile.txt")
-		require.NoError(t, err)
+	runDirEquality := func(t *testing.T, sshClient connection.SSHClient, container *tests.TestContainerWrapper, ut uploadTest) {
+		t.Run("Equality of uploaded and local directory", func(t *testing.T) {
+			f := sshClient.File()
+			err := f.Upload(context.Background(), ut.dir, "/tmp/upload")
+			require.NoError(t, err, "should upload dir")
 
-		err = goSSHClient2.Start()
-		require.NoError(t, err)
-		registerStopClient(t, goSSHClient2)
+			cmd := exec.Command("ls", ut.dir)
+			lsResult, err := cmd.Output()
+			require.NoError(t, err, "should exec local ls")
 
-		assertFilesViaRemoteRun(t, goSSHClient2.(*gossh.Client), "cat /tmp/testfile.txt", testFileContent)
-	})
+			assertFilesOut(t, sshClient, container, string(lsResult), "ls", "/tmp/upload")
+		})
+	}
 
-	t.Run("Equality of uploaded and local directory", func(t *testing.T) {
-		f := goSSHClient.File()
-		err := f.Upload(context.Background(), testDir, "/tmp/upload")
-		require.NoError(t, err)
-
-		cmd := exec.Command("ls", testDir)
-		lsResult, err := cmd.Output()
-		require.NoError(t, err)
-
-		assertFilesViaRemoteRun(t, goSSHClient.(*gossh.Client), "ls /tmp/upload", string(lsResult))
-
-		// clissh
-		f = cliSSHClient.File()
-		err = f.Upload(context.Background(), testDir, "/tmp/upload")
-		require.NoError(t, err)
-
-		err = goSSHClient2.Start()
-		require.NoError(t, err)
-		registerStopClient(t, goSSHClient2)
-
-		assertFilesViaRemoteRun(t, goSSHClient2.(*gossh.Client), "ls /tmp/upload", string(lsResult))
-	})
+	for _, rt := range runTests {
+		t.Run(rt.name, func(t *testing.T) {
+			for _, p := range providers {
+				t.Run(p.name, func(t *testing.T) {
+					test, ut := createTest(t)
+					client, container := p.provider(t, test, rt)
+					runUpload(t, client, ut)
+					runContentEquality(t, client, container, ut)
+					runDirEquality(t, client, container, ut)
+				})
+			}
+		})
+	}
 }
 
 func TestFileUploadBytes(t *testing.T) {
