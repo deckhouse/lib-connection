@@ -138,6 +138,18 @@ func (s *Session) ChoiceNewHost() {
 	s.selectNewHost()
 }
 
+func CurrentHost(s *Session) Host {
+	currentHost := s.Host()
+	availableHosts := s.AvailableHosts()
+	for _, h := range availableHosts {
+		if h.Host == currentHost {
+			return h
+		}
+	}
+
+	return Host{}
+}
+
 func (s *Session) AddAvailableHosts(hosts ...Host) {
 	defer s.lock.Unlock()
 	s.lock.Lock()
