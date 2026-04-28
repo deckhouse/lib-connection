@@ -36,12 +36,7 @@ func isShouldNotInit(kubeClient connection.KubeClient) bool {
 		return true
 	}
 
-	impl, ok := kubeClient.(*KubernetesClient)
-	if !ok {
-		return false
-	}
-
-	client, ok := impl.KubeClient.(*kubeClientWithExec)
+	client, ok := kubeClient.(*kubeClientWithExec)
 	if !ok {
 		return false
 	}

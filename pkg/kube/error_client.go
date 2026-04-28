@@ -59,7 +59,7 @@ func NewErrorKubernetesClient(errToReturn error) (*ErrorKubernetesClient, error)
 		Interface:          k,
 		dynamic:            d,
 		err:                errToReturn,
-		PodCommandExecutor: newErrorPodCommandExecutor(err),
+		PodCommandExecutor: NewErrorPodCommandExecutor(err),
 	}, nil
 }
 

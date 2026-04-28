@@ -73,7 +73,7 @@ func NewFakeKubernetesClient() *KubernetesClient {
 	return &KubernetesClient{
 		KubeClient: newFakeKubeClientWithExec(
 			nil,
-			newErrorPodCommandExecutor(errFakePodExecutorNotPass),
+			NewErrorPodCommandExecutor(errFakePodExecutorNotPass),
 		),
 	}
 }
@@ -82,7 +82,16 @@ func NewFakeKubernetesClientWithListGVR(gvr map[schema.GroupVersionResource]stri
 	return &KubernetesClient{
 		KubeClient: newFakeKubeClientWithExec(
 			gvr,
-			newErrorPodCommandExecutor(errFakePodExecutorNotPass),
+			NewErrorPodCommandExecutor(errFakePodExecutorNotPass),
+		),
+	}
+}
+
+func NewFakeKubernetesClientWithGVRAndExec(gvr map[schema.GroupVersionResource]string, podExecutor PodCommandExecutor) *KubernetesClient {
+	return &KubernetesClient{
+		KubeClient: newFakeKubeClientWithExec(
+			gvr,
+			podExecutor,
 		),
 	}
 }
@@ -320,7 +329,7 @@ type kubeClientWithExec struct {
 
 func newKubeClientWithExec(cl *klient.Client, podExecutor PodCommandExecutor) *kubeClientWithExec {
 	if govalue.Nil(podExecutor) {
-		podExecutor = newErrorPodCommandExecutor(
+		podExecutor = NewErrorPodCommandExecutor(
 			fmt.Errorf("internal error - pod executor is nil"),
 		)
 	}

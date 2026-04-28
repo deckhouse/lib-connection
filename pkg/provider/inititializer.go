@@ -23,6 +23,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	connection "github.com/deckhouse/lib-connection/pkg"
+	"github.com/deckhouse/lib-connection/pkg/kube"
 )
 
 var (
@@ -157,6 +158,14 @@ func NewFakeKubeProviderInitializer(gvrs ...map[schema.GroupVersionResource]stri
 	return &FakeKubeProviderInitializer{
 		SimpleKubeProviderInitializer: NewSimpleKubeProviderInitializer(
 			NewFakeKubeProvider(gvrs...),
+		),
+	}
+}
+
+func NewFakeKubeProviderInitializerWithPodExec(podExecutor kube.PodCommandExecutor, gvrs ...map[schema.GroupVersionResource]string) *FakeKubeProviderInitializer {
+	return &FakeKubeProviderInitializer{
+		SimpleKubeProviderInitializer: NewSimpleKubeProviderInitializer(
+			NewFakeKubeProviderWithExec(podExecutor, gvrs...),
 		),
 	}
 }

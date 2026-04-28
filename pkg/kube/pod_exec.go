@@ -82,21 +82,21 @@ func (e *regularPodExecutor) Exec(ctx context.Context, params *connection.PodExe
 	return nil
 }
 
-type errorPodCommandExecutor struct {
+type ErrorPodCommandExecutor struct {
 	err error
 }
 
-func newErrorPodCommandExecutor(err error) *errorPodCommandExecutor {
+func NewErrorPodCommandExecutor(err error) *ErrorPodCommandExecutor {
 	if err == nil {
 		err = fmt.Errorf("errorPodCommandExecutor: error did not pass")
 	}
 
-	return &errorPodCommandExecutor{
+	return &ErrorPodCommandExecutor{
 		err: err,
 	}
 }
 
-func (e *errorPodCommandExecutor) Exec(ctx context.Context, params *connection.PodExecParams) error {
+func (e *ErrorPodCommandExecutor) Exec(ctx context.Context, params *connection.PodExecParams) error {
 	return fmt.Errorf("Cannot exec in %s: %w", podExecParamsString(params), e.err)
 }
 
