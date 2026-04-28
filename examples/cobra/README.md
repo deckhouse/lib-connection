@@ -6,6 +6,7 @@ This example shows that you can use library with cobra package.
 
 ```bash
 mkdir -p bin
+rm -f bin/cobra
 go build -o bin/cobra main.go
 ```
 
