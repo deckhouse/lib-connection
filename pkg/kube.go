@@ -76,7 +76,7 @@ type PodExecParams struct {
 
 	// Stdin
 	// can be nil
-	Stdin  io.Reader
+	Stdin io.Reader
 	// Stdout
 	// can be nil
 	Stdout io.Writer
