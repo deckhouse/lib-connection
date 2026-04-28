@@ -35,7 +35,6 @@ import (
 	connection "github.com/deckhouse/lib-connection/pkg"
 	"github.com/deckhouse/lib-connection/pkg/settings"
 	"github.com/deckhouse/lib-connection/pkg/ssh"
-	"github.com/deckhouse/lib-connection/pkg/ssh/gossh"
 	"github.com/deckhouse/lib-connection/pkg/ssh/local"
 )
 
@@ -71,11 +70,21 @@ func NewKubernetesClient(sett settings.Settings) *KubernetesClient {
 }
 
 func NewFakeKubernetesClient() *KubernetesClient {
-	return &KubernetesClient{KubeClient: klient.NewFake(nil)}
+	return &KubernetesClient{
+		KubeClient: newFakeKubeClientWithExec(
+			nil,
+			newErrorPodCommandExecutor(errFakePodExecutorNotPass),
+		),
+	}
 }
 
 func NewFakeKubernetesClientWithListGVR(gvr map[schema.GroupVersionResource]string) *KubernetesClient {
-	return &KubernetesClient{KubeClient: klient.NewFake(gvr)}
+	return &KubernetesClient{
+		KubeClient: newFakeKubeClientWithExec(
+			gvr,
+			newErrorPodCommandExecutor(errFakePodExecutorNotPass),
+		),
+	}
 }
 
 func (k *KubernetesClient) WithNodeInterface(client connection.Interface) *KubernetesClient {
@@ -145,7 +154,7 @@ func (k *KubernetesClient) initContext(ctx context.Context, params *Config, opts
 		opt(options)
 	}
 
-	if isFake(k.KubeClient) {
+	if isShouldNotInit(k.KubeClient) {
 		return nil
 	}
 
@@ -190,7 +199,7 @@ func (k *KubernetesClient) initContext(ctx context.Context, params *Config, opts
 		return fmt.Errorf("initialize kube client: %s", err)
 	}
 
-	k.KubeClient = kubeClient
+	k.KubeClient = newKubeClientWithExec(kubeClient, newRegularPodExecutor(kubeClient))
 	return nil
 }
 
@@ -304,28 +313,31 @@ func IsLive(ctx context.Context, client connection.KubeClient, loopParams ...ret
 	})
 }
 
-func stopProxyAndSSH(kubeClient *KubernetesClient, full bool) {
-	if !govalue.Nil(kubeClient.KubeProxy) {
-		kubeClient.KubeProxy.Stop(-1)
-		kubeClient.KubeProxy = nil
-	}
+type kubeClientWithExec struct {
+	*klient.Client
+	PodCommandExecutor
+}
 
-	if !full {
-		return
+func newKubeClientWithExec(cl *klient.Client, podExecutor PodCommandExecutor) *kubeClientWithExec {
+	if govalue.Nil(podExecutor) {
+		podExecutor = newErrorPodCommandExecutor(
+			fmt.Errorf("internal error - pod executor is nil"),
+		)
 	}
+	return &kubeClientWithExec{
+		Client:             cl,
+		PodCommandExecutor: podExecutor,
+	}
+}
 
-	wrapper, ok := kubeClient.NodeInterface.(*ssh.NodeInterfaceWrapper)
-	if !ok {
-		return
-	}
-
-	sshClient := wrapper.Client()
-	if _, ok := sshClient.(*gossh.Client); ok {
-		sshClient.Stop()
-	}
+func newFakeKubeClientWithExec(gvr map[schema.GroupVersionResource]string, podExecutor PodCommandExecutor) *kubeClientWithExec {
+	cl := klient.NewFake(gvr)
+	return newKubeClientWithExec(cl, podExecutor)
 }
 
 var defaultLiveLoopParamsOpts = []retry.ParamsBuilderOpt{
 	retry.WithWait(2 * time.Second),
 	retry.WithAttempts(2),
 }
+
+var errFakePodExecutorNotPass = fmt.Errorf("Pod executor for fake client did not pass")

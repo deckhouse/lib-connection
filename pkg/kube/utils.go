@@ -15,19 +15,33 @@
 package kube
 
 import (
-	klient "github.com/flant/kube-client/client"
+	"fmt"
+	"strings"
+
 	"github.com/name212/govalue"
 	"k8s.io/client-go/kubernetes/fake"
 
 	connection "github.com/deckhouse/lib-connection/pkg"
+	"github.com/deckhouse/lib-connection/pkg/ssh"
+	"github.com/deckhouse/lib-connection/pkg/ssh/gossh"
 )
 
-func isFake(kubeClient connection.KubeClient) bool {
+func isShouldNotInit(kubeClient connection.KubeClient) bool {
 	if govalue.Nil(kubeClient) {
 		return false
 	}
 
-	client, ok := kubeClient.(*klient.Client)
+	_, ok := kubeClient.(*ErrorKubernetesClient)
+	if ok {
+		return true
+	}
+
+	impl, ok := kubeClient.(*KubernetesClient)
+	if !ok {
+		return false
+	}
+
+	client, ok := impl.KubeClient.(*kubeClientWithExec)
 	if !ok {
 		return false
 	}
@@ -38,4 +52,48 @@ func isFake(kubeClient connection.KubeClient) bool {
 
 	_, fk := client.Interface.(*fake.Clientset)
 	return fk
+}
+
+func stopProxyAndSSH(kubeClient *KubernetesClient, full bool) {
+	if !govalue.Nil(kubeClient.KubeProxy) {
+		kubeClient.KubeProxy.Stop(-1)
+		kubeClient.KubeProxy = nil
+	}
+
+	if !full {
+		return
+	}
+
+	wrapper, ok := kubeClient.NodeInterface.(*ssh.NodeInterfaceWrapper)
+	if !ok {
+		return
+	}
+
+	sshClient := wrapper.Client()
+	if _, ok := sshClient.(*gossh.Client); ok {
+		sshClient.Stop()
+	}
+}
+
+func podExecParamsString(params *connection.PodExecParams) string {
+	const unknown = "<not pass>"
+	name := unknown
+	namespace := unknown
+	container := unknown
+	cmd := unknown
+
+	if !govalue.Nil(params) {
+		name = params.Name
+		namespace = params.Namespace
+		container = params.Container
+		cmd = strings.Join(params.Command, " ")
+	}
+
+	return fmt.Sprintf(
+		"container '%s' pod %s/%s cmd '%s'",
+		container,
+		namespace,
+		name,
+		cmd,
+	)
 }
