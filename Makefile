@@ -14,6 +14,9 @@
 
 SHELL = /usr/bin/env bash
 
+RED      := \033[0;31m
+NO_COLOR := \033[0m
+
 GOLANGCI_VERSION = 2.7.2
 GOFUMPT_VERSION=0.9.2
 JQ_VERSION=1.8.1
@@ -99,11 +102,11 @@ deps: bin bin/jq bin/golangci-lint bin/gofumpt bin/kind
 
 go-deps/update: go-installed
 	@if [ -z "$(DEP)" ] ; then \
-	  echo "Please pass dependency name over DEP like make go-deps/update DEP=github.com/some/lib VER=v1.1.1"; \
+	  echo -e "${RED}Please pass dependency name over DEP like make go-deps/update DEP=github.com/some/lib VER=v1.1.1${NO_COLOR}"; \
 	  exit 1; \
 	fi; \
 	if [ -z "$(VER)" ] ; then \
-	  echo "Please pass dependency version over VER like make go-deps/update DEP=github.com/some/lib VER=v1.1.1"; \
+	  echo -e "${RED}Please pass dependency version over VER like make go-deps/update DEP=github.com/some/lib VER=v1.1.1${NO_COLOR}"; \
 	  exit 1; \
 	fi; \
 	for ii in $$(find $(CURDIR) -type f -name "go.mod" -printf "%h\n" | sort -u); do \
@@ -118,7 +121,10 @@ go-deps/tidy: go-installed
 	done
 
 go-deps/ci/check/no-tidy: go-installed go-deps/tidy
-	@git diff --exit-code
+	@if ! git diff --exit-code; then \
+		echo -e "${RED}go mod tidy produce diff. Please run 'make go-deps/tidy' and commit${NO_COLOR}"; \
+		exit 1; \
+	fi
 
 test: go-installed docker-installed bin/kind
 	./hack/run_tests.sh
