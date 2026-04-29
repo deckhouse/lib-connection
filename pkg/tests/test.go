@@ -35,6 +35,7 @@ const (
 )
 
 type testOpts struct {
+	noLogDebug    bool
 	isDebug       bool
 	parallelRun   bool
 	logBuffer     *bytes.Buffer
@@ -47,6 +48,12 @@ type TestOpt func(opts *testOpts)
 func TestWithDebug(isDebug bool) TestOpt {
 	return func(opts *testOpts) {
 		opts.isDebug = isDebug
+	}
+}
+
+func TestNoLogDebug(noLogDebug bool) TestOpt {
+	return func(opts *testOpts) {
+		opts.noLogDebug = noLogDebug
 	}
 }
 

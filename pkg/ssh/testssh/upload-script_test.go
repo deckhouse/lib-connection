@@ -141,6 +141,7 @@ func TestUploadScriptExecuteBundle(t *testing.T) {
 		"TestUploadScriptExecuteBundle",
 		tests.TestWithLoggerBuffer(loggerBuf),
 		tests.TestWithPrettyLogger(true),
+		tests.TestNoLogDebug(true),
 	)
 
 	goSSHClient, cliSSHClient, _, err := startTwoContainersWithClients(t, test, true)
@@ -182,6 +183,14 @@ func TestUploadScriptExecuteBundle(t *testing.T) {
 				bundleDir:       "bashible",
 				wantErr:         true,
 				loggerOutAssert: tests.AssertLogBufferWithErrorBundle,
+			},
+			{
+				title:           "Bundle with info out",
+				scriptArgs:      []string{"--info-out"},
+				parentDir:       testDir,
+				bundleDir:       "bashible",
+				wantErr:         false,
+				loggerOutAssert: tests.AssertLogBufferBundleWithInfo,
 			},
 			{
 				title:      "Wrong bundle directory",

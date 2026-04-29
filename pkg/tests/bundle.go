@@ -41,10 +41,12 @@ BOOTSTRAP_DIR=/var/lib/bashible
 MAX_RETRIES=3
 
 for arg in "$@"; do
-  if [[ "$arg" == "--add-failure" ]]
-    then
+  if [[ "$arg" == "--add-failure" ]]; then
       echo "failures included"
       export INCLUDE_FAILURE=true
+  fi
+  if [[ "$arg" == "--info-out" ]]; then
+      export INFO_OUT=true
   fi
 done
 
@@ -87,6 +89,10 @@ done
 			content: `#!/bin/bash
 echo "just a step"
 
+if [[ $INFO_OUT == "true"  && $INCLUDE_FAILURE != "true" ]]; then
+  echo "=== Step output: Capture info"
+fi
+
 for i in {0..3}
 do
   sleep 2
@@ -123,6 +129,11 @@ done
 }
 
 var logTimeRegexp = regexp.MustCompile(` \(\d+\.\d+ seconds\)`)
+var asciiControlRe = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
+
+func cleanASCII(out string) string {
+	return asciiControlRe.ReplaceAllString(out, "")
+}
 
 func AssertLogBufferNoErrorBundle(t *testing.T, buf *bytes.Buffer) {
 	expected := `┌ Run step 01-step.sh
@@ -133,16 +144,32 @@ func AssertLogBufferNoErrorBundle(t *testing.T, buf *bytes.Buffer) {
 
 	_ = bufio.NewWriter(buf).Flush()
 
-	out := strings.TrimSpace(buf.String())
+	out := cleanASCII(strings.TrimSpace(buf.String()))
 	out = logTimeRegexp.ReplaceAllString(out, "")
 
-	require.Equal(t, out, strings.TrimSpace(expected), "log buffer should contain")
+	require.Equal(t, strings.TrimSpace(expected), out, "log buffer should contain")
+}
+
+func AssertLogBufferBundleWithInfo(t *testing.T, buf *bytes.Buffer) {
+	expected := `┌ Run step 01-step.sh
+│ Capture info
+└ Run step 01-step.sh
+
+┌ Run step 02-step.sh
+└ Run step 02-step.sh`
+
+	_ = bufio.NewWriter(buf).Flush()
+
+	out := cleanASCII(strings.TrimSpace(buf.String()))
+	out = logTimeRegexp.ReplaceAllString(out, "")
+
+	require.Equal(t, strings.TrimSpace(expected), out, "log buffer should contain")
 }
 
 func AssertLogBufferWithErrorBundle(t *testing.T, buf *bytes.Buffer) {
 	_ = bufio.NewWriter(buf).Flush()
 
-	out := strings.TrimSpace(buf.String())
+	out := cleanASCII(strings.TrimSpace(buf.String()))
 	out = logTimeRegexp.ReplaceAllString(out, "")
 
 	expectedHead := `┌ Run step 01-step.sh

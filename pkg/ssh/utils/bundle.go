@@ -55,6 +55,12 @@ func BundleWithNoLogStepOutOnError(v bool) BundleOpt {
 	}
 }
 
+func BundleWithShouldInfoOutChecker(c connection.BundlerShouldInfoOutChecker) BundleOpt {
+	return func(b *Bundle) {
+		b.shouldInfoOutCheck = c
+	}
+}
+
 func BundleWithStepsDelimiter(d string) BundleOpt {
 	return func(b *Bundle) {
 		b.stepsDelimiter = d
@@ -99,7 +105,8 @@ type Bundle struct {
 	scriptPath string
 	args       []string
 
-	stepHeaderRegex     *regexp.Regexp
+	stepHeaderRegex    *regexp.Regexp
+	shouldInfoOutCheck connection.BundlerShouldInfoOutChecker
 	noLogStepOutOnError bool
 	stepsDelimiter      string
 	retries             int
@@ -126,6 +133,10 @@ func NewBundle(sett settings.Settings, client connection.SSHClient, scriptPath s
 
 	if govalue.Nil(b.stepHeaderRegex) {
 		return nil, fmt.Errorf("no step header regex")
+	}
+
+	if govalue.Nil(b.shouldInfoOutCheck) {
+		b.shouldInfoOutCheck = shouldNotInfoOutChecker
 	}
 
 	return b, nil
@@ -250,8 +261,15 @@ func (h *outputHandler) handle(l string) {
 	}
 
 	if !h.bundler.stepHeaderRegex.MatchString(l) {
-		h.stepLogs = append(h.stepLogs, l)
-		h.logger.DebugLn(l)
+		outString := l
+		doLog := h.logger.DebugF
+		if infoOut := h.bundler.shouldInfoOutCheck(l); infoOut != "" {
+			outString = infoOut
+			doLog = h.logger.InfoF
+		}
+
+		h.stepLogs = append(h.stepLogs, outString)
+		doLog("%s", outString)
 		return
 	}
 
@@ -289,13 +307,32 @@ func (h *outputHandler) handle(l string) {
 	h.lastStep = match[1]
 }
 
-var bashibleStepsHeaderRegexp = regexp.MustCompile("^=== Step: /var/lib/bashible/bundle_steps/(.*)$")
+var (
+	bashibleStepsHeaderRegexp      = regexp.MustCompile("^=== Step: /var/lib/bashible/bundle_steps/(.*)$")
+	bashibleStepOutputHeaderRegexp = regexp.MustCompile("^=== Step output: (.*)$")
+)
+
+func shouldNotInfoOutChecker(l string) string {
+	return ""
+}
+
+func bashibleShouldInfoOutChecker(l string) string {
+	if bashibleStepOutputHeaderRegexp.MatchString(l) {
+		match := bashibleStepOutputHeaderRegexp.FindStringSubmatch(l)
+		if len(match) >= 2 {
+			return match[1]
+		}
+	}
+
+	return ""
+}
 
 func bashibleBundleOpts() []connection.BundlerOption {
 	return []connection.BundlerOption{
 		connection.BundlerWithStepHeaderRegex(bashibleStepsHeaderRegexp),
 		connection.BundlerWithStepDelimiter("==="),
 		connection.BundlerWithRetries(10),
+		connection.BundlerWithShouldInfoOutChecker(bashibleShouldInfoOutChecker),
 	}
 }
 
@@ -318,5 +355,6 @@ func convertBundleOption(opts ...connection.BundlerOption) ([]BundleOpt, error) 
 		BundleWithStepHeader(options.StepHeaderRegex),
 		BundleWithStepsDelimiter(options.StepsDelimiter),
 		BundleWithNoLogStepOutOnError(options.NoLogStepOutOnError),
+		BundleWithShouldInfoOutChecker(options.ShouldInfoOutChecker),
 	}, nil
 }
