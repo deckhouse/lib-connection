@@ -116,6 +116,9 @@ go-deps/update: go-installed
 go-deps/tidy: go-installed
 	go mod tidy && cd ./tests && go mod tidy && cd ../examples/cobra && go mod tidy
 
+go-deps/ci/check/no-tidy: go-installed go-deps/tidy
+	git diff --exit-code
+
 test: go-installed docker-installed bin/kind
 	./hack/run_tests.sh
 	$(MAKE) clean/test

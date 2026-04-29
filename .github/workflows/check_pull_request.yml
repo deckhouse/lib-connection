@@ -43,6 +43,9 @@ jobs:
         name: Get PR labels
         id: pr-labels
         uses: joerick/pr-labels-action@v1.0.9
+      
+      - name: Check make go-deps/tidy ran before commit
+        run: make go-deps/ci/check/no-tidy
 
       - name: Run tests
         run: |
