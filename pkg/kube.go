@@ -16,6 +16,7 @@ package pkg
 
 import (
 	"context"
+	"io"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -30,6 +31,7 @@ type KubeClient interface {
 	APIResource(apiVersion, kind string) (*metav1.APIResource, error)
 	GroupVersionResource(apiVersion, kind string) (schema.GroupVersionResource, error)
 	InvalidateDiscoveryCache()
+	Exec(ctx context.Context, params *PodExecParams) error
 }
 
 type KubeProvider interface {
@@ -64,4 +66,21 @@ type KubeProvider interface {
 	// also current client also stop, but not fully
 	// because if we use over ssh current client can used in another routines
 	Cleanup(ctx context.Context) error
+}
+
+type PodExecParams struct {
+	Namespace string
+	Name      string
+	Container string
+	Command   []string
+
+	// Stdin
+	// can be nil
+	Stdin io.Reader
+	// Stdout
+	// can be nil
+	Stdout io.Writer
+	// Stderr
+	// can be nil
+	Stderr io.Writer
 }

@@ -16,14 +16,32 @@ package kube
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
 
-func TestFakeClient(t *testing.T) {
+func TestFakeClientSkipInit(t *testing.T) {
 	t.Run("InitContext does not panics and no rewrite client", func(t *testing.T) {
 		client := NewFakeKubernetesClient()
+		innerClient := client.KubeClient
+
+		doInit := func() {
+			err := client.InitContext(context.TODO(), &Config{})
+			require.NoError(t, err, "init context should not fail")
+		}
+		require.NotPanics(t, doInit, "init context should not panic")
+		require.True(t, client.KubeClient == innerClient, "should not rewrite client")
+	})
+}
+
+func TestErrorClientSkipInit(t *testing.T) {
+	t.Run("InitContext does not panics and no rewrite client", func(t *testing.T) {
+		client := NewFakeKubernetesClient()
+		errClient, err := NewErrorKubernetesClient(fmt.Errorf("err!"))
+		require.NoError(t, err, "err client should created")
+		client.KubeClient = errClient
 		innerClient := client.KubeClient
 
 		doInit := func() {

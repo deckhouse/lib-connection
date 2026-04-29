@@ -248,6 +248,14 @@ type FakeKubeProvider struct {
 }
 
 func NewFakeKubeProvider(gvrs ...map[schema.GroupVersionResource]string) *FakeKubeProvider {
+	podExecutor := kube.NewErrorPodCommandExecutor(
+		fmt.Errorf("executor not passed in fake provider"),
+	)
+
+	return NewFakeKubeProviderWithExec(podExecutor, gvrs...)
+}
+
+func NewFakeKubeProviderWithExec(podExecutor kube.PodCommandExecutor, gvrs ...map[schema.GroupVersionResource]string) *FakeKubeProvider {
 	resGVR := make(map[schema.GroupVersionResource]string)
 	for _, gvrMap := range gvrs {
 		for gvr, kind := range gvrMap {
@@ -256,7 +264,7 @@ func NewFakeKubeProvider(gvrs ...map[schema.GroupVersionResource]string) *FakeKu
 	}
 
 	return &FakeKubeProvider{
-		current: newFake(resGVR),
+		current: newFake(podExecutor, resGVR),
 	}
 }
 
@@ -276,10 +284,16 @@ func (p *FakeKubeProvider) Cleanup(context.Context) error {
 	return nil
 }
 
-func newFake(gvr map[schema.GroupVersionResource]string) *kube.KubernetesClient {
-	if len(gvr) == 0 {
-		return kube.NewFakeKubernetesClient()
+func newFake(podExecutor kube.PodCommandExecutor, gvr map[schema.GroupVersionResource]string) *kube.KubernetesClient {
+	if govalue.Nil(podExecutor) {
+		podExecutor = kube.NewErrorPodCommandExecutor(
+			fmt.Errorf("executor not passed in fake provider"),
+		)
 	}
 
-	return kube.NewFakeKubernetesClientWithListGVR(gvr)
+	if len(gvr) == 0 {
+		gvr = nil
+	}
+
+	return kube.NewFakeKubernetesClientWithGVRAndExec(gvr, podExecutor)
 }

@@ -33,6 +33,7 @@ var (
 
 type ErrorKubernetesClient struct {
 	kubernetes.Interface
+	PodCommandExecutor
 
 	dynamic dynamic.Interface
 	err     error
@@ -55,9 +56,10 @@ func NewErrorKubernetesClient(errToReturn error) (*ErrorKubernetesClient, error)
 	}
 
 	return &ErrorKubernetesClient{
-		Interface: k,
-		dynamic:   d,
-		err:       errToReturn,
+		Interface:          k,
+		dynamic:            d,
+		err:                errToReturn,
+		PodCommandExecutor: NewErrorPodCommandExecutor(err),
 	}, nil
 }
 
