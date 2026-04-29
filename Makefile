@@ -122,6 +122,7 @@ go-deps/tidy: go-installed
 
 go-deps/ci/check/no-tidy: go-installed go-deps/tidy
 	@if ! git diff --exit-code; then \
+		echo ""; \
 		echo -e "${RED}go mod tidy produce diff. Please run 'make go-deps/tidy' and commit${NO_COLOR}"; \
 		exit 1; \
 	fi
