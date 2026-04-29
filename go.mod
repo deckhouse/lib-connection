@@ -5,7 +5,7 @@ go 1.25.5
 require (
 	al.essio.dev/pkg/shellescape v1.6.0
 	github.com/bramvdbogaerde/go-scp v1.6.0
-	github.com/deckhouse/lib-dhctl v0.13.0
+	github.com/deckhouse/lib-dhctl v0.17.0
 	github.com/deckhouse/lib-gossh v0.3.0
 	github.com/flant/kube-client v1.6.0
 	github.com/go-openapi/spec v0.19.8
@@ -71,6 +71,7 @@ require (
 	github.com/prometheus/common v0.62.0 // indirect
 	github.com/prometheus/procfs v0.15.1 // indirect
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
+	github.com/tidwall/pretty v1.2.0 // indirect
 	github.com/werf/logboek v0.5.5 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/xlab/treeprint v1.2.0 // indirect
