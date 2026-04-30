@@ -219,12 +219,4 @@ func commandKiller(command connection.Command) {
 	_ = goCommand.session.Close()
 }
 
-func commandPreparator(command connection.Command) {
-	goCommand, ok := command.(*SSHCommand)
-	if !ok {
-		return
-	}
-
-	goCommand.CaptureStdout(nil)
-	goCommand.CaptureStderr(nil)
-}
+func commandPreparator(command connection.Command) {}

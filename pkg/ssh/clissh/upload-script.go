@@ -218,12 +218,4 @@ func commandKiller(command connection.Command) {
 	_ = cliCmd.cmd.Process.Kill()
 }
 
-func commandPreparator(command connection.Command) {
-	cliCommand, ok := command.(*Command)
-	if !ok {
-		return
-	}
-
-	cliCommand.CaptureStdout(nil)
-	cliCommand.CaptureStderr(nil)
-}
+func commandPreparator(command connection.Command) {}

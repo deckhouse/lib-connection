@@ -31,7 +31,12 @@ func TestLogger(opts ...TestOpt) *log.InMemoryLogger {
 		loggerOptions.OutStream = options.logBuffer
 	}
 
-	return log.NewInMemoryLoggerWithParent(log.NewPrettyLogger(loggerOptions))
+	res := log.NewInMemoryLoggerWithParent(log.NewPrettyLogger(loggerOptions))
+	if options.noLogDebug {
+		res.WithNoDebug(true)
+	}
+
+	return res
 }
 
 func getDefaultParams(test *Test) settings.ProviderParams {

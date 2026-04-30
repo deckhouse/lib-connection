@@ -152,6 +152,12 @@ func CloneWithTmpDir(dir string) CloneOpt {
 	}
 }
 
+func CloneWithNodeTmpPath(dir string) CloneOpt {
+	return func(p *BaseProviders) {
+		p.params.NodeTmpPath = dir
+	}
+}
+
 func (b *BaseProviders) Clone(opts ...CloneOpt) *BaseProviders {
 	clone := *b
 

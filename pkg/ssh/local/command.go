@@ -41,6 +41,9 @@ type Command struct {
 
 	used atomic.Bool
 
+	cmdMu sync.RWMutex
+	cmd   *exec.Cmd
+
 	program string
 	args    []string
 	sudo    bool
@@ -89,9 +92,12 @@ func (c *Command) Run(ctx context.Context) error {
 	if err = cmd.Start(); err != nil {
 		return fmt.Errorf("cmd start failed: %v", err)
 	}
+
 	if c.onStart != nil {
 		c.onStart()
 	}
+
+	c.setCmd(cmd)
 
 	wg.Wait() // Wait for stdout/stderr reads to complete first
 	c.stdout = stdoutBuf.Bytes()
@@ -174,38 +180,6 @@ func (c *Command) CombinedOutput(ctx context.Context) ([]byte, error) {
 	return output.Bytes(), nil
 }
 
-func (c *Command) prepareCmd(ctx context.Context) (*exec.Cmd, context.CancelFunc) {
-	bashBuiltins := []string{"bind", "type", "command", "let", "mapfile", "printf", "readarray", "ulimit"}
-
-	program := c.program
-	args := c.args
-	if c.sudo {
-		program = "sudo"
-		args = append([]string{c.program}, c.args...)
-	} else if slices.Contains(bashBuiltins, program) { // For shell built-in things we need to run bash
-		program = "bash"
-		args = []string{"-c", strings.Join(append([]string{c.program}, c.args...), " ")}
-	}
-
-	ctx, cancel := context.WithCancel(ctx)
-	if c.timeout > 0 {
-		cancel()
-		ctx, cancel = context.WithTimeout(ctx, c.timeout)
-	}
-
-	cmd := exec.CommandContext(ctx, program, args...)
-	if len(c.env) > 0 {
-		cmd.Env = os.Environ()
-		for k, v := range c.env {
-			cmd.Env = append(cmd.Env, k+"="+v)
-		}
-	}
-
-	c.settings.Logger().DebugF("Command prepared: %#v\n", cmd)
-
-	return cmd, cancel
-}
-
 func (c *Command) Sudo(_ context.Context) {
 	c.sudo = true
 }
@@ -235,6 +209,54 @@ func (c *Command) StderrBytes() []byte {
 }
 
 // The rest are no-ops for local execution
+func (c *Command) Cmd(_ context.Context) {}
 
-func (c *Command) Cmd(_ context.Context)   {}
 func (c *Command) WithSSHArgs(_ ...string) {}
+
+func (c *Command) setCmd(cmd *exec.Cmd) {
+	c.cmdMu.Lock()
+	defer c.cmdMu.Unlock()
+
+	c.cmd = cmd
+}
+
+func (c *Command) getCmd() *exec.Cmd {
+	c.cmdMu.RLock()
+	defer c.cmdMu.RUnlock()
+
+	return c.cmd
+}
+
+func (c *Command) prepareCmd(ctx context.Context) (*exec.Cmd, context.CancelFunc) {
+	bashBuiltins := []string{"bind", "type", "command", "let", "mapfile", "printf", "readarray", "ulimit"}
+
+	program := c.program
+	args := c.args
+	if c.sudo {
+		program = "sudo"
+		args = append([]string{c.program}, c.args...)
+	} else if slices.Contains(bashBuiltins, program) { // For shell built-in things we need to run bash
+		program = "bash"
+		args = []string{"-c", strings.Join(append([]string{c.program}, c.args...), " ")}
+	}
+
+	var cancel context.CancelFunc
+
+	if c.timeout > 0 {
+		ctx, cancel = context.WithTimeout(ctx, c.timeout)
+	} else {
+		ctx, cancel = context.WithCancel(ctx)
+	}
+
+	cmd := exec.CommandContext(ctx, program, args...)
+	if len(c.env) > 0 {
+		cmd.Env = os.Environ()
+		for k, v := range c.env {
+			cmd.Env = append(cmd.Env, k+"="+v)
+		}
+	}
+
+	c.settings.Logger().DebugF("Command prepared: %#v\n", cmd)
+
+	return cmd, cancel
+}

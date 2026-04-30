@@ -59,5 +59,5 @@ func (n *NodeInterface) UploadScript(scriptPath string, args ...string) connecti
 	logger.DebugF("Starting NodeInterface.UploadScript")
 	defer logger.DebugF("Stop NodeInterface.UploadScript")
 
-	return NewScript(n.settings, scriptPath, args...)
+	return NewScript(n, scriptPath, args...)
 }

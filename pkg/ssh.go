@@ -116,11 +116,17 @@ type File interface {
 	DownloadBytes(ctx context.Context, remotePath string) ([]byte, error)
 }
 
+// BundlerShouldInfoOutChecker
+// if checker return empty string - output as Debug
+// otherwise output with Info
+type BundlerShouldInfoOutChecker func(string) string
+
 type BundlerOptions struct {
-	StepHeaderRegex     *regexp.Regexp
-	NoLogStepOutOnError bool
-	StepsDelimiter      string
-	Retries             int
+	StepHeaderRegex      *regexp.Regexp
+	ShouldInfoOutChecker BundlerShouldInfoOutChecker
+	NoLogStepOutOnError  bool
+	StepsDelimiter       string
+	Retries              int
 }
 
 func (o *BundlerOptions) IsValid() error {
@@ -144,6 +150,12 @@ type BundlerOption func(*BundlerOptions)
 func BundlerWithStepHeaderRegex(regex *regexp.Regexp) BundlerOption {
 	return func(opts *BundlerOptions) {
 		opts.StepHeaderRegex = regex
+	}
+}
+
+func BundlerWithShouldInfoOutChecker(checker BundlerShouldInfoOutChecker) BundlerOption {
+	return func(opts *BundlerOptions) {
+		opts.ShouldInfoOutChecker = checker
 	}
 }
 
