@@ -36,39 +36,62 @@ func PrepareFakeBashibleBundle(t *testing.T, test *Test, entrypoint, bundleDir s
 
 echo "starting execute steps..."
 
-BUNDLE_STEPS_DIR=/var/lib/bashible/bundle_steps
 BOOTSTRAP_DIR=/var/lib/bashible
 MAX_RETRIES=3
+REWRITE_STEP_NAME=""
 
-for arg in "$@"; do
-  if [[ "$arg" == "--add-failure" ]]; then
-      echo "failures included"
-      export INCLUDE_FAILURE=true
-  fi
-  if [[ "$arg" == "--info-out" ]]; then
-      export INFO_OUT=true
-  fi
+while [[ $# -gt 0 ]]; do
+case "$1" in
+  --add-failure)
+	echo "failures included"
+    export INCLUDE_FAILURE=true
+	shift
+	;;
+  --info-out)
+	not_ask="$not_ask_passed_val"
+	export INFO_OUT=true
+	shift
+	;;
+  --bootstrap-dir)
+	BOOTSTRAP_DIR="$2"
+	REWRITE_STEP_NAME="true"
+	shift
+	shift
+	;;
+  *)
+    echo "Illegal option $1"
+    exit 1
+    ;;
+esac
 done
 
+BUNDLE_STEPS_DIR="${BOOTSTRAP_DIR}/bundle_steps"
+
+log_tmp="$(mktemp)"
+
 # Execute bashible steps
-for step in $BUNDLE_STEPS_DIR/*; do
-  echo ===
-  echo === Step: $step
-  echo ===
+for step in $(ls $BUNDLE_STEPS_DIR/*.sh); do
+  step_out="$step"
+  if [ -n "$REWRITE_STEP_NAME" ]; then
+    step_out="/var/lib/bashible/bundle_steps/$(basename $step)"
+  fi
+  echo "==="
+  echo "=== Step: $step_out"
+  echo "==="
   attempt=0
   sx=""
-  until /bin/bash --noprofile --norc -"$sx"eEo pipefail -c "export TERM=xterm-256color; unset CDPATH; cd $BOOTSTRAP_DIR; source $step" 2> >(tee /var/lib/bashible/step.log >&2)
+  until /bin/bash --noprofile --norc -"$sx"eEo pipefail -c "export TERM=xterm-256color; unset CDPATH; cd $BOOTSTRAP_DIR; source $step" 2> >(tee "$log_tmp" >&2)
   do
     attempt=$(( attempt + 1 ))
     if [ -n "${MAX_RETRIES-}" ] && [ "$attempt" -gt "${MAX_RETRIES}" ]; then
-      >&2 echo "ERROR: Failed to execute step $step. Retry limit is over."
+      >&2 echo "ERROR: Failed to execute step $step_out. Retry limit is over."
       exit 1
     fi
-    >&2 echo "Failed to execute step "$step" ... retry in 2 seconds."
-    sleep 2
-    echo ===
-    echo === Step: $step
-    echo ===
+    >&2 echo "Failed to execute step "$step_out" ... retry in 2 seconds."
+    sleep 1
+    echo "==="
+    echo "=== Step: $step_out"
+    echo "==="
     if [ "$attempt" -gt 1 ]; then
       sx=x
     fi
@@ -135,6 +158,17 @@ func cleanASCII(out string) string {
 	return asciiControlRe.ReplaceAllString(out, "")
 }
 
+func prepareAndLogBungleOutput(t *testing.T, buf *bytes.Buffer) string {
+	_ = bufio.NewWriter(buf).Flush()
+
+	out := buf.String()
+
+	t.Logf("\n--- Got bundle out ---\n%s\n--- End bundle out ---", out)
+
+	out = cleanASCII(strings.TrimSpace(out))
+	return logTimeRegexp.ReplaceAllString(out, "")
+}
+
 func AssertLogBufferNoErrorBundle(t *testing.T, buf *bytes.Buffer) {
 	expected := `┌ Run step 01-step.sh
 └ Run step 01-step.sh
@@ -142,10 +176,7 @@ func AssertLogBufferNoErrorBundle(t *testing.T, buf *bytes.Buffer) {
 ┌ Run step 02-step.sh
 └ Run step 02-step.sh`
 
-	_ = bufio.NewWriter(buf).Flush()
-
-	out := cleanASCII(strings.TrimSpace(buf.String()))
-	out = logTimeRegexp.ReplaceAllString(out, "")
+	out := prepareAndLogBungleOutput(t, buf)
 
 	require.Equal(t, strings.TrimSpace(expected), out, "log buffer should contain")
 }
@@ -158,21 +189,16 @@ func AssertLogBufferBundleWithInfo(t *testing.T, buf *bytes.Buffer) {
 ┌ Run step 02-step.sh
 └ Run step 02-step.sh`
 
-	_ = bufio.NewWriter(buf).Flush()
-
-	out := cleanASCII(strings.TrimSpace(buf.String()))
-	out = logTimeRegexp.ReplaceAllString(out, "")
+	out := prepareAndLogBungleOutput(t, buf)
 
 	require.Equal(t, strings.TrimSpace(expected), out, "log buffer should contain")
 }
 
 func AssertLogBufferWithErrorBundle(t *testing.T, buf *bytes.Buffer) {
-	_ = bufio.NewWriter(buf).Flush()
+	out := prepareAndLogBungleOutput(t, buf)
 
-	out := cleanASCII(strings.TrimSpace(buf.String()))
-	out = logTimeRegexp.ReplaceAllString(out, "")
-
-	expectedHead := `┌ Run step 01-step.sh
+	expects := map[string]string{
+		"head attempts": `┌ Run step 01-step.sh
 └ Run step 01-step.sh
 
 ┌ Run step 02-step.sh
@@ -193,26 +219,24 @@ func AssertLogBufferWithErrorBundle(t *testing.T, buf *bytes.Buffer) {
 │ 3
 │ oops! failure!
 │ Failed to execute step /var/lib/bashible/bundle_steps/02-step.sh ... retry in 2 seconds.
-└ Run step 02-step.sh, retry attempt #1 of 10 FAILED`
+└ Run step 02-step.sh, retry attempt #1 of 10 FAILED`,
 
-	require.Contains(t, out, strings.TrimSpace(expectedHead), "should contain head")
+		"debug header": `┌ Run step 02-step.sh, retry attempt #2 of 10`,
 
-	expectedDebug := `┌ Run step 02-step.sh, retry attempt #2 of 10
-│ second step
-│ + export TERM=xterm-256color
+		"first debug content": `│ + export TERM=xterm-256color
 │ + TERM=xterm-256color
-│ + unset CDPATH
-│ + cd /var/lib/bashible
-│ + source /var/lib/bashible/bundle_steps/02-step.sh
-│ ++ echo 'second step'`
+│ + unset CDPATH`,
 
-	require.Contains(t, out, strings.TrimSpace(expectedDebug), "should contain debug")
+		"echo debug content": `++ echo 'second step'`,
 
-	expectedTail := `│ Failed to execute step /var/lib/bashible/bundle_steps/02-step.sh ... retry in 2 seconds.
+		"tail": `│ Failed to execute step /var/lib/bashible/bundle_steps/02-step.sh ... retry in 2 seconds.
 └ Run step 02-step.sh, retry attempt #2 of 10 FAILED
 
 ┌ Run step 02-step.sh, retry attempt #3 of 10
-└ Run step 02-step.sh, retry attempt #3 of 10 FAILED`
+└ Run step 02-step.sh, retry attempt #3 of 10 FAILED`,
+	}
 
-	require.Contains(t, out, strings.TrimSpace(expectedTail), "should contain debug")
+	for name, content := range expects {
+		require.Contains(t, out, strings.TrimSpace(content), "should contain ", name)
+	}
 }

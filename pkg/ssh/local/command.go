@@ -41,6 +41,9 @@ type Command struct {
 
 	used atomic.Bool
 
+	cmdMu sync.RWMutex
+	cmd   *exec.Cmd
+
 	program string
 	args    []string
 	sudo    bool
@@ -89,9 +92,12 @@ func (c *Command) Run(ctx context.Context) error {
 	if err = cmd.Start(); err != nil {
 		return fmt.Errorf("cmd start failed: %v", err)
 	}
+
 	if c.onStart != nil {
 		c.onStart()
 	}
+
+	c.setCmd(cmd)
 
 	wg.Wait() // Wait for stdout/stderr reads to complete first
 	c.stdout = stdoutBuf.Bytes()
@@ -174,6 +180,54 @@ func (c *Command) CombinedOutput(ctx context.Context) ([]byte, error) {
 	return output.Bytes(), nil
 }
 
+func (c *Command) Sudo(_ context.Context) {
+	c.sudo = true
+}
+
+func (c *Command) WithTimeout(t time.Duration) {
+	c.timeout = t
+}
+
+func (c *Command) WithEnv(env map[string]string) {
+	c.env = env
+}
+
+func (c *Command) WithStdoutHandler(h func(line string)) {
+	c.stdoutLineHandler = h
+}
+
+func (c *Command) WithStderrHandler(h func(line string)) {
+	c.stderrLineHandler = h
+}
+
+func (c *Command) StdoutBytes() []byte {
+	return c.stdout
+}
+
+func (c *Command) StderrBytes() []byte {
+	return c.stderr
+}
+
+// The rest are no-ops for local execution
+
+func (c *Command) Cmd(_ context.Context)   {}
+
+func (c *Command) WithSSHArgs(_ ...string) {}
+
+func (c *Command) setCmd(cmd *exec.Cmd) {
+	c.cmdMu.Lock()
+	defer c.cmdMu.Unlock()
+
+	c.cmd = cmd
+}
+
+func (c *Command) getCmd() *exec.Cmd {
+	c.cmdMu.RLock()
+	defer c.cmdMu.RUnlock()
+
+	return c.cmd
+}
+
 func (c *Command) prepareCmd(ctx context.Context) (*exec.Cmd, context.CancelFunc) {
 	bashBuiltins := []string{"bind", "type", "command", "let", "mapfile", "printf", "readarray", "ulimit"}
 
@@ -207,36 +261,3 @@ func (c *Command) prepareCmd(ctx context.Context) (*exec.Cmd, context.CancelFunc
 
 	return cmd, cancel
 }
-
-func (c *Command) Sudo(_ context.Context) {
-	c.sudo = true
-}
-
-func (c *Command) WithTimeout(t time.Duration) {
-	c.timeout = t
-}
-
-func (c *Command) WithEnv(env map[string]string) {
-	c.env = env
-}
-
-func (c *Command) WithStdoutHandler(h func(line string)) {
-	c.stdoutLineHandler = h
-}
-
-func (c *Command) WithStderrHandler(h func(line string)) {
-	c.stderrLineHandler = h
-}
-
-func (c *Command) StdoutBytes() []byte {
-	return c.stdout
-}
-
-func (c *Command) StderrBytes() []byte {
-	return c.stderr
-}
-
-// The rest are no-ops for local execution
-
-func (c *Command) Cmd(_ context.Context)   {}
-func (c *Command) WithSSHArgs(_ ...string) {}

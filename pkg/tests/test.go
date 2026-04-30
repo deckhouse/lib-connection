@@ -200,6 +200,11 @@ func (s *Test) WithAuthSock(p string) *Test {
 	return s
 }
 
+func (s *Test) WithNodeTmpDir(p string) *Test {
+	s.settings = s.settings.Clone(settings.CloneWithNodeTmpPath(p))
+	return s
+}
+
 func (s *Test) GetLogger() *log.InMemoryLogger {
 	return s.Logger
 }

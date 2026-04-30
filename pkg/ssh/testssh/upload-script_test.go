@@ -161,7 +161,7 @@ func TestUploadScriptExecuteBundle(t *testing.T) {
 			scriptArgs      []string
 			parentDir       string
 			bundleDir       string
-			prepareFunc     func() error
+			prepareFunc     func(connection.Script) error
 			wantErr         bool
 			err             string
 			loggerOutAssert func(t *testing.T, buf *bytes.Buffer)
@@ -205,7 +205,7 @@ func TestUploadScriptExecuteBundle(t *testing.T) {
 				scriptArgs: []string{""},
 				parentDir:  testDir,
 				bundleDir:  "bashible",
-				prepareFunc: func() error {
+				prepareFunc: func(connection.Script) error {
 					err := chmodTmpDir(goSSHClient, nodeTmpPath)
 					if err != nil {
 						return err
@@ -240,12 +240,20 @@ func TestUploadScriptExecuteBundle(t *testing.T) {
 				cliScript := cliSSHClient.UploadScript(entrypoint, c.scriptArgs...)
 
 				if c.prepareFunc != nil {
-					err = c.prepareFunc()
-					require.NoError(t, err)
+					err = c.prepareFunc(goScript)
+					require.NoError(t, err, "prepare go")
+
+					err = c.prepareFunc(cliScript)
+					require.NoError(t, err, "prepare cli")
 				}
 
-				assertExecuteBundle(t, goScript)
-				assertExecuteBundle(t, cliScript)
+				t.Run("go ssh", func(t *testing.T) {
+					assertExecuteBundle(t, goScript)
+				})
+
+				t.Run("cli ssh", func(t *testing.T) {
+					assertExecuteBundle(t, cliScript)
+				})
 			})
 		}
 	})

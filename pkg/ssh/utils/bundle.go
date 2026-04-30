@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/deckhouse/lib-dhctl/pkg/log"
@@ -34,8 +35,10 @@ import (
 )
 
 var (
-	ErrTimeout = errors.New("Timeout step running")
+	ErrBundleTimeout = errors.New("Timeout step running")
 )
+
+type BundleCmdProvider func(ctx context.Context, node connection.Interface, parentDir, bundleDir string) (connection.Command, error)
 
 type (
 	CommandKiller     func(connection.Command)
@@ -92,32 +95,34 @@ func UserBundleOptsOrBashible(inputOpts ...connection.BundlerOption) ([]BundleOp
 	copy(userOpts, inputOpts)
 
 	if len(userOpts) == 0 {
-		userOpts = bashibleBundleOpts()
+		userOpts = BashibleBundleOpts()
 	}
 
 	return convertBundleOption(userOpts...)
 }
 
 type Bundle struct {
-	sett   settings.Settings
-	client connection.SSHClient
+	sett settings.Settings
+	node connection.Interface
 
 	scriptPath string
 	args       []string
 
-	stepHeaderRegex    *regexp.Regexp
-	shouldInfoOutCheck connection.BundlerShouldInfoOutChecker
+	stepHeaderRegex     *regexp.Regexp
+	shouldInfoOutCheck  connection.BundlerShouldInfoOutChecker
 	noLogStepOutOnError bool
 	stepsDelimiter      string
 	retries             int
 	commandKiller       CommandKiller
 	commandPreparator   CommandPreparator
+
+	bundleCmdProvider BundleCmdProvider
 }
 
-func NewBundle(sett settings.Settings, client connection.SSHClient, scriptPath string, args []string, opts ...BundleOpt) (*Bundle, error) {
+func NewBundle(sett settings.Settings, client connection.Interface, scriptPath string, args []string, opts ...BundleOpt) (*Bundle, error) {
 	b := &Bundle{
 		sett:       sett,
-		client:     client,
+		node:       client,
 		scriptPath: scriptPath,
 		args:       args,
 		retries:    10,
@@ -142,49 +147,28 @@ func NewBundle(sett settings.Settings, client connection.SSHClient, scriptPath s
 	return b, nil
 }
 
+func (b *Bundle) WithCmdProvider(provider BundleCmdProvider) *Bundle {
+	b.bundleCmdProvider = provider
+	return b
+}
+
 func (b *Bundle) Execute(ctx context.Context, parentDir, bundleDir string) ([]byte, error) {
-	bundleName := fmt.Sprintf("bundle-%s.tar", time.Now().Format("20060102-150405"))
-	bundleLocalFilepath := filepath.Join(b.sett.TmpDir(), bundleName)
-
-	// tar cpf bundle.tar -C /tmp/dhctl.1231qd23/var/lib bashible
-	err := tar.CreateTar(bundleLocalFilepath, parentDir, bundleDir)
+	bundleCmd, err := b.getBundleCmd(ctx, parentDir, bundleDir)
 	if err != nil {
-		return nil, fmt.Errorf("tar bundle: %v", err)
+		return nil, err
 	}
 
-	b.sett.RegisterOnShutdown(
-		"Delete bashible bundle folder",
-		func() { _ = os.Remove(bundleLocalFilepath) },
-	)
-
-	nodeTmp := b.sett.NodeTmpDir()
-
-	// upload to node's deckhouse tmp directory
-	err = b.client.File().Upload(ctx, bundleLocalFilepath, nodeTmp)
-	if err != nil {
-		return nil, fmt.Errorf("upload: %v", err)
-	}
-
-	// sudo:
-	// tar xpof ${app.DeckhouseNodeTmpPath}/bundle.tar -C /var/lib && /var/lib/bashible/bashible.sh args...
-	tarCmdline := fmt.Sprintf(
-		"tar xpof %s/%s -C /var/lib && /var/lib/%s/%s %s",
-		nodeTmp,
-		bundleName,
-		bundleDir,
-		b.scriptPath,
-		strings.Join(b.args, " "),
-	)
-	bundleCmd := b.client.Command(tarCmdline)
 	bundleCmd.Sudo(ctx)
 
 	logger := b.sett.Logger()
 	processLogger := logger.ProcessLogger()
 
 	handler := newOutputHandler(b, bundleCmd, logger, processLogger)
-	bundleCmd.WithStdoutHandler(handler.getHandlerFunc())
 
-	if b.commandPreparator != nil {
+	bundleCmd.WithStdoutHandler(handler.getStdoutHandlerFunc())
+	bundleCmd.WithStderrHandler(handler.getStderrHandlerFunc())
+
+	if !govalue.Nil(b.commandPreparator) {
 		b.commandPreparator(bundleCmd)
 	}
 
@@ -208,10 +192,51 @@ func (b *Bundle) Execute(ctx context.Context, parentDir, bundleDir string) ([]by
 	}
 
 	if handler.hasStepTimeout {
-		return bundleCmd.StdoutBytes(), ErrTimeout
+		return bundleCmd.StdoutBytes(), ErrBundleTimeout
 	}
 
 	return bundleCmd.StdoutBytes(), err
+}
+
+func (b *Bundle) getBundleCmd(ctx context.Context, parentDir, bundleDir string) (connection.Command, error) {
+	if !govalue.Nil(b.bundleCmdProvider) {
+		return b.bundleCmdProvider(ctx, b.node, parentDir, bundleDir)
+	}
+
+	bundleName := fmt.Sprintf("bundle-%s.tar", time.Now().Format("20060102-150405"))
+	bundleLocalFilepath := filepath.Join(b.sett.TmpDir(), bundleName)
+
+	// tar cpf bundle.tar -C /tmp/dhctl.1231qd23/var/lib bashible
+	err := tar.CreateTar(bundleLocalFilepath, parentDir, bundleDir)
+	if err != nil {
+		return nil, fmt.Errorf("tar bundle: %v", err)
+	}
+
+	b.sett.RegisterOnShutdown(
+		"Delete bashible bundle folder",
+		func() { _ = os.Remove(bundleLocalFilepath) },
+	)
+
+	nodeTmp := b.sett.NodeTmpDir()
+
+	// upload to node's deckhouse tmp directory
+	err = b.node.File().Upload(ctx, bundleLocalFilepath, nodeTmp)
+	if err != nil {
+		return nil, fmt.Errorf("upload: %v", err)
+	}
+
+	// sudo:
+	// tar xpof ${app.DeckhouseNodeTmpPath}/bundle.tar -C /var/lib && /var/lib/bashible/bashible.sh args...
+	tarCmdline := fmt.Sprintf(
+		"tar xpof %s/%s -C /var/lib && /var/lib/%s/%s %s",
+		nodeTmp,
+		bundleName,
+		bundleDir,
+		b.scriptPath,
+		strings.Join(b.args, " "),
+	)
+
+	return b.node.Command(tarCmdline), nil
 }
 
 func (b *Bundle) killCommand(cmd connection.Command) {
@@ -232,7 +257,9 @@ type outputHandler struct {
 	logger        log.Logger
 	bundler       *Bundle
 
-	stepLogs       []string
+	logsMu   sync.Mutex
+	stepLogs []string
+
 	lastStep       string
 	failsCounter   int
 	hasStepTimeout bool
@@ -249,13 +276,40 @@ func newOutputHandler(bundler *Bundle, cmd connection.Command, logger log.Logger
 	}
 }
 
-func (h *outputHandler) getHandlerFunc() func(string) {
+func (h *outputHandler) getStdoutHandlerFunc() func(string) {
 	return func(line string) {
-		h.handle(line)
+		h.handleStdout(line)
 	}
 }
 
-func (h *outputHandler) handle(l string) {
+func (h *outputHandler) getStderrHandlerFunc() func(string) {
+	return func(line string) {
+		h.appendLog(line)
+	}
+}
+
+func (h *outputHandler) appendLog(l string) {
+	h.logsMu.Lock()
+	defer h.logsMu.Unlock()
+
+	h.stepLogs = append(h.stepLogs, l)
+}
+
+func (h *outputHandler) flushLogs(onlyReset bool) string {
+	h.logsMu.Lock()
+	defer h.logsMu.Unlock()
+
+	res := ""
+	if !onlyReset {
+		res = strings.Join(h.stepLogs, "\n")
+	}
+
+	h.stepLogs = make([]string, 0)
+
+	return res
+}
+
+func (h *outputHandler) handleStdout(l string) {
 	if l == h.bundler.stepsDelimiter {
 		return
 	}
@@ -268,16 +322,20 @@ func (h *outputHandler) handle(l string) {
 			doLog = h.logger.InfoF
 		}
 
-		h.stepLogs = append(h.stepLogs, outString)
+		h.appendLog(outString)
 		doLog("%s", outString)
 		return
 	}
 
 	match := h.bundler.stepHeaderRegex.FindStringSubmatch(l)
+	if len(match) < 2 {
+		return
+	}
+
 	stepName := match[1]
 
 	if h.lastStep == stepName {
-		logMessage := strings.Join(h.stepLogs, "\n")
+		logMessage := h.flushLogs(false)
 		switch {
 		case h.bundler.noLogStepOutOnError && h.failsCounter == 0:
 			h.logger.ErrorF("%s", logMessage)
@@ -288,7 +346,6 @@ func (h *outputHandler) handle(l string) {
 			h.logger.ErrorF("%s", logMessage)
 		}
 		h.failsCounter++
-		h.stepLogs = h.stepLogs[:0]
 		if h.failsCounter > h.bundler.retries {
 			h.hasStepTimeout = true
 			h.bundler.killCommand(h.cmd)
@@ -298,7 +355,7 @@ func (h *outputHandler) handle(l string) {
 		h.processLogger.ProcessFail()
 		stepName = fmt.Sprintf("%s, retry attempt #%d of %d", stepName, h.failsCounter, h.bundler.retries)
 	} else if h.lastStep != "" {
-		h.stepLogs = make([]string, 0)
+		_ = h.flushLogs(true)
 		h.processLogger.ProcessEnd()
 		h.failsCounter = 0
 	}
@@ -327,7 +384,7 @@ func bashibleShouldInfoOutChecker(l string) string {
 	return ""
 }
 
-func bashibleBundleOpts() []connection.BundlerOption {
+func BashibleBundleOpts() []connection.BundlerOption {
 	return []connection.BundlerOption{
 		connection.BundlerWithStepHeaderRegex(bashibleStepsHeaderRegexp),
 		connection.BundlerWithStepDelimiter("==="),

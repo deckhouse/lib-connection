@@ -23,8 +23,11 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/name212/govalue"
+
 	connection "github.com/deckhouse/lib-connection/pkg"
 	"github.com/deckhouse/lib-connection/pkg/settings"
+	"github.com/deckhouse/lib-connection/pkg/ssh/utils"
 )
 
 var (
@@ -34,6 +37,7 @@ var (
 type Script struct {
 	settings settings.Settings
 
+	node              *NodeInterface
 	scriptPath        string
 	args              []string
 	env               map[string]string
@@ -41,13 +45,22 @@ type Script struct {
 	stdoutLineHandler func(line string)
 	timeout           time.Duration
 	cleanupAfterRun   bool
+	bundlerOptions    []connection.BundlerOption
+	noOutError        bool
+	// bundleDest
+	// for test purposes
+	bundleDest string
+	// forceBundleNoSudo
+	// for test purposes
+	forceBundleNoSudo bool
 }
 
-func NewScript(sett settings.Settings, path string, args ...string) *Script {
+func NewScript(node *NodeInterface, path string, args ...string) *Script {
 	return &Script{
+		node:       node,
 		scriptPath: path,
 		args:       args,
-		settings:   sett,
+		settings:   node.settings,
 	}
 }
 
@@ -84,36 +97,30 @@ func (s *Script) Execute(ctx context.Context) ([]byte, error) {
 	return cmd.StdoutBytes(), nil
 }
 
-func (s *Script) WithBundlerOpts(opts ...connection.BundlerOption) {}
+func (s *Script) WithBundlerOpts(opts ...connection.BundlerOption) {
+	s.bundlerOptions = append(make([]connection.BundlerOption, 0), opts...)
+}
 
 func (s *Script) ExecuteBundle(ctx context.Context, parentDir, bundleDir string) ([]byte, error) {
-	srcPath := filepath.Join(parentDir, bundleDir)
-	dstPath := filepath.Join("/var/lib/", bundleDir)
-	_ = os.RemoveAll(dstPath) // Cleanup from previous runs
-	if err := copyRecursively(srcPath, dstPath); err != nil {
-		return nil, fmt.Errorf("copy bundle to /var/lib/%s: %w", bundleDir, err)
+	opts, err := utils.UserBundleOptsOrBashible(s.bundlerOptions...)
+	if err != nil {
+		return nil, err
 	}
 
-	cmd := NewCommand(s.settings, filepath.Join("/var/lib", bundleDir, s.scriptPath), s.args...)
-	if s.timeout > 0 {
-		cmd.WithTimeout(s.timeout)
-	}
-	if s.env != nil {
-		cmd.WithEnv(s.env)
-	}
-	if s.stdoutLineHandler != nil {
-		cmd.WithStdoutHandler(s.stdoutLineHandler)
-	}
-	if s.sudo {
-		cmd.Sudo(ctx)
+	opts = append(opts,
+		utils.BundleWithNoLogStepOutOnError(s.noOutError),
+		utils.BundleWithCommandKiller(commandKiller),
+		utils.BundleWithCommandPreparator(s.commandPreparator),
+	)
+
+	bundler, err := utils.NewBundle(s.settings, s.node, s.scriptPath, s.args, opts...)
+	if err != nil {
+		return nil, err
 	}
 
-	if err := cmd.Run(ctx); err != nil {
-		s.settings.Logger().DebugF("Execute bundle failed: stdout: %s\n\nstderr: %s\n", cmd.StdoutBytes(), cmd.StderrBytes())
-		return nil, fmt.Errorf("Execute bundle failed: %w", err)
-	}
+	bundler.WithCmdProvider(s.bundleCmdProvider)
 
-	return cmd.StdoutBytes(), nil
+	return bundler.Execute(ctx, parentDir, bundleDir)
 }
 
 func (s *Script) Sudo() {
@@ -136,6 +143,70 @@ func (s *Script) WithCleanupAfterExec(doCleanup bool) {
 	s.cleanupAfterRun = doCleanup
 }
 
-func (s *Script) WithNoLogStepOutOnError(bool) {}
+func (s *Script) WithNoLogStepOutOnError(f bool) {
+	s.noOutError = f
+}
 
 func (s *Script) WithExecuteUploadDir(string) {}
+
+func (s *Script) bundleCmdProvider(ctx context.Context, node connection.Interface, parentDir, bundleDir string) (connection.Command, error) {
+	fullDest := s.getBundleFullDest(bundleDir)
+
+	srcPath := filepath.Join(parentDir, bundleDir)
+	_ = os.RemoveAll(fullDest) // Cleanup from previous runs
+	if err := copyRecursively(srcPath, fullDest); err != nil {
+		return nil, fmt.Errorf("copy bundle to %s: %w", fullDest, err)
+	}
+
+	cmd := NewCommand(s.settings, filepath.Join(fullDest, s.scriptPath), s.args...)
+
+	if s.timeout > 0 {
+		cmd.WithTimeout(s.timeout)
+	}
+
+	if s.env != nil {
+		cmd.WithEnv(s.env)
+	}
+
+	return cmd, nil
+}
+
+func (s *Script) getBundleFullDest(bundleDir string) string {
+	dest := "/var/lib"
+	if s.bundleDest != "" {
+		dest = s.bundleDest
+	}
+
+	return filepath.Join(dest, bundleDir)
+}
+
+func (s *Script) commandPreparator(command connection.Command) {
+	if !s.forceBundleNoSudo {
+		return
+	}
+
+	localCmd, ok := command.(*Command)
+	if !ok {
+		return
+	}
+
+	localCmd.sudo = false
+}
+
+func commandKiller(command connection.Command) {
+	localCmd, ok := command.(*Command)
+	if !ok {
+		return
+	}
+
+	cmd := localCmd.getCmd()
+	if govalue.Nil(cmd) {
+		return
+	}
+
+	if !govalue.Nil(cmd.ProcessState) && cmd.ProcessState.Exited() {
+		return
+	}
+
+	_ = cmd.Process.Kill()
+}
