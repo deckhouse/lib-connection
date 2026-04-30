@@ -209,8 +209,7 @@ func (c *Command) StderrBytes() []byte {
 }
 
 // The rest are no-ops for local execution
-
-func (c *Command) Cmd(_ context.Context)   {}
+func (c *Command) Cmd(_ context.Context) {}
 
 func (c *Command) WithSSHArgs(_ ...string) {}
 
