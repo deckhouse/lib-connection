@@ -20,7 +20,6 @@ import (
 	"github.com/deckhouse/lib-connection/pkg/tests"
 )
 
-
 func stdoutStdErrScript(t *testing.T, tst *tests.Test) string {
 	script := `#!/bin/bash
 echo "Stdout"
