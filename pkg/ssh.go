@@ -20,6 +20,7 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/deckhouse/lib-dhctl/pkg/log"
 	"github.com/deckhouse/lib-dhctl/pkg/retry"
 
 	"github.com/deckhouse/lib-connection/pkg/ssh/session"
@@ -127,6 +128,7 @@ type BundlerOptions struct {
 	NoLogStepOutOnError  bool
 	StepsDelimiter       string
 	Retries              int
+	ProcessLogger        log.ProcessLogger
 }
 
 func (o *BundlerOptions) IsValid() error {
@@ -176,6 +178,12 @@ func BundlerWithRetries(retries int) BundlerOption {
 		if retries > 0 {
 			opts.Retries = retries
 		}
+	}
+}
+
+func BundlerWithProcessLogger(logger log.ProcessLogger) BundlerOption {
+	return func(opts *BundlerOptions) {
+		opts.ProcessLogger = logger
 	}
 }
 

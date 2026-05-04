@@ -90,6 +90,12 @@ func BundleWithCommandPreparator(p CommandPreparator) BundleOpt {
 	}
 }
 
+func BundleWithProcessLogger(logger log.ProcessLogger) BundleOpt {
+	return func(b *Bundle) {
+		b.processLogger = logger
+	}
+}
+
 func UserBundleOptsOrBashible(inputOpts ...connection.BundlerOption) ([]BundleOpt, error) {
 	userOpts := make([]connection.BundlerOption, len(inputOpts))
 	copy(userOpts, inputOpts)
@@ -117,6 +123,8 @@ type Bundle struct {
 	commandPreparator   CommandPreparator
 
 	bundleCmdProvider BundleCmdProvider
+
+	processLogger log.ProcessLogger
 }
 
 func NewBundle(sett settings.Settings, client connection.Interface, scriptPath string, args []string, opts ...BundleOpt) (*Bundle, error) {
@@ -161,7 +169,10 @@ func (b *Bundle) Execute(ctx context.Context, parentDir, bundleDir string) ([]by
 	bundleCmd.Sudo(ctx)
 
 	logger := b.sett.Logger()
-	processLogger := logger.ProcessLogger()
+	processLogger := b.processLogger
+	if govalue.Nil(processLogger) {
+		processLogger = logger.ProcessLogger()
+	}
 
 	handler := newOutputHandler(b, bundleCmd, logger, processLogger)
 
@@ -413,5 +424,6 @@ func convertBundleOption(opts ...connection.BundlerOption) ([]BundleOpt, error) 
 		BundleWithStepsDelimiter(options.StepsDelimiter),
 		BundleWithNoLogStepOutOnError(options.NoLogStepOutOnError),
 		BundleWithShouldInfoOutChecker(options.ShouldInfoOutChecker),
+		BundleWithProcessLogger(options.ProcessLogger),
 	}, nil
 }
