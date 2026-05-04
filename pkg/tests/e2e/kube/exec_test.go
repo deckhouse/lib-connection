@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package provider
+package kube_test
 
 import (
 	"bytes"
@@ -49,7 +49,7 @@ func TestKubeExec(t *testing.T) {
 
 	kindCluster.RegisterCleanup(t)
 
-	kubeProvider := getKubeProvider(t, execTest, kindCluster)
+	kubeProvider := getKubeProviderForExec(t, execTest, kindCluster)
 
 	pythonImage := "registry.deckhouse.io/base_images@sha256:b15f9150f3b51f2e11cd73db39c89eef8a075953659caf802363d4f544335fb5"
 	if envImage := os.Getenv("TEST_KUBE_EXEC_PYTHON_IMAGE"); envImage != "" {
@@ -161,7 +161,7 @@ print(data, end="")
 	})
 }
 
-func getKubeProvider(t *testing.T, test *tests.Test, cluster *tests.KINDCluster) *provider.DefaultKubeProvider {
+func getKubeProviderForExec(t *testing.T, test *tests.Test, cluster *tests.KINDCluster) *provider.DefaultKubeProvider {
 	sett := test.Settings()
 
 	restCfg, err := cluster.RESTConfig()

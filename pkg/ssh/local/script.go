@@ -147,6 +147,16 @@ func (s *Script) WithNoLogStepOutOnError(f bool) {
 	s.noOutError = f
 }
 
+func (s *Script) WithBundleDest(d string) *Script {
+	s.bundleDest = d
+	return s
+}
+
+func (s *Script) WithForceNoSudoForBundle(f bool) *Script {
+	s.forceBundleNoSudo = f
+	return s
+}
+
 func (s *Script) WithExecuteUploadDir(string) {}
 
 func (s *Script) bundleCmdProvider(ctx context.Context, node connection.Interface, parentDir, bundleDir string) (connection.Command, error) {

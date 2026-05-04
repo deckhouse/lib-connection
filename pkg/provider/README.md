@@ -2,7 +2,7 @@
 
 Contains kube and ssh provider.
 
-SSH provider integration tests located in `../ssh/testssh/provider_test.go`.
+SSH provider e2e tests located in `../tests/e2e/ssh/provider_test.go`.
 
 Kube provider does not contain unit tests only integration.
-Integration tests located in `../tests/provider/kube_test.go`.
+Integration tests located in `../tests/e2e/kube/provider_test.go`.
