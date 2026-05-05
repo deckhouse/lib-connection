@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/deckhouse/lib-connection/pkg/tests"
+	kind "github.com/deckhouse/lib-connection/pkg/tests/e2e/kube/kind"
 )
 
 func registerStopClient(t *testing.T, sshClient *Client) {
@@ -107,10 +108,10 @@ func registerStopTunnel(t *testing.T, tunnel *Tunnel) {
 func startContainerAndClientAndKind(t *testing.T, test *tests.Test, opts ...tests.TestContainerWrapperSettingsOpts) (*Client, *tests.TestContainerWrapper) {
 	sshClient, container := startContainerAndClientWithContainer(t, test, opts...)
 
-	kindCluster := tests.CreateKINDCluster(t, &tests.KINDClusterCreateParams{
+	kindCluster := kind.CreateKINDCluster(t, &kind.KINDClusterCreateParams{
 		Test:        test,
 		ClusterName: "kube-proxy",
-		Containers: []*tests.SSHContainersForKind{
+		Containers: []*kind.SSHContainersForKind{
 			{
 				Client:    sshClient,
 				Container: container,

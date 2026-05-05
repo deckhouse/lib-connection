@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package testssh
+package ssh_test
 
 import (
 	"context"
@@ -30,6 +30,7 @@ import (
 	sshconfig "github.com/deckhouse/lib-connection/pkg/ssh/config"
 	"github.com/deckhouse/lib-connection/pkg/ssh/gossh"
 	"github.com/deckhouse/lib-connection/pkg/tests"
+	kind "github.com/deckhouse/lib-connection/pkg/tests/e2e/kube/kind"
 )
 
 func TestKubeProxy(t *testing.T) {
@@ -146,10 +147,10 @@ func startContainerAndKind(t *testing.T, test *tests.Test, opts ...tests.TestCon
 		},
 	}
 
-	kindCluster := tests.CreateKINDCluster(t, &tests.KINDClusterCreateParams{
+	kindCluster := kind.CreateKINDCluster(t, &kind.KINDClusterCreateParams{
 		Test:        test,
 		ClusterName: "kube-proxy-general",
-		Containers: []*tests.SSHContainersForKind{
+		Containers: []*kind.SSHContainersForKind{
 			{
 				Client:    startClientForContainer(t, test, rt, container),
 				Container: container,

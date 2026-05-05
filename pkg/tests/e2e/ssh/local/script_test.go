@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package local
+package local_test
 
 import (
 	"bytes"
@@ -22,24 +22,25 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/deckhouse/lib-connection/pkg/ssh/local"
 	"github.com/deckhouse/lib-connection/pkg/tests"
 )
 
 const testRunScript = `#! /bin/bash
-echo $@
+echo -n $@
 exit 0`
 
 func TestScriptExecute(t *testing.T) {
-	tst := tests.ShouldNewTest(t, "LocalExecuteCommand")
+	tst := tests.ShouldNewIntegrationTest(t, "LocalExecuteScript")
 
 	path, err := tst.CreateTmpFile(testRunScript, true, "run-local")
 	require.NoError(t, err, "Script for local run should created")
 
-	script := NewNodeInterface(tst.Settings()).UploadScript(path, "arg 1", "arg 2")
+	script := local.NewNodeInterface(tst.Settings()).UploadScript(path, "arg 1", "arg 2")
 
 	stdout, err := script.Execute(context.Background())
 	require.NoError(t, err, "local script should executed")
-	require.Equal(t, string(stdout), "arg 1 arg 2")
+	require.Equal(t, "arg 1 arg 2", string(stdout))
 }
 
 func TestExecuteBundle(t *testing.T) {
@@ -60,9 +61,9 @@ func TestExecuteBundle(t *testing.T) {
 
 	testDir := tests.PrepareFakeBashibleBundle(t, tst, entrypoint, "bashible")
 
-	node := NewNodeInterface(tst.Settings())
+	node := local.NewNodeInterface(tst.Settings())
 
-	t.Run("Upload and execute bundle to container via existing ssh client", func(t *testing.T) {
+	t.Run("Upload and execute bundle local", func(t *testing.T) {
 		cases := []struct {
 			title           string
 			scriptArgs      []string
@@ -118,11 +119,10 @@ func TestExecuteBundle(t *testing.T) {
 
 				s := node.UploadScript(entrypoint, c.scriptArgs...)
 
-				sImpl, ok := s.(*Script)
+				sImpl, ok := s.(*local.Script)
 				require.True(t, ok, "should convert to impl")
 
-				sImpl.bundleDest = bundleDest
-				sImpl.forceBundleNoSudo = true
+				sImpl.WithBundleDest(bundleDest).WithForceNoSudoForBundle(true)
 
 				loggerBuf.Reset()
 

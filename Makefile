@@ -22,6 +22,8 @@ GOFUMPT_VERSION=0.9.2
 JQ_VERSION=1.8.1
 KIND_VERSION=0.31.0
 
+export DHCTL_TESTS_OPENSSH_IMAGE = lscr.io/linuxserver/openssh-server:10.0_p1-r9-ls209
+
 PLATFORM_NAME := $(shell uname -m)
 
 OS_NAME := $(shell uname)
@@ -127,7 +129,10 @@ go-deps/ci/check/no-tidy: go-installed go-deps/tidy
 		exit 1; \
 	fi
 
-test: go-installed docker-installed bin/kind
+test/pull-ssh-image: docker-installed
+	@docker pull $(DHCTL_TESTS_OPENSSH_IMAGE)
+
+test: go-installed docker-installed bin/kind test/pull-ssh-image
 	./hack/run_tests.sh
 	$(MAKE) clean/test
 
