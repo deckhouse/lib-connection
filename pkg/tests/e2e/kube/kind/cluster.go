@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"regexp"
 	"strings"
@@ -30,10 +31,10 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 
 	connection "github.com/deckhouse/lib-connection/pkg"
+	"github.com/deckhouse/lib-connection/pkg/tests"
 )
 
 const (
-	KindBinary = "../../../bin/kind"
 	kindConfig = `
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
@@ -48,11 +49,11 @@ var (
 
 type SSHContainersForKind struct {
 	Client    connection.SSHClient
-	Container *TestContainerWrapper
+	Container *tests.TestContainerWrapper
 }
 
 type KINDClusterCreateParams struct {
-	Test        *Test
+	Test        *tests.Test
 	ClusterName string
 	Containers  []*SSHContainersForKind
 
@@ -64,7 +65,7 @@ type KINDCluster struct {
 	ControlPlaneIP   string
 	ControlPlanePort string
 
-	test       *Test
+	test       *tests.Test
 	kubeconfig string
 	restConfig *rest.Config
 }
@@ -74,7 +75,7 @@ func (c *KINDCluster) appendClusterNameArg(args []string) []string {
 }
 
 func (c *KINDCluster) runKind(args ...string) (string, error) {
-	cmd := exec.Command(KindBinary, c.appendClusterNameArg(args)...)
+	cmd := exec.Command(getKINDBinary(), c.appendClusterNameArg(args)...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
@@ -238,7 +239,7 @@ func CreateKINDCluster(t *testing.T, params *KINDClusterCreateParams) *KINDClust
 	test.GetLogger().InfoF("Creating KIND cluster %s...", clusterName)
 
 	out, err := cluster.runKind(args...)
-	require.NoError(t, err, "not create kind cluster: %w:%s\n", out)
+	require.NoError(t, err, "not create kind cluster: %w:%s\n", err, out)
 
 	test.GetLogger().InfoF("KIND cluster %s created:\n%s", clusterName, out)
 
@@ -292,7 +293,7 @@ func runDockerForKINDContainer(cluster *KINDCluster, name string, args ...string
 
 	err := retry.NewLoopWithParams(params).Run(func() error {
 		var err error
-		out, err = RunDockerWithOut(args...)
+		out, err = tests.RunDockerWithOut(args...)
 		out = strings.TrimSpace(out)
 		return err
 	})
@@ -461,4 +462,12 @@ func (p *localKubectlPreparator) prepareLocalKubeCtlInSSHContainer(t *testing.T,
 		"/etc/kubernetes/admin.conf",
 	)
 	checkErrorDuringCreateCluster(t, cluster, err, "failed to create link to kube config on ssh container %s", containerName)
+}
+
+func getKINDBinary() string {
+	if bin := os.Getenv("TEST_KIND_BINARY"); bin != "" {
+		return bin
+	}
+
+	return "../../../../bin/kind"
 }

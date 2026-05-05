@@ -32,6 +32,7 @@ import (
 	"github.com/deckhouse/lib-connection/pkg/kube"
 	"github.com/deckhouse/lib-connection/pkg/provider"
 	"github.com/deckhouse/lib-connection/pkg/tests"
+	kind "github.com/deckhouse/lib-connection/pkg/tests/e2e/kube/kind"
 )
 
 func TestKubeExec(t *testing.T) {
@@ -41,7 +42,7 @@ func TestKubeExec(t *testing.T) {
 		tests.TestWithParallelRun(false),
 	)
 
-	kindCluster := tests.CreateKINDCluster(t, &tests.KINDClusterCreateParams{
+	kindCluster := kind.CreateKINDCluster(t, &kind.KINDClusterCreateParams{
 		Test:                                execTest,
 		ClusterName:                         "exec-in-pod",
 		NoPrepareLocalKubectlInSSHContainer: true,
@@ -161,7 +162,7 @@ print(data, end="")
 	})
 }
 
-func getKubeProviderForExec(t *testing.T, test *tests.Test, cluster *tests.KINDCluster) *provider.DefaultKubeProvider {
+func getKubeProviderForExec(t *testing.T, test *tests.Test, cluster *kind.KINDCluster) *provider.DefaultKubeProvider {
 	sett := test.Settings()
 
 	restCfg, err := cluster.RESTConfig()

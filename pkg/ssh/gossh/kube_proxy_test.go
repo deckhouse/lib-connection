@@ -17,6 +17,7 @@ package gossh
 import (
 	"context"
 	"fmt"
+	"os"
 	"testing"
 	"time"
 
@@ -28,6 +29,10 @@ import (
 
 func TestKubeProxy(t *testing.T) {
 	test := tests.ShouldNewIntegrationTest(t, "TestKubeGoProxy")
+
+	if kindBinEnv := os.Getenv("TEST_KIND_BINARY"); kindBinEnv == "" {
+		t.Setenv("TEST_KIND_BINARY", "../../../bin/kind")
+	}
 
 	sshClient, container := prepareContainerForTestKubeProxy(t, test)
 

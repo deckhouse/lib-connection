@@ -35,6 +35,7 @@ import (
 	sshconfig "github.com/deckhouse/lib-connection/pkg/ssh/config"
 	"github.com/deckhouse/lib-connection/pkg/ssh/gossh"
 	"github.com/deckhouse/lib-connection/pkg/tests"
+	kind "github.com/deckhouse/lib-connection/pkg/tests/e2e/kube/kind"
 )
 
 func TestDefaultKubeProvider(t *testing.T) {
@@ -423,7 +424,7 @@ func TestDefaultKubeProvider(t *testing.T) {
 	t.Run("OverKubeconfig", func(t *testing.T) {
 		rt := runTest{name: "overKubeconfig"}
 
-		getKubeconfigKubeProviderWithPort := func(t *testing.T, test *tests.Test, kind *tests.KINDCluster, port string) (*provider.DefaultKubeProvider, *provider.DefaultSSHProvider) {
+		getKubeconfigKubeProviderWithPort := func(t *testing.T, test *tests.Test, kind *kind.KINDCluster, port string) (*provider.DefaultKubeProvider, *provider.DefaultSSHProvider) {
 			defaultConfig := connectionConfigForContainer(firstContainer, rt.mode)
 			sshProvider := getSSHProvider(test, defaultConfig)
 			registerCleanupSSHProvider(t, test, sshProvider)
@@ -442,7 +443,7 @@ func TestDefaultKubeProvider(t *testing.T) {
 			return kubeProvider, sshProvider
 		}
 
-		getKubeconfigKubeProvider := func(t *testing.T, test *tests.Test, kind *tests.KINDCluster) (*provider.DefaultKubeProvider, *provider.DefaultSSHProvider) {
+		getKubeconfigKubeProvider := func(t *testing.T, test *tests.Test, kind *kind.KINDCluster) (*provider.DefaultKubeProvider, *provider.DefaultSSHProvider) {
 			return getKubeconfigKubeProviderWithPort(t, test, kind, kind.ControlPlanePort)
 		}
 
@@ -498,7 +499,7 @@ func TestDefaultKubeProvider(t *testing.T) {
 	t.Run("OverRESTConfig", func(t *testing.T) {
 		rt := runTest{name: "overRESTKubeconfig"}
 
-		getKubeconfigKubeProvider := func(t *testing.T, test *tests.Test, kind *tests.KINDCluster, token ...string) (*provider.DefaultKubeProvider, *provider.DefaultSSHProvider) {
+		getKubeconfigKubeProvider := func(t *testing.T, test *tests.Test, kind *kind.KINDCluster, token ...string) (*provider.DefaultKubeProvider, *provider.DefaultSSHProvider) {
 			defaultConfig := connectionConfigForContainer(firstContainer, rt.mode)
 			sshProvider := getSSHProvider(test, defaultConfig)
 			registerCleanupSSHProvider(t, test, sshProvider)
@@ -572,7 +573,7 @@ func TestDefaultKubeProvider(t *testing.T) {
 	t.Run("LocalRun", func(t *testing.T) {
 		rt := runTest{name: "local_run"}
 
-		getKubeconfigKubeProvider := func(t *testing.T, test *tests.Test, kind *tests.KINDCluster, rewriteEnv ...string) *provider.DefaultKubeProvider {
+		getKubeconfigKubeProvider := func(t *testing.T, test *tests.Test, kind *kind.KINDCluster, rewriteEnv ...string) *provider.DefaultKubeProvider {
 			path := ""
 
 			if len(rewriteEnv) > 0 {
@@ -654,8 +655,8 @@ func (r runTest) getName(t *testing.T) string {
 	return fmt.Sprintf("KubeProvider%s%s", name, r.name)
 }
 
-func createKINDCluster(t *testing.T, test *tests.Test, containers ...*tests.TestContainerWrapper) *tests.KINDCluster {
-	forKind := make([]*tests.SSHContainersForKind, 0, len(containers))
+func createKINDCluster(t *testing.T, test *tests.Test, containers ...*tests.TestContainerWrapper) *kind.KINDCluster {
+	forKind := make([]*kind.SSHContainersForKind, 0, len(containers))
 	for _, container := range containers {
 		client := gossh.NewClient(
 			context.TODO(),
@@ -667,13 +668,13 @@ func createKINDCluster(t *testing.T, test *tests.Test, containers ...*tests.Test
 		err := client.Start()
 		require.NoError(t, err, "client should start for %s", container.Container.ContainerSettings().ContainerName)
 
-		forKind = append(forKind, &tests.SSHContainersForKind{
+		forKind = append(forKind, &kind.SSHContainersForKind{
 			Container: container,
 			Client:    client,
 		})
 	}
 
-	kindCluster := tests.CreateKINDCluster(t, &tests.KINDClusterCreateParams{
+	kindCluster := kind.CreateKINDCluster(t, &kind.KINDClusterCreateParams{
 		Test:        test,
 		ClusterName: "kube-provider-client",
 		Containers:  forKind,
