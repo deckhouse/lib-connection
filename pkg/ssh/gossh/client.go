@@ -16,6 +16,7 @@ package gossh
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"slices"
@@ -815,20 +816,59 @@ func (s *Client) stopRemoteKubeProxies() error {
 		ctx = context.Background()
 	}
 
-	cmd := NewSSHCommand(s, "killall kubectl")
+	err := errors.Join(
+		s.stopRemoteKubectl(ctx),
+		s.stopRemoteD8KProxy(ctx),
+	)
 
-	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
-	cmd.Sudo(cctx)
-	out, err := cmd.CombinedOutput(cctx)
 	if err != nil {
-		if !strings.Contains(string(out), "no process killed") {
-			return err
-		}
+		return err
 	}
 
 	s.debug("Kube proxies on remote were stopped")
+	return nil
+}
+
+func (s *Client) stopRemoteKubectl(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	cmd := NewSSHCommand(s, "killall kubectl")
+	cmd.Sudo(ctx)
+	out, err := cmd.CombinedOutput(ctx)
+
+	if err != nil {
+		outStr := string(out)
+
+		if strings.Contains(outStr, "no process killed") ||
+			strings.Contains(outStr, "no process found") {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+func (s *Client) stopRemoteD8KProxy(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	// SIGKILL is used because d8 did not exit
+	// after a single SIGINT/SIGTERM — it required two signals due to
+	// incorrect signal handling.
+	// Fixed in https://github.com/deckhouse/deckhouse-cli/releases/tag/v0.30.8
+	cmd := NewSSHCommand(s, "pkill -9 -f 'd8 k proxy'")
+	cmd.Sudo(ctx)
+	out, err := cmd.CombinedOutput(ctx)
+
+	if err != nil {
+		outStr := string(out)
+
+		if strings.TrimSpace(outStr) == "" {
+			return nil
+		}
+		return err
+	}
 	return nil
 }
 
