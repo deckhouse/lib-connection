@@ -857,14 +857,19 @@ func (s *Client) stopRemoteD8KProxy(ctx context.Context) error {
 	// after a single SIGINT/SIGTERM — it required two signals due to
 	// incorrect signal handling.
 	// Fixed in https://github.com/deckhouse/deckhouse-cli/releases/tag/v0.30.8
-	cmd := NewSSHCommand(s, "pkill -9 -f 'd8 k proxy'")
+	cmd := NewSSHCommand(s, "echo 'START-PKILL' && pkill -9 -f 'd8 k proxy'")
 	cmd.Sudo(ctx)
 	out, err := cmd.CombinedOutput(ctx)
 
 	if err != nil {
-		outStr := string(out)
+		// Remove everything before START-PKILL marker
+		// Example: "SUDO-SUCCESS START-PKILL result" -> "result"
+		outStr := strings.TrimSpace(string(out))
+		if _, after, found := strings.Cut(outStr, "START-PKILL"); found {
+			outStr = strings.TrimSpace(after)
+		}
 
-		if strings.TrimSpace(outStr) == "" {
+		if outStr == "" {
 			return nil
 		}
 		return err
