@@ -113,8 +113,8 @@ func TestReverseTunnel(t *testing.T) {
 					if len(c.errFromChan) == 0 {
 						require.Equal(t, response, string(out))
 					} else {
-						errMsg := <-tun.errorCh
-						require.Contains(t, errMsg.err.Error(), c.errFromChan)
+						errMsg := <-(&tunnelBackend{tunnel: tun}).TunnelDone()
+						require.Contains(t, errMsg.Error(), c.errFromChan)
 					}
 
 					// try to up again: expecting error
