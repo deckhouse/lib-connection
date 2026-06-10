@@ -23,7 +23,7 @@ JQ_VERSION=1.8.1
 KIND_VERSION=0.31.0
 
 export TESTS_OPENSSH_IMAGE = lscr.io/linuxserver/openssh-server:10.0_p1-r9-ls209
-export TESTS_PYTHON_IMAGE = registry.deckhouse.io/base_images@sha256:b15f9150f3b51f2e11cd73db39c89eef8a075953659caf802363d4f544335fb5
+export TESTS_PYTHON_IMAGE = registry.deckhouse.ru/base_images@sha256:b15f9150f3b51f2e11cd73db39c89eef8a075953659caf802363d4f544335fb5
 
 PLATFORM_NAME := $(shell uname -m)
 
