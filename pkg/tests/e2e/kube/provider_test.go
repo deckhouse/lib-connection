@@ -60,7 +60,7 @@ func TestDefaultKubeProvider(t *testing.T) {
 	baseTest := tests.ShouldNewIntegrationTest(
 		t,
 		t.Name(),
-		tests.TestWithParallelRun(false),
+		tests.TestWithParallelRun(true),
 	)
 
 	firstContainer := tests.NewTestContainerWrapper(t, baseTest, tests.WithContainerName("first"))

@@ -259,6 +259,9 @@ func startTwoContainersWithClients(t *testing.T, test *tests.Test, createDeckhou
 }
 
 func prepareScp(t *testing.T) {
+	// $PWD/bin is shared between all tests of the run (scp resolves the ssh
+	// binary as $PWD/bin/ssh), so never remove it on cleanup: that would break
+	// scp for tests still running in parallel and could wipe tools like kind.
 	path := filepath.Join(os.Getenv("PWD"), "bin")
 	err := os.MkdirAll(path, 0o777)
 	require.NoError(t, err)
@@ -266,10 +269,6 @@ func prepareScp(t *testing.T) {
 	if err != nil && !errors.Is(err, os.ErrExist) {
 		require.NoError(t, err)
 	}
-
-	t.Cleanup(func() {
-		os.RemoveAll(path)
-	})
 }
 
 func mustPrepareData(t *testing.T, sshClient connection.SSHClient) {

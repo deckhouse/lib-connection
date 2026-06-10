@@ -27,7 +27,11 @@ import (
 )
 
 func TestUploadScriptExecute(t *testing.T) {
-	test := tests.ShouldNewIntegrationTest(t, "TestUploadScriptExecute")
+	test := tests.ShouldNewIntegrationTest(
+		t,
+		"TestUploadScriptExecute",
+		tests.TestWithParallelRun(true),
+	)
 
 	sshClient, container := startContainerAndClientWithContainer(t, test, tests.WithNoWriteSSHDConfig())
 	sshClient.WithLoopsParams(ClientLoopsParams{
@@ -140,6 +144,9 @@ func TestUploadScriptExecuteBundle(t *testing.T) {
 		"TestUploadScriptExecuteBundle",
 		tests.TestWithLoggerBuffer(loggerBuf),
 		tests.TestWithPrettyLogger(true),
+		// no parallel run: the pretty logger is built on the process-global
+		// logboek state, concurrent tests corrupt the asserted log buffer
+		tests.TestWithParallelRun(false),
 	)
 
 	sshClient, container := startContainerAndClientWithContainer(t, test, tests.WithNoWriteSSHDConfig())

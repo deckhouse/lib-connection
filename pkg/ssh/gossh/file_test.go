@@ -30,7 +30,11 @@ import (
 )
 
 func TestSSHFileUpload(t *testing.T) {
-	test := tests.ShouldNewIntegrationTest(t, "TestCommandOutput")
+	test := tests.ShouldNewIntegrationTest(
+		t,
+		"TestCommandOutput",
+		tests.TestWithParallelRun(true),
+	)
 
 	const uploadDir = "upload_dir"
 	const testFileContent = "Hello World"
@@ -175,7 +179,11 @@ func TestSSHFileUpload(t *testing.T) {
 }
 
 func TestSSHFileUploadBytes(t *testing.T) {
-	test := tests.ShouldNewIntegrationTest(t, "TestSSHFileUploadBytes")
+	test := tests.ShouldNewIntegrationTest(
+		t,
+		"TestSSHFileUploadBytes",
+		tests.TestWithParallelRun(true),
+	)
 
 	sshClient := startContainerAndClient(t, test)
 	err := os.MkdirAll(sshClient.settings.TmpDir(), 0o777)
@@ -237,7 +245,11 @@ func TestCreateEmptyTmpFile(t *testing.T) {
 }
 
 func TestSSHFileDownload(t *testing.T) {
-	test := tests.ShouldNewIntegrationTest(t, "TestSSHFileDownload")
+	test := tests.ShouldNewIntegrationTest(
+		t,
+		"TestSSHFileDownload",
+		tests.TestWithParallelRun(true),
+	)
 
 	sshClient := startContainerAndClient(t, test)
 
@@ -395,7 +407,11 @@ func TestSSHFileDownload(t *testing.T) {
 }
 
 func TestSSHFileDownloadBytes(t *testing.T) {
-	test := tests.ShouldNewIntegrationTest(t, "TestSSHFileDownloadBytes")
+	test := tests.ShouldNewIntegrationTest(
+		t,
+		"TestSSHFileDownloadBytes",
+		tests.TestWithParallelRun(true),
+	)
 
 	sshClient := startContainerAndClient(t, test)
 

@@ -26,7 +26,11 @@ import (
 )
 
 func TestCommandOutput(t *testing.T) {
-	tst := tests.ShouldNewIntegrationTest(t, "LocalOutputCommand")
+	tst := tests.ShouldNewIntegrationTest(
+		t,
+		"LocalOutputCommand",
+		tests.TestWithParallelRun(true),
+	)
 
 	content := "Hello world"
 
@@ -39,7 +43,11 @@ func TestCommandOutput(t *testing.T) {
 }
 
 func TestCommandCombinedOutput(t *testing.T) {
-	tst := tests.ShouldNewIntegrationTest(t, "LocalCombineOutput")
+	tst := tests.ShouldNewIntegrationTest(
+		t,
+		"LocalCombineOutput",
+		tests.TestWithParallelRun(true),
+	)
 
 	scriptPath := stdoutStdErrScript(t, tst)
 
@@ -51,7 +59,11 @@ func TestCommandCombinedOutput(t *testing.T) {
 }
 
 func TestCommandRun(t *testing.T) {
-	tst := tests.ShouldNewIntegrationTest(t, "LocalRun")
+	tst := tests.ShouldNewIntegrationTest(
+		t,
+		"LocalRun",
+		tests.TestWithParallelRun(true),
+	)
 
 	scriptPath := stdoutStdErrScript(t, tst)
 
@@ -79,7 +91,11 @@ func TestCommandRun(t *testing.T) {
 }
 
 func TestCommandPipe(t *testing.T) {
-	tst := tests.ShouldNewIntegrationTest(t, "LocalRunPipe")
+	tst := tests.ShouldNewIntegrationTest(
+		t,
+		"LocalRunPipe",
+		tests.TestWithParallelRun(true),
+	)
 
 	cmd := local.NewCommand(
 		tst.Settings(),

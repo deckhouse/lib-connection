@@ -22,7 +22,8 @@ GOFUMPT_VERSION=0.9.2
 JQ_VERSION=1.8.1
 KIND_VERSION=0.31.0
 
-export DHCTL_TESTS_OPENSSH_IMAGE = lscr.io/linuxserver/openssh-server:10.0_p1-r9-ls209
+export TESTS_OPENSSH_IMAGE = lscr.io/linuxserver/openssh-server:10.0_p1-r9-ls209
+export TESTS_PYTHON_IMAGE = registry.deckhouse.io/base_images@sha256:b15f9150f3b51f2e11cd73db39c89eef8a075953659caf802363d4f544335fb5
 
 PLATFORM_NAME := $(shell uname -m)
 
@@ -130,9 +131,12 @@ go-deps/ci/check/no-tidy: go-installed go-deps/tidy
 	fi
 
 test/pull-ssh-image: docker-installed
-	@docker pull $(DHCTL_TESTS_OPENSSH_IMAGE)
+	@docker pull $(TESTS_OPENSSH_IMAGE)
 
-test: go-installed docker-installed bin/kind test/pull-ssh-image
+test/pull-python-image: docker-installed
+	@docker pull $(TESTS_PYTHON_IMAGE)
+
+test: go-installed docker-installed bin/kind test/pull-ssh-image test/pull-python-image
 	./hack/run_tests.sh
 	$(MAKE) clean/test
 

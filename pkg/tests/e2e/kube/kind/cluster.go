@@ -270,6 +270,38 @@ func CreateKINDCluster(t *testing.T, params *KINDClusterCreateParams) *KINDClust
 	return cluster
 }
 
+// LoadDockerImage pulls sourceImage into the local docker daemon, retags it
+// and loads it into the cluster nodes, so pods do not pull from an external
+// registry. Returns the tag to use in pod specs: kind cannot load
+// digest-only references, so the image is loaded under targetTag.
+func (c *KINDCluster) LoadDockerImage(t *testing.T, sourceImage, targetTag string) string {
+	t.Helper()
+
+	_, err := runDockerForKINDContainer(c, fmt.Sprintf("Pull image %s", sourceImage), "pull", sourceImage)
+	require.NoError(t, err, "failed to pull image %s", sourceImage)
+
+	_, err = runDockerForKINDContainer(c, fmt.Sprintf("Tag image %s as %s", sourceImage, targetTag), "tag", sourceImage, targetTag)
+	require.NoError(t, err, "failed to tag image %s as %s", sourceImage, targetTag)
+
+	loadParams := retry.NewEmptyParams(
+		retry.WithName("Load image %s into KIND cluster %s", targetTag, c.Name),
+		retry.WithAttempts(10),
+		retry.WithWait(2*time.Second),
+		retry.WithLogger(c.test.GetLogger()),
+	)
+
+	err = retry.NewLoopWithParams(loadParams).Run(func() error {
+		out, err := c.runKind("load", "docker-image", targetTag)
+		if err != nil {
+			return fmt.Errorf("%s: %w", out, err)
+		}
+		return nil
+	})
+	require.NoError(t, err, "failed to load image %s into kind cluster %s", targetTag, c.Name)
+
+	return targetTag
+}
+
 func execInKINDContainer(cluster *KINDCluster, name string, args ...string) (string, error) {
 	a := []string{
 		"exec",

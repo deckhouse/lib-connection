@@ -30,6 +30,10 @@ import (
 func TestKubeProxy(t *testing.T) {
 	test := tests.ShouldNewIntegrationTest(t, "TestKubeGoProxy")
 
+	// kube-proxy tests occupy the fixed DefaultLocalAPIPort and the port
+	// provider range; serialize them across parallel test binaries
+	tests.AcquireGlobalTestLock(t, "kube-proxy")
+
 	if kindBinEnv := os.Getenv("TEST_KIND_BINARY"); kindBinEnv == "" {
 		t.Setenv("TEST_KIND_BINARY", "../../../bin/kind")
 	}

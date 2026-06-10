@@ -27,7 +27,12 @@ import (
 )
 
 func TestOnlyPreparePrivateKeys(t *testing.T) {
-	test := tests.ShouldNewIntegrationTest(t, "TestOnlyPreparePrivateKeys", tests.TestIsIntegration(false))
+	test := tests.ShouldNewIntegrationTest(
+		t,
+		"TestOnlyPreparePrivateKeys",
+		tests.TestIsIntegration(false),
+		tests.TestWithParallelRun(true),
+	)
 
 	// genetaring ssh keys
 	keyWithoutPath, _, err := tests.GenerateKeys(test, "")
@@ -108,7 +113,11 @@ func TestOnlyPreparePrivateKeys(t *testing.T) {
 }
 
 func TestClientStart(t *testing.T) {
-	test := tests.ShouldNewIntegrationTest(t, "TestClientStart")
+	test := tests.ShouldNewIntegrationTest(
+		t,
+		"TestClientStart",
+		tests.TestWithParallelRun(true),
+	)
 
 	const bastionUserName = "bastionuser"
 
@@ -390,7 +399,7 @@ func TestClientKeepalive(t *testing.T) {
 }
 
 func TestDialContextVerySmall(t *testing.T) {
-	test := tests.ShouldNewIntegrationTest(t, "TestDialContextVerySmall")
+	test := tests.ShouldNewIntegrationTest(t, "TestDialContextVerySmall", tests.TestWithParallelRun(true))
 
 	sess := tests.FakeSession()
 	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(10*time.Millisecond))

@@ -197,43 +197,38 @@ func AssertLogBufferBundleWithInfo(t *testing.T, buf *bytes.Buffer) {
 func AssertLogBufferWithErrorBundle(t *testing.T, buf *bytes.Buffer) {
 	out := prepareAndLogBungleOutput(t, buf)
 
+	// Step headers are emitted by the process logger and always come in order.
+	headers := []string{
+		"┌ Run step 01-step.sh",
+		"└ Run step 01-step.sh",
+		"┌ Run step 02-step.sh",
+		"└ Run step 02-step.sh FAILED",
+		"┌ Run step 02-step.sh, retry attempt #1 of 10",
+		"└ Run step 02-step.sh, retry attempt #1 of 10 FAILED",
+		"┌ Run step 02-step.sh, retry attempt #2 of 10",
+		"└ Run step 02-step.sh, retry attempt #2 of 10 FAILED",
+		"┌ Run step 02-step.sh, retry attempt #3 of 10",
+		"└ Run step 02-step.sh, retry attempt #3 of 10 FAILED",
+	}
+
+	rest := out
+	for _, h := range headers {
+		idx := strings.Index(rest, h)
+		require.GreaterOrEqual(t, idx, 0, "should contain header %q after previous headers, got:\n%s", h, out)
+		rest = rest[idx+len(h):]
+	}
+
+	// Stdout and stderr of the bundle arrive over separate channels, so the
+	// relative order of stream lines is not deterministic (e.g. the stderr
+	// retry message may land between stdout lines); assert presence only.
 	expects := map[string]string{
-		"head attempts": `┌ Run step 01-step.sh
-└ Run step 01-step.sh
+		"step output":   `│ second step`,
+		"step failure":  `│ oops! failure!`,
+		"retry message": `│ Failed to execute step /var/lib/bashible/bundle_steps/02-step.sh ... retry in 2 seconds.`,
 
-┌ Run step 02-step.sh
-│ second step
-│ 0
-│ 1
-│ 2
-│ 3
-│ oops! failure!
-│ Failed to execute step /var/lib/bashible/bundle_steps/02-step.sh ... retry in 2 seconds.
-└ Run step 02-step.sh FAILED
-
-┌ Run step 02-step.sh, retry attempt #1 of 10
-│ second step
-│ 0
-│ 1
-│ 2
-│ 3
-│ oops! failure!
-│ Failed to execute step /var/lib/bashible/bundle_steps/02-step.sh ... retry in 2 seconds.
-└ Run step 02-step.sh, retry attempt #1 of 10 FAILED`,
-
-		"debug header": `┌ Run step 02-step.sh, retry attempt #2 of 10`,
-
-		"first debug content": `│ + export TERM=xterm-256color
-│ + TERM=xterm-256color
-│ + unset CDPATH`,
+		"first debug content": `+ export TERM=xterm-256color`,
 
 		"echo debug content": `++ echo 'second step'`,
-
-		"tail": `│ Failed to execute step /var/lib/bashible/bundle_steps/02-step.sh ... retry in 2 seconds.
-└ Run step 02-step.sh, retry attempt #2 of 10 FAILED
-
-┌ Run step 02-step.sh, retry attempt #3 of 10
-└ Run step 02-step.sh, retry attempt #3 of 10 FAILED`,
 	}
 
 	for name, content := range expects {

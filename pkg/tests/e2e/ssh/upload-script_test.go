@@ -26,7 +26,11 @@ import (
 )
 
 func TestUploadScriptExecute(t *testing.T) {
-	test := tests.ShouldNewIntegrationTest(t, "TestUploadScriptExecute")
+	test := tests.ShouldNewIntegrationTest(
+		t,
+		"TestUploadScriptExecute",
+		tests.TestWithParallelRun(true),
+	)
 
 	goSSHClient, cliSSHClient, _, err := startTwoContainersWithClients(t, test, true)
 	require.NoError(t, err)
@@ -142,6 +146,9 @@ func TestUploadScriptExecuteBundle(t *testing.T) {
 		tests.TestWithLoggerBuffer(loggerBuf),
 		tests.TestWithPrettyLogger(true),
 		tests.TestNoLogDebug(true),
+		// no parallel run: the pretty logger is built on the process-global
+		// logboek state, concurrent tests corrupt the asserted log buffer
+		tests.TestWithParallelRun(false),
 	)
 
 	goSSHClient, cliSSHClient, _, err := startTwoContainersWithClients(t, test, true)

@@ -16,7 +16,6 @@ package kube_test
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -39,7 +38,7 @@ func TestKubeExec(t *testing.T) {
 	execTest := tests.ShouldNewIntegrationTest(
 		t,
 		t.Name(),
-		tests.TestWithParallelRun(false),
+		tests.TestWithParallelRun(true),
 	)
 
 	kindCluster := kind.CreateKINDCluster(t, &kind.KINDClusterCreateParams{
@@ -52,10 +51,14 @@ func TestKubeExec(t *testing.T) {
 
 	kubeProvider := getKubeProviderForExec(t, execTest, kindCluster)
 
-	pythonImage := "registry.deckhouse.io/base_images@sha256:b15f9150f3b51f2e11cd73db39c89eef8a075953659caf802363d4f544335fb5"
-	if envImage := os.Getenv("TEST_KUBE_EXEC_PYTHON_IMAGE"); envImage != "" {
-		pythonImage = envImage
+	pythonImage := os.Getenv("TESTS_PYTHON_IMAGE")
+	if pythonImage == "" {
+		pythonImage = "registry.deckhouse.io/base_images@sha256:b15f9150f3b51f2e11cd73db39c89eef8a075953659caf802363d4f544335fb5"
 	}
+
+	// Load the image into the kind nodes beforehand, so the pod start does not
+	// depend on pulling from the external registry over a slow CI network.
+	pythonImage = kindCluster.LoadDockerImage(t, pythonImage, "lib-connection-test/python-exec:test")
 
 	generalParams := createPodForExecTest(t, execTest, pythonImage, kubeProvider)
 
@@ -174,7 +177,7 @@ func getKubeProviderForExec(t *testing.T, test *tests.Test, cluster *kind.KINDCl
 
 	initializer := provider.NewErrorSSHProviderInitializer(fmt.Errorf("ssh should not used"))
 
-	ri, err := provider.GetRunnerInterface(context.TODO(), kubeCfg, sett, initializer)
+	ri, err := provider.GetRunnerInterface(t.Context(), kubeCfg, sett, initializer)
 	require.NoError(t, err, "runner interface should provided")
 
 	loopParams := retry.NewEmptyParams(
@@ -189,7 +192,7 @@ func getKubeProviderForExec(t *testing.T, test *tests.Test, cluster *kind.KINDCl
 }
 
 func createPodForExecTest(t *testing.T, test *tests.Test, pythonImage string, kubeProvider *provider.DefaultKubeProvider) connection.PodExecParams {
-	ctx := context.TODO()
+	ctx := t.Context()
 	cl, err := kubeProvider.Client(ctx)
 	require.NoError(t, err, "client should get")
 
@@ -224,8 +227,8 @@ func createPodForExecTest(t *testing.T, test *tests.Test, pythonImage string, ku
 
 	createLoop := retry.NewEmptyParams(
 		retry.WithName("Create pod %s for test", name),
-		retry.WithAttempts(10),
-		retry.WithWait(2*time.Second),
+		retry.WithAttempts(30),
+		retry.WithWait(time.Second),
 		retry.WithLogger(test.GetLogger()),
 	)
 
@@ -237,8 +240,8 @@ func createPodForExecTest(t *testing.T, test *tests.Test, pythonImage string, ku
 
 	waitLoop := retry.NewEmptyParams(
 		retry.WithName("Wait pod %s running for test", name),
-		retry.WithAttempts(50),
-		retry.WithWait(2*time.Second),
+		retry.WithAttempts(300),
+		retry.WithWait(time.Second),
 		retry.WithLogger(test.GetLogger()),
 	)
 
@@ -266,7 +269,7 @@ func createPodForExecTest(t *testing.T, test *tests.Test, pythonImage string, ku
 }
 
 func execInPod(t *testing.T, kubeProvider *provider.DefaultKubeProvider, params *connection.PodExecParams, script string) error {
-	ctx := context.TODO()
+	ctx := t.Context()
 	cl, err := kubeProvider.Client(ctx)
 	require.NoError(t, err, "should get client to exec")
 
