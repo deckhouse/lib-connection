@@ -124,6 +124,17 @@ func (s *TunnelSupervisor) run(ctx context.Context, done chan<- struct{}) {
 
 	restarts := 0
 
+	// Trade-off: there is no periodic active probing in the steady state —
+	// once CheckTunnel passes, the loop sleeps on TunnelDone.
+	//
+	// We accept this: the tunnel's TCP keepalive is considered sufficient
+	// proof from our side that the reverse tunnel is alive,
+	// and we trust the cli/go ssh implementations to report
+	// an error (firing TunnelDone) when keepalive fails.
+	//
+	// The gap we knowingly accept is a silent degradation with the ssh
+	// session still alive (e.g., the remote listener is gone) — that would
+	// require active probing to detect.
 	for {
 		if ctx.Err() != nil {
 			return
