@@ -230,7 +230,11 @@ func TestFileUpload(t *testing.T) {
 }
 
 func TestFileUploadBytes(t *testing.T) {
-	test := tests.ShouldNewIntegrationTest(t, "TestSSHFileUploadBytes")
+	test := tests.ShouldNewIntegrationTest(
+		t,
+		"TestSSHFileUploadBytes",
+		tests.TestWithParallelRun(true),
+	)
 
 	goSSHClient, cliSSHClient, goSSHClient2, err := startTwoContainersWithClients(t, test, false)
 	require.NoError(t, err)
@@ -261,7 +265,11 @@ func TestFileUploadBytes(t *testing.T) {
 }
 
 func TestFileDownload(t *testing.T) {
-	test := tests.ShouldNewIntegrationTest(t, "TestSSHFileDownload")
+	test := tests.ShouldNewIntegrationTest(
+		t,
+		"TestSSHFileDownload",
+		tests.TestWithParallelRun(true),
+	)
 
 	goSSHClient, cliSSHClient, goSSHClient2, err := startTwoContainersWithClients(t, test, false)
 	require.NoError(t, err)
@@ -463,7 +471,11 @@ func TestFileDownload(t *testing.T) {
 }
 
 func TestFileDownloadBytes(t *testing.T) {
-	test := tests.ShouldNewIntegrationTest(t, "TestSSHFileDownloadBytes")
+	test := tests.ShouldNewIntegrationTest(
+		t,
+		"TestSSHFileDownloadBytes",
+		tests.TestWithParallelRun(true),
+	)
 
 	goSSHClient, cliSSHClient, _, err := startTwoContainersWithClients(t, test, false)
 	require.NoError(t, err)

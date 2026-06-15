@@ -606,6 +606,10 @@ func (t *reverseTunnel) Up() error {
 	return nil
 }
 
+func (t *reverseTunnel) UpCtx(ctx context.Context) error {
+	return nil
+}
+
 func (t *reverseTunnel) StartHealthMonitor(ctx context.Context, checker connection.ReverseTunnelChecker, killer connection.ReverseTunnelKiller) {
 }
 

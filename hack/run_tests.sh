@@ -27,8 +27,19 @@ if [ -n "$RUN_TEST" ]; then
   run_tests="-run ^$RUN_TEST\$"
 fi
 
+# How many packages go test builds/runs concurrently (go test -p).
+package_parallelism="${TESTS_PACKAGE_PARALLELISM:-2}"
+# How many parallel tests run concurrently inside one package (go test -parallel).
+test_parallelism="${TESTS_PARALLELISM:-4}"
+
+if [ "${RUN_TESTS_SEQUENTIALLY:-}" == "true" ]; then
+  echo "Found RUN_TESTS_SEQUENTIALLY env. Run packages and tests sequentially"
+  package_parallelism=1
+  test_parallelism=1
+fi
+
 function module_prefix_for_current_dir() {
-    echo -n "$(grep -oP 'module .*$' go.mod | sed 's|module ||')"
+    echo -n "$(sed -n 's|^module ||p' go.mod | head -n 1)"
 }
 
 all_failed_tests=""
@@ -52,7 +63,7 @@ function run_tests_in_dir() {
   local packages=""
 
   if [ -n "$expect_pkg" ]; then
-    packages="$(go list ./... | grep -v -P "$expect_pkg")"
+    packages="$(go list ./... | grep -v -E "$expect_pkg")"
   else
     packages="$(go list ./...)"
   fi
@@ -68,35 +79,17 @@ function run_tests_in_dir() {
 
   echo "Found packages: ${packages[@]} in ${run_dir} with module ${prefix}"
 
-  local failed=""
-
-  while IFS= read -r p; do
-    local pkg_dir="${p#$prefix}"
-    if [ -z "$pkg_dir" ]; then
-      echo "Package $p cannot have dir after trim $prefix"
-      return 1
-    fi
-
-    local full_pkg_path="${run_dir}${pkg_dir}"
-
-    echo "Run tests in $full_pkg_path"
-    cd "$full_pkg_path"
-    if ! echo "test -timeout 35m -v -p 1 $run_tests" | xargs go; then
-      all_failed_tests="$(echo -e "${all_failed_tests}\nTests in ${p} failed")"
-    fi
-  done <<< "$packages"
+  echo "Run tests in ${run_dir} (-p ${package_parallelism} -parallel ${test_parallelism})"
+  if ! go test -timeout 35m -v -p "$package_parallelism" -parallel "$test_parallelism" $run_tests $packages; then
+    all_failed_tests="$(echo -e "${all_failed_tests}\nTests in ${prefix} failed")"
+  fi
 }
 
 root_dir="$(pwd)"
-declare -A tests_dirs=(
-  # expect /validation after license validation run
-  ["$root_dir"]="$(module_prefix_for_current_dir)/validation\$"
-  ["${root_dir}/tests"]=""
-)
 
-for tdir in "${!tests_dirs[@]}"; do
-  run_tests_in_dir "$tdir" "${tests_dirs[$tdir]}"
-done
+# expect /validation after license validation run
+run_tests_in_dir "$root_dir" "$(module_prefix_for_current_dir)/validation\$"
+run_tests_in_dir "${root_dir}/tests" ""
 
 if [ -n "$all_failed_tests" ]; then
   echo -e "\033[31m${all_failed_tests}\033[0m"

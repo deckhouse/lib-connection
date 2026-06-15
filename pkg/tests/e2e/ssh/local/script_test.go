@@ -31,7 +31,11 @@ echo -n $@
 exit 0`
 
 func TestScriptExecute(t *testing.T) {
-	tst := tests.ShouldNewIntegrationTest(t, "LocalExecuteScript")
+	tst := tests.ShouldNewIntegrationTest(
+		t,
+		"LocalExecuteScript",
+		tests.TestWithParallelRun(true),
+	)
 
 	path, err := tst.CreateTmpFile(testRunScript, true, "run-local")
 	require.NoError(t, err, "Script for local run should created")
@@ -52,6 +56,9 @@ func TestExecuteBundle(t *testing.T) {
 		tests.TestWithLoggerBuffer(loggerBuf),
 		tests.TestWithPrettyLogger(true),
 		tests.TestNoLogDebug(true),
+		// no parallel run: the pretty logger is built on the process-global
+		// logboek state, concurrent tests corrupt the asserted log buffer
+		tests.TestWithParallelRun(false),
 	)
 
 	nodeTmpDir := tst.MustMkSubDirs(t, "node-tmp")

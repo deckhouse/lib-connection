@@ -50,7 +50,11 @@ func TestKubeProxy(t *testing.T) {
 		},
 	}
 
-	baseTest := tests.ShouldNewIntegrationTest(t, "TestBaseKubeProxy")
+	baseTest := tests.ShouldNewIntegrationTest(t, "TestBaseKubeProxy", tests.TestWithParallelRun(true))
+
+	// kube-proxy tests occupy the fixed DefaultLocalAPIPort and the port
+	// provider range; serialize them across parallel test binaries
+	tests.AcquireGlobalTestLock(t, "kube-proxy")
 
 	container := startContainerAndKind(t, baseTest)
 

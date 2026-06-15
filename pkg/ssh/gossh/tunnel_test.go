@@ -28,7 +28,11 @@ import (
 )
 
 func TestTunnel(t *testing.T) {
-	test := tests.ShouldNewIntegrationTest(t, "TestGoTunnel")
+	test := tests.ShouldNewIntegrationTest(
+		t,
+		"TestGoTunnel",
+		tests.TestWithParallelRun(true),
+	)
 
 	sshClient, container, remoteServerPort := prepareContainerForTunnelTest(t, test)
 
@@ -143,7 +147,12 @@ func TestTunnel(t *testing.T) {
 }
 
 func TestTunnelStop(t *testing.T) {
-	test := tests.ShouldNewIntegrationTest(t, "TestGoTunnelStop", tests.TestWithDebug(false))
+	test := tests.ShouldNewIntegrationTest(
+		t,
+		"TestGoTunnelStop",
+		tests.TestWithDebug(false),
+		tests.TestWithParallelRun(true),
+	)
 
 	sshClient, container, remoteServerPort := prepareContainerForTunnelTest(t, test)
 

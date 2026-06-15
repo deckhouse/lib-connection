@@ -18,14 +18,22 @@ import (
 	"crypto/sha256"
 	"fmt"
 	mathrand "math/rand"
+	"net"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 )
 
 const (
 	portRangeStart = 22000
 	portRangeEnd   = 29999
+
+	// reserved for kubeproxy: DefaultLocalAPIPort and the port provider range,
+	// random test ports must not land there
+	kubeProxyDefaultPort   = 22322
+	kubeProxyPortRangeFrom = 22340
+	kubeProxyPortRangeTo   = 22499
 )
 
 var (
@@ -40,12 +48,67 @@ func RandRange(min, max int) int {
 	return randRange(getRand(), min, max)
 }
 
+var (
+	handedOutPortsMu sync.Mutex
+	handedOutPorts   = map[int]struct{}{}
+)
+
+// reservePort remembers ports already handed out by this process, so parallel
+// tests do not get the same port between generation and actual bind.
+func reservePort(port int) bool {
+	handedOutPortsMu.Lock()
+	defer handedOutPortsMu.Unlock()
+
+	if _, ok := handedOutPorts[port]; ok {
+		return false
+	}
+
+	handedOutPorts[port] = struct{}{}
+	return true
+}
+
+// portIsFree asks the kernel: protects against collisions with ports already
+// taken by other processes (e.g. tests running in a parallel go test binary).
+func portIsFree(port int) bool {
+	l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		return false
+	}
+
+	_ = l.Close()
+	return true
+}
+
 func RandPort() int {
-	return RandRange(portRangeStart, portRangeEnd)
+	return RandPortExclude(nil)
 }
 
 func RandPortExclude(exclude []int) int {
-	return RandRangeExclude(portRangeStart, portRangeEnd, exclude)
+	randomizer := getRand()
+
+	for range 1000 {
+		v := randRange(randomizer, portRangeStart, portRangeEnd)
+
+		if v == kubeProxyDefaultPort || (v >= kubeProxyPortRangeFrom && v <= kubeProxyPortRangeTo) {
+			continue
+		}
+
+		if slices.Contains(exclude, v) {
+			continue
+		}
+
+		if !reservePort(v) {
+			continue
+		}
+
+		if !portIsFree(v) {
+			continue
+		}
+
+		return v
+	}
+
+	panic("cannot find free port after 1000 iterations")
 }
 
 func GenerateID(names ...string) string {
@@ -62,7 +125,7 @@ func GenerateID(names ...string) string {
 
 func RandRangeExclude(min, max int, exclude []int) int {
 	randomizer := getRand()
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		v := randRange(randomizer, min, max)
 		if slices.Contains(exclude, v) {
 			continue
