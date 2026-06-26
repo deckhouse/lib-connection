@@ -38,7 +38,6 @@ var supportedKinds = []string{sshConfigKind, sshHostKind}
 
 func ParseConnectionConfig(reader io.Reader, sett settings.Settings, opts ...ValidateOption) (*ConnectionConfig, error) {
 	options := &validateOptions{
-		requiredSSHHost: true,
 		strictUnmarshal: true,
 	}
 	for _, o := range opts {
