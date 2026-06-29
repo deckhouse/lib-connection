@@ -294,6 +294,9 @@ sshBastionPassword: "not_secure_password_bastion"
 			name:             "with hosts: no hosts passed",
 			input:            generateConfigWithKeys(t, validPrivateKeys, ""),
 			hasErrorContains: `at least one "SSHHost" required`,
+			opts: []ValidateOption{
+				ParseWithRequiredSSHHost(true),
+			},
 		},
 
 		{
