@@ -115,8 +115,8 @@ func NewDefaultSSHProvider(sett settings.Settings, config *sshconfig.ConnectionC
 	return provider.WithOptions(opts...)
 }
 
-func NewDefaultSSHProviderFromFlags(sett settings.Settings, flags *sshconfig.Flags, opts ...sshconfig.ValidateOption) (*DefaultSSHProvider, error) {
-	parser := sshconfig.NewFlagsParser(sett)
+func NewDefaultSSHProviderFromFlags(ctx context.Context, sett settings.Settings, flags *sshconfig.Flags, opts ...sshconfig.ValidateOption) (*DefaultSSHProvider, error) {
+	parser := sshconfig.NewFlagsParser(ctx, sett)
 	config, err := parser.ExtractConfigAfterParse(flags, opts...)
 	if err != nil {
 		return nil, err
@@ -324,7 +324,7 @@ func (p *DefaultSSHProvider) createClient(ctx context.Context, parent *session.S
 	}
 
 	if p.options.StartClient {
-		if err := client.Start(); err != nil {
+		if err := client.Start(ctx); err != nil {
 			return nil, fmt.Errorf("Cannot start client after create: %v", err)
 		}
 	}

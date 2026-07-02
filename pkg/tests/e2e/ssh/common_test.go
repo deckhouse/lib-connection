@@ -55,13 +55,13 @@ func newSessionTestLoopParams() gossh.ClientLoopsParams {
 func initBothClients(t *testing.T, ctx context.Context, setting settings.Settings, sess *session.Session, keys []session.AgentPrivateKey) (connection.SSHClient, error) {
 	goSSHClient := gossh.NewClient(ctx, setting, sess, keys).
 		WithLoopsParams(newSessionTestLoopParams())
-	err := goSSHClient.Start()
+	err := goSSHClient.Start(ctx)
 	if err != nil {
 		return nil, err
 	}
 	registerStopClient(t, goSSHClient)
 	cliSSHClient := clissh.NewClient(setting, sess, keys, true)
-	err = cliSSHClient.Start()
+	err = cliSSHClient.Start(ctx)
 
 	return goSSHClient, err
 }
@@ -163,12 +163,12 @@ func startSSHClient(t *testing.T, test *tests.Test, rt runTest, target *tests.Te
 			waitClient := gossh.NewClient(ctx, sshSettings, sess, keys).
 				WithLoopsParams(newSessionTestLoopParams())
 			defer waitClient.Stop()
-			err := waitClient.Start()
+			err := waitClient.Start(ctx)
 			require.NoError(t, err, "sshd should start")
 		}(t)
 	}
 
-	err := sshClient.Start()
+	err := sshClient.Start(ctx)
 	// expecting no error on client start
 	require.NoError(t, err)
 
@@ -221,7 +221,7 @@ func startTwoContainersWithClients(t *testing.T, test *tests.Test, createDeckhou
 	sshSettings := test.Settings()
 	goSSHClient := gossh.NewClient(ctx, sshSettings, sess, keys).
 		WithLoopsParams(newSessionTestLoopParams())
-	err := goSSHClient.Start()
+	err := goSSHClient.Start(ctx)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -235,7 +235,7 @@ func startTwoContainersWithClients(t *testing.T, test *tests.Test, createDeckhou
 	// check connection
 	goSSHClient2 := gossh.NewClient(ctx, sshSettings, sess2, keys2).
 		WithLoopsParams(newSessionTestLoopParams())
-	err = goSSHClient2.Start()
+	err = goSSHClient2.Start(ctx)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -253,7 +253,7 @@ func startTwoContainersWithClients(t *testing.T, test *tests.Test, createDeckhou
 	}
 
 	cliSSHClient := clissh.NewClient(sshSettings, sess2, keys2, true)
-	err = cliSSHClient.Start()
+	err = cliSSHClient.Start(ctx)
 
 	return goSSHClient, cliSSHClient, goSSHClient2, err
 }

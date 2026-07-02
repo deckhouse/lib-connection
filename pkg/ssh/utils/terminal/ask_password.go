@@ -24,14 +24,13 @@ import (
 	terminal "golang.org/x/term"
 )
 
-func AskPassword(logger *slog.Logger, prompt string) ([]byte, error) {
+func AskPassword(ctx context.Context, logger *slog.Logger, prompt string) ([]byte, error) {
 	fd := int(os.Stdin.Fd())
 
 	if !terminal.IsTerminal(fd) {
 		return nil, fmt.Errorf("stdin is not a terminal, cannot read password")
 	}
 
-	ctx := context.Background()
 	logger.InfoContext(ctx, prompt, dhlog.ShowInCompacted())
 	data, err := terminal.ReadPassword(fd)
 	logger.InfoContext(ctx, fmt.Sprint(), dhlog.ShowInCompacted())

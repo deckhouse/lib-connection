@@ -16,6 +16,7 @@ package utils
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -28,7 +29,7 @@ import (
 
 type PassphraseConsumer interface {
 	DefaultPassword() []byte
-	AskPassword(prompt string) ([]byte, error)
+	AskPassword(ctx context.Context, prompt string) ([]byte, error)
 }
 
 type baseConsumer struct {
@@ -53,8 +54,8 @@ func NewTerminalPassphraseConsumer(logger *slog.Logger, defaultPassword []byte) 
 	}
 }
 
-func (c *TerminalPassphraseConsumer) AskPassword(prompt string) ([]byte, error) {
-	return terminal.AskPassword(c.logger, prompt)
+func (c *TerminalPassphraseConsumer) AskPassword(ctx context.Context, prompt string) ([]byte, error) {
+	return terminal.AskPassword(ctx, c.logger, prompt)
 }
 
 type DefaultPassphraseOnlyConsumer struct {
@@ -73,13 +74,14 @@ func (c *DefaultPassphraseOnlyConsumer) AskPassword(prompt string) ([]byte, erro
 	return nil, fmt.Errorf("%s. AskPassword not allow for DefaultPassphraseOnlyConsumer", prompt)
 }
 
-func ParseSSHPrivateKeyFile(path string, password string, logger *slog.Logger) (any, string, error) {
+func ParseSSHPrivateKeyFile(ctx context.Context, path string, password string, logger *slog.Logger) (any, string, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return nil, "", fmt.Errorf("Cannot read private key file %s: %w", path, err)
 	}
 
 	return ParseSSHPrivateKey(
+		ctx,
 		content,
 		path,
 		NewTerminalPassphraseConsumer(
@@ -89,7 +91,7 @@ func ParseSSHPrivateKeyFile(path string, password string, logger *slog.Logger) (
 	)
 }
 
-func ParseSSHPrivateKey(keyData []byte, keyName string, passphraseConsumer PassphraseConsumer) (any, string, error) {
+func ParseSSHPrivateKey(ctx context.Context, keyData []byte, keyName string, passphraseConsumer PassphraseConsumer) (any, string, error) {
 	keyData = append(bytes.TrimSpace(keyData), '\n')
 
 	var sshKey any
@@ -110,7 +112,7 @@ func ParseSSHPrivateKey(keyData []byte, keyName string, passphraseConsumer Passp
 		switch {
 		case errors.As(err, &passphraseMissingError):
 			var err error
-			if passphrase, err = passphraseConsumer.AskPassword(askPrompt); err != nil {
+			if passphrase, err = passphraseConsumer.AskPassword(ctx, askPrompt); err != nil {
 				return nil, "", err
 			}
 			sshKey, err = ssh.ParseRawPrivateKeyWithPassphrase(keyData, passphrase)

@@ -193,7 +193,7 @@ func startClientForContainer(t *testing.T, test *tests.Test, rt runTest, contain
 		sshClient = clissh.NewClient(sshSettings, sess, keys, true)
 	}
 
-	err := sshClient.Start()
+	err := sshClient.Start(ctx)
 	// expecting no error on client start
 	require.NoError(t, err)
 

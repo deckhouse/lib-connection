@@ -665,7 +665,7 @@ func createKINDCluster(t *testing.T, test *tests.Test, containers ...*tests.Test
 			container.AgentPrivateKeys(),
 		)
 
-		err := client.Start()
+		err := client.Start(context.Background())
 		require.NoError(t, err, "client should start for %s", container.Container.ContainerSettings().ContainerName)
 
 		forKind = append(forKind, &kind.SSHContainersForKind{

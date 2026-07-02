@@ -54,7 +54,7 @@ func AppendSSHAdditionalCommand(settProvider SettingsProvider, rootCmd *cobra.Co
 		return nil, err
 	}
 
-	sshParser := sshconfig.NewFlagsParser(settProvider())
+	sshParser := sshconfig.NewFlagsParser(rootCmd.Context(), settProvider())
 	sshFlags, err := sshParser.InitFlags(flagSet)
 	if err != nil {
 		return nil, err

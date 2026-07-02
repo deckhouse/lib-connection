@@ -134,7 +134,7 @@ func TestCommandOutput(t *testing.T) {
 				sshSettings := tests.CreateDefaultTestSettings(test)
 				sshClient := NewClient(ctx, sshSettings, sess, keys).
 					WithLoopsParams(newSessionTestLoopParams())
-				err := sshClient.Start()
+				err := sshClient.Start(ctx)
 				// expecting no error on client start
 				require.NoError(t, err)
 
@@ -269,7 +269,7 @@ func TestCommandCombinedOutput(t *testing.T) {
 				sshSettings := tests.CreateDefaultTestSettings(test)
 				sshClient := NewClient(ctx, sshSettings, sess, keys).
 					WithLoopsParams(newSessionTestLoopParams())
-				err := sshClient.Start()
+				err := sshClient.Start(ctx)
 				// expecting no error on client start
 				require.NoError(t, err)
 
@@ -394,7 +394,7 @@ func TestCommandRun(t *testing.T) {
 				sshSettings := tests.CreateDefaultTestSettings(test)
 				sshClient := NewClient(ctx, sshSettings, sess, keys).
 					WithLoopsParams(newSessionTestLoopParams())
-				err := sshClient.Start()
+				err := sshClient.Start(ctx)
 				// expecting no error on client start
 				require.NoError(t, err)
 
@@ -453,7 +453,7 @@ func TestCommandStart(t *testing.T) {
 	sshSettings := tests.CreateDefaultTestSettings(test)
 	sshClient := NewClient(ctx, sshSettings, sess, keys).
 		WithLoopsParams(newSessionTestLoopParams())
-	err := sshClient.Start()
+	err := sshClient.Start(ctx)
 	// expecting no error on client start
 	require.NoError(t, err)
 
@@ -658,7 +658,7 @@ func TestCommandSudoRun(t *testing.T) {
 				sshClient := NewClient(ctx, sshSettings, c.settings, c.keys).
 					WithLoopsParams(newSessionTestLoopParams())
 
-				err := sshClient.Start()
+				err := sshClient.Start(ctx)
 				// expecting no error on client start
 				require.NoError(t, err)
 

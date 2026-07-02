@@ -281,7 +281,7 @@ func (p *SSHProvider) newClient(session *session.Session, k []session.AgentPriva
 	p.commandProviders.copyTo(c.commandProviders)
 	p.fileProviders.copyTo(c.fileProviders)
 
-	err := c.Start()
+	err := c.Start(context.Background())
 	return c, err
 }
 
@@ -338,12 +338,12 @@ func (c *Client) WithSettings(sett settings.Settings) *Client {
 	return c
 }
 
-func (c *Client) OnlyPreparePrivateKeys() error {
+func (c *Client) OnlyPreparePrivateKeys(ctx context.Context) error {
 	// Double start is safe here because for initializing private keys we are using sync.Once
-	return c.Start()
+	return c.Start(ctx)
 }
 
-func (c *Client) Start() error {
+func (c *Client) Start(ctx context.Context) error {
 	if c.SessionSettings == nil {
 		return fmt.Errorf("Possible bug in ssh client: session should be created before start")
 	}
@@ -522,7 +522,7 @@ func (c *Client) PrivateKeys() []session.AgentPrivateKey {
 	return c.privateKeys
 }
 
-func (c *Client) RefreshPrivateKeys() error {
+func (c *Client) RefreshPrivateKeys(_ context.Context) error {
 	return nil
 }
 

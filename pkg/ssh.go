@@ -263,9 +263,9 @@ type SSHLoopHandler func(s SSHClient) error
 
 type SSHClient interface {
 	// 	BeforeStart safe starting without create session. Should safe for next Start call
-	OnlyPreparePrivateKeys() error
+	OnlyPreparePrivateKeys(ctx context.Context) error
 
-	Start() error
+	Start(ctx context.Context) error
 
 	// Tunnel is used to open local (L) and remote (R) tunnels
 	Tunnel(address string) Tunnel
@@ -298,7 +298,7 @@ type SSHClient interface {
 
 	PrivateKeys() []session.AgentPrivateKey
 
-	RefreshPrivateKeys() error
+	RefreshPrivateKeys(ctx context.Context) error
 
 	IsStopped() bool
 }

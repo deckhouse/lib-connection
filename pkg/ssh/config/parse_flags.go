@@ -266,13 +266,13 @@ type FlagsParser struct {
 // init FlagsParser
 // prefix will trim right all _ ang - symbols and spaces left and right from settings.Settings EnvsPrefix
 // By default parser add _ after prefix for all env vars
-func NewFlagsParser(sett settings.Settings) *FlagsParser {
+func NewFlagsParser(ctx context.Context, sett settings.Settings) *FlagsParser {
 	askFromTerminal := func(prompt string) ([]byte, error) {
-		return terminal.AskPassword(sett.Logger(), prompt)
+		return terminal.AskPassword(ctx, sett.Logger(), prompt)
 	}
 
 	terminalPrivateKeyPasswordExtractorWithoutDefault := func(path string, logger *slog.Logger) (string, error) {
-		return terminalPrivateKeyPasswordExtractor(path, make([]byte, 0), logger)
+		return terminalPrivateKeyPasswordExtractor(ctx, path, make([]byte, 0), logger)
 	}
 
 	parser := &FlagsParser{
@@ -708,8 +708,8 @@ func (p *FlagsParser) getPasswordsFromUser(flags *Flags) (*passwordsFromUser, er
 	return res, nil
 }
 
-func terminalPrivateKeyPasswordExtractor(path string, defaultPassword []byte, logger *slog.Logger) (string, error) {
-	_, password, err := utils.ParseSSHPrivateKeyFile(path, string(defaultPassword), logger)
+func terminalPrivateKeyPasswordExtractor(ctx context.Context, path string, defaultPassword []byte, logger *slog.Logger) (string, error) {
+	_, password, err := utils.ParseSSHPrivateKeyFile(ctx, path, string(defaultPassword), logger)
 
 	return password, err
 }

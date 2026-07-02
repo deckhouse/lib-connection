@@ -101,11 +101,11 @@ func TestOnlyPreparePrivateKeys(t *testing.T) {
 			t.Run(c.title, func(t *testing.T) {
 				sshSettings := test.Settings()
 				sshClient := NewClient(context.Background(), sshSettings, nil, c.keys)
-				err := sshClient.OnlyPreparePrivateKeys()
+				err := sshClient.OnlyPreparePrivateKeys(context.Background())
 				assertError(t, c, err)
 
 				// double run
-				err = sshClient.OnlyPreparePrivateKeys()
+				err = sshClient.OnlyPreparePrivateKeys(context.Background())
 				assertError(t, c, err)
 			})
 		}
@@ -278,7 +278,7 @@ func TestClientStart(t *testing.T) {
 					ConnectToHostDirectly:   tests.GetTestLoopParamsForFailed(),
 				})
 
-			err := sshClient.Start()
+			err := sshClient.Start(sshClient.ctx)
 			sshClient.Stop()
 
 			if !c.wantErr {
@@ -314,7 +314,7 @@ func TestClientKeepalive(t *testing.T) {
 				NewSession: tests.GetTestLoopParamsForFailed(),
 			})
 
-		err := sshClient.Start()
+		err := sshClient.Start(sshClient.ctx)
 		// expecting no error on client start
 		require.NoError(t, err, "failed to start ssh client")
 
@@ -360,7 +360,7 @@ func TestClientKeepalive(t *testing.T) {
 		defer cancel()
 		sshSettings := tests.CreateDefaultTestSettings(test)
 		sshClient := NewClient(ctx, sshSettings, sess, keys)
-		err := sshClient.Start()
+		err := sshClient.Start(sshClient.ctx)
 		// expecting no error on client start
 		require.NoError(t, err)
 
@@ -369,7 +369,7 @@ func TestClientKeepalive(t *testing.T) {
 		// expecting client is not live
 		sshClient.Stop()
 		waitKeepAlive()
-		err = sshClient.Start()
+		err = sshClient.Start(sshClient.ctx)
 
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "deadline exceeded")
@@ -386,13 +386,13 @@ func TestClientKeepalive(t *testing.T) {
 		defer cancel()
 		sshSettings := tests.CreateDefaultTestSettings(test)
 		sshClient := NewClient(ctx, sshSettings, sess, keys)
-		err := sshClient.Start()
+		err := sshClient.Start(sshClient.ctx)
 		// expecting error on client start: host is unreachable, but loop should exit on context deadline exceeded
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "Loop was canceled: context deadline exceeded")
 		// expecting client is not live
 		sshClient.Stop()
-		err = sshClient.Start()
+		err = sshClient.Start(sshClient.ctx)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "deadline exceeded")
 	})
@@ -406,13 +406,13 @@ func TestDialContextVerySmall(t *testing.T) {
 	defer cancel()
 	sshSettings := tests.CreateDefaultTestSettings(test)
 	sshClient := NewClient(ctx, sshSettings, sess, make([]session.AgentPrivateKey, 0, 1))
-	err := sshClient.Start()
+	err := sshClient.Start(sshClient.ctx)
 	// expecting error on client start: host is unreachable, but loop should exit on context deadline exceeded
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "Loop was canceled: context deadline exceeded")
 	// expecting client is not live
 	sshClient.Stop()
-	err = sshClient.Start()
+	err = sshClient.Start(sshClient.ctx)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "deadline exceeded")
 }

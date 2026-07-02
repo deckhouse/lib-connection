@@ -827,7 +827,7 @@ sshBastionPassword: "not_secure_password_bastion"
 			before: func(t *testing.T, tst *test, logger *slog.Logger) {
 				defaultPassword := []byte(tst.privateKeys[0].expectedPassword)
 				tst.privateKeyExtractor = func(path string, logger *slog.Logger) (string, error) {
-					return terminalPrivateKeyPasswordExtractor(path, defaultPassword, logger)
+					return terminalPrivateKeyPasswordExtractor(context.Background(), path, defaultPassword, logger)
 				}
 				beforeAddPrivateKeys(t, tst, logger)
 			},
@@ -967,7 +967,7 @@ sshBastionPassword: "not_secure_password_bastion"
 
 			sett := tst.Settings()
 
-			parser := NewFlagsParser(sett)
+			parser := NewFlagsParser(context.Background(), sett)
 			parser.WithEnvsPrefix(testCase.envsPrefix)
 
 			if !testCase.defaultAsk {
@@ -1063,7 +1063,7 @@ sshBastionPassword: "not_secure_password_bastion"
 func TestParseFlagsNoInitialize(t *testing.T) {
 	getParser := func(t *testing.T) *FlagsParser {
 		test := tests.ShouldNewTest(t, tests.Name(t))
-		return NewFlagsParser(test.Settings())
+		return NewFlagsParser(context.Background(), test.Settings())
 	}
 
 	assertError := func(t *testing.T, config *ConnectionConfig, err error, contains string) {
@@ -1204,7 +1204,7 @@ func TestParseFlagsHelp(t *testing.T) {
 		ExpectedFlags: 15,
 		Name:          "lib-connection-ssh-internal",
 		Provider: func(sett settings.Settings, envsPrefix string) tests.TestFlagsParser {
-			parser := NewFlagsParser(sett)
+			parser := NewFlagsParser(context.Background(), sett)
 			parser.WithEnvsPrefix(envsPrefix)
 
 			return &testHelpParser{parser: parser}
@@ -1342,7 +1342,7 @@ func assertParseAndExtract(t *testing.T, params *parseFlagsAndExtractConfigParam
 
 	logger.InfoContext(context.Background(), fmt.Sprintf("Got prefix: %s", prefix))
 
-	parser := NewFlagsParser(params.test.Settings())
+	parser := NewFlagsParser(context.Background(), params.test.Settings())
 	parser.WithEnvsPrefix(prefix)
 
 	config, err := parser.ParseFlagsAndExtractConfig(params.arguments, flagSet, ParseWithRequiredSSHHost(true))
