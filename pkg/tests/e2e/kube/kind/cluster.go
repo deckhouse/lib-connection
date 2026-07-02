@@ -207,6 +207,7 @@ func (c *KINDCluster) copyREST() *rest.Config {
 }
 
 func (c *KINDCluster) runKubectlInSystemNs(name string, args ...string) (string, error) {
+	// nolint:prealloc
 	runArgs := []string{
 		"kubectl",
 		"-n",
@@ -287,7 +288,6 @@ func (c *KINDCluster) LoadDockerImage(t *testing.T, sourceImage, targetTag strin
 		retry.WithName("Load image %s into KIND cluster %s", targetTag, c.Name),
 		retry.WithAttempts(10),
 		retry.WithWait(2*time.Second),
-		retry.WithLogger(c.test.GetLogger()),
 	)
 
 	err = retry.NewLoopWithParams(loadParams).Run(func() error {
@@ -303,6 +303,7 @@ func (c *KINDCluster) LoadDockerImage(t *testing.T, sourceImage, targetTag strin
 }
 
 func execInKINDContainer(cluster *KINDCluster, name string, args ...string) (string, error) {
+	// nolint:prealloc
 	a := []string{
 		"exec",
 		cluster.containerName(),
@@ -313,12 +314,11 @@ func execInKINDContainer(cluster *KINDCluster, name string, args ...string) (str
 	return runDockerForKINDContainer(cluster, name, a...)
 }
 
-func runDockerForKINDContainer(cluster *KINDCluster, name string, args ...string) (string, error) {
+func runDockerForKINDContainer(_ *KINDCluster, name string, args ...string) (string, error) {
 	params := retry.NewEmptyParams(
 		retry.WithName("%s", name),
 		retry.WithAttempts(10),
 		retry.WithWait(2*time.Second),
-		retry.WithLogger(cluster.test.GetLogger()),
 	)
 
 	out := ""
@@ -450,7 +450,6 @@ func (p *localKubectlPreparator) prepareLocalKubeCtlInSSHContainer(t *testing.T,
 	container := sshContainer.Container.Container
 	containerName := container.ContainerSettings().ContainerName
 	cluster := p.cluster
-	test := cluster.test
 
 	kubectlVersion := p.getKubectlVersion(t)
 
@@ -458,7 +457,6 @@ func (p *localKubectlPreparator) prepareLocalKubeCtlInSSHContainer(t *testing.T,
 		retry.WithName("Download kubectl to ssh container %s", containerName),
 		retry.WithAttempts(10),
 		retry.WithWait(2*time.Second),
-		retry.WithLogger(test.GetLogger()),
 	)
 	err := retry.NewLoopWithParams(downloadKubectlParams).Run(func() error {
 		return container.DownloadKubectl(kubectlVersion)
@@ -473,7 +471,6 @@ func (p *localKubectlPreparator) prepareLocalKubeCtlInSSHContainer(t *testing.T,
 		retry.WithName("Upload kubeconfig to ssh container %s", containerName),
 		retry.WithAttempts(10),
 		retry.WithWait(2*time.Second),
-		retry.WithLogger(test.GetLogger()),
 	)
 
 	configTmp := p.getKubeConfigPath(t)

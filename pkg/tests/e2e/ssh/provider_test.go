@@ -309,6 +309,7 @@ echo -n "%s"
 	scriptLocalPath := test.MustCreateTmpFile(t, script, true, scriptName)
 	remotePath := fmt.Sprintf("/tmp/%s", scriptName)
 
+	// nolint:prealloc
 	cOpts := []tests.TestContainerWrapperSettingsOpts{
 		tests.WithVolumes([]tests.Volume{
 			{
@@ -409,7 +410,6 @@ func assertRunScript(t *testing.T, params assertRunScriptParams) {
 		retry.WithAttempts(4),
 		retry.WithWait(2*time.Second),
 		retry.WithName("Run script %s", params.executePath),
-		retry.WithLogger(params.test.GetLogger()),
 	)).RunContext(ctx, func() error {
 		var err error
 		cmd := params.client.Command(params.executePath)

@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path"
 	"path/filepath"
@@ -27,7 +28,6 @@ import (
 	"sync"
 
 	"github.com/bramvdbogaerde/go-scp"
-	"github.com/deckhouse/lib-dhctl/pkg/log"
 	gossh "github.com/deckhouse/lib-gossh"
 	"github.com/google/uuid"
 
@@ -73,7 +73,7 @@ func (f *SSHFile) Upload(ctx context.Context, srcPath, remotePath string) error 
 		}
 		defer localFile.Close()
 
-		rType, err := f.getRemoteFileStat(remotePath, logger)
+		rType, err := f.getRemoteFileStat(ctx, remotePath, logger)
 		if err != nil {
 			if !strings.ContainsAny(err.Error(), "No such file or directory") {
 				return err
@@ -82,7 +82,7 @@ func (f *SSHFile) Upload(ctx context.Context, srcPath, remotePath string) error 
 		if rType == "DIR" {
 			remotePath = remotePath + "/" + filepath.Base(srcPath)
 		}
-		logger.DebugF("starting upload local %s to remote %s", srcPath, remotePath)
+		logger.DebugContext(ctx, fmt.Sprintf("starting upload local %s to remote %s", srcPath, remotePath))
 
 		if err := CopyFile(ctx, localFile, remotePath, "0755", session); err != nil {
 			return fmt.Errorf("failed to copy file to remote host: %w", err)
@@ -116,7 +116,7 @@ func (f *SSHFile) UploadBytes(ctx context.Context, data []byte, remotePath strin
 	defer func() {
 		err := os.Remove(srcPath)
 		if err != nil {
-			f.settings.Logger().ErrorF("Error: cannot remove tmp file '%s': %v", srcPath, err)
+			f.settings.Logger().ErrorContext(ctx, fmt.Sprintf("Error: cannot remove tmp file '%s': %v", srcPath, err))
 		}
 	}()
 
@@ -132,7 +132,7 @@ func (f *SSHFile) UploadBytes(ctx context.Context, data []byte, remotePath strin
 func (f *SSHFile) Download(ctx context.Context, remotePath, dstPath string) error {
 	logger := f.settings.Logger()
 
-	fType, err := f.getRemoteFileStat(remotePath, logger)
+	fType, err := f.getRemoteFileStat(ctx, remotePath, logger)
 	if err != nil {
 		return err
 	}
@@ -194,7 +194,7 @@ func (f *SSHFile) DownloadBytes(ctx context.Context, remotePath string) ([]byte,
 	defer func() {
 		err := os.Remove(dstPath)
 		if err != nil {
-			f.settings.Logger().DebugF("Error: cannot remove tmp file '%s': %v", dstPath, err)
+			f.settings.Logger().DebugContext(ctx, fmt.Sprintf("Error: cannot remove tmp file '%s': %v", dstPath, err))
 		}
 	}()
 
@@ -225,7 +225,7 @@ func (f *SSHFile) newSession() (*gossh.Session, func(), error) {
 	return session, cleanup, nil
 }
 
-func (f *SSHFile) getRemoteFileStat(remoteFilePath string, logger log.Logger) (string, error) {
+func (f *SSHFile) getRemoteFileStat(ctx context.Context, remoteFilePath string, logger *slog.Logger) (string, error) {
 	if remoteFilePath == "." {
 		return "DIR", nil
 	}
@@ -239,7 +239,7 @@ func (f *SSHFile) getRemoteFileStat(remoteFilePath string, logger log.Logger) (s
 	command := fmt.Sprint("LC_ALL=en_US.utf8 stat -c %F " + remoteFilePath)
 	output, err := session.CombinedOutput(command)
 
-	logger.DebugF("remote path %s is %s\n", remoteFilePath, output)
+	logger.DebugContext(ctx, fmt.Sprintf("remote path %s is %s\n", remoteFilePath, output))
 
 	if strings.TrimSpace(string(output)) == "directory" {
 		return "DIR", nil

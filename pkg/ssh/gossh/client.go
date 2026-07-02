@@ -24,7 +24,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/deckhouse/lib-dhctl/pkg/log"
 	"github.com/deckhouse/lib-dhctl/pkg/retry"
 	gossh "github.com/deckhouse/lib-gossh"
 	"github.com/deckhouse/lib-gossh/agent"
@@ -615,13 +614,7 @@ func (s *Client) createSSHConnection(c net.Conn, addr string, config *gossh.Clie
 	)
 
 	if s.settings.IsDebug() {
-		sshLogger := log.NewSLogWithPrefixAndDebug(
-			context.TODO(),
-			s.settings.LoggerProvider(),
-			"go-ssh",
-			true,
-		)
-		conn, ch, requestCh, err = gossh.NewClientConnWithDebug(c, addr, config, sshLogger)
+		conn, ch, requestCh, err = gossh.NewClientConnWithDebug(c, addr, config, s.settings.Logger())
 	} else {
 		conn, ch, requestCh, err = gossh.NewClientConn(c, addr, config)
 	}
@@ -689,7 +682,7 @@ func (s *Client) dialContext(ctx context.Context, network, addr string, config *
 
 func (s *Client) initSigners() error {
 	if len(s.signers) > 0 {
-		s.settings.Logger().DebugF("Signers already initialized")
+		s.settings.Logger().DebugContext(context.Background(), "Signers already initialized")
 		return nil
 	}
 
@@ -717,7 +710,7 @@ func (s *Client) stopAllAndLogErrors(cause string) {
 		s.debug("Have %d errors after stop:", len(errors))
 	}
 	for _, err := range errors {
-		s.debug(err.Error())
+		s.debug("%s", err.Error())
 	}
 }
 
@@ -878,7 +871,7 @@ func (s *Client) stopRemoteD8KProxy(ctx context.Context) error {
 }
 
 func (s *Client) debug(format string, v ...any) {
-	s.settings.Logger().DebugF(format, v...)
+	s.settings.Logger().DebugContext(context.Background(), fmt.Sprintf(format, v...))
 }
 
 func (s *Client) logPresentHandler(connectionName string) []utils.PresentCloseHandler {

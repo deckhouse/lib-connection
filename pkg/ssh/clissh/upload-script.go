@@ -151,7 +151,7 @@ func (u *UploadScript) Execute(ctx context.Context) ([]byte, error) {
 		defer func() {
 			err := u.client.Command("rm", "-f", scriptFullPath).Run(ctx)
 			if err != nil {
-				u.settings.Logger().DebugF("Failed to delete uploaded script %s: %v", scriptFullPath, err)
+				u.settings.Logger().DebugContext(ctx, fmt.Sprintf("Failed to delete uploaded script %s: %v", scriptFullPath, err))
 			}
 		}()
 	}

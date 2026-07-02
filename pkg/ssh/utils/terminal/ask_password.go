@@ -15,23 +15,26 @@
 package terminal
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 	"os"
 
-	"github.com/deckhouse/lib-dhctl/pkg/log"
+	dhlog "github.com/deckhouse/lib-dhctl/pkg/logger"
 	terminal "golang.org/x/term"
 )
 
-func AskPassword(logger log.Logger, prompt string) ([]byte, error) {
+func AskPassword(logger *slog.Logger, prompt string) ([]byte, error) {
 	fd := int(os.Stdin.Fd())
 
 	if !terminal.IsTerminal(fd) {
-		return nil, fmt.Errorf("stdin is not a terminal, error reading password")
+		return nil, fmt.Errorf("stdin is not a terminal, cannot read password")
 	}
 
-	logger.InfoFWithoutLn(prompt)
+	ctx := context.Background()
+	logger.InfoContext(ctx, prompt, dhlog.ShowInCompacted())
 	data, err := terminal.ReadPassword(fd)
-	logger.InfoF("")
+	logger.InfoContext(ctx, fmt.Sprint(), dhlog.ShowInCompacted())
 
 	if err != nil {
 		return nil, fmt.Errorf("read secret: %w", err)

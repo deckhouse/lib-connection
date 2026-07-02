@@ -15,9 +15,11 @@
 package tests
 
 import (
+	"context"
 	"strconv"
 
 	"github.com/deckhouse/lib-dhctl/pkg/log"
+	dhlog "github.com/deckhouse/lib-dhctl/pkg/logger"
 
 	"github.com/deckhouse/lib-connection/pkg/settings"
 	"github.com/deckhouse/lib-connection/pkg/ssh/session"
@@ -39,10 +41,10 @@ func TestLogger(opts ...TestOpt) *log.InMemoryLogger {
 	return res
 }
 
-func getDefaultParams(test *Test) settings.ProviderParams {
+func getDefaultParams(_ *Test) settings.ProviderParams {
 	return settings.ProviderParams{
-		LoggerProvider: log.SimpleLoggerProvider(test.Logger),
-		IsDebug:        true,
+		Logger:  dhlog.FromContext(context.Background()),
+		IsDebug: true,
 	}
 }
 
@@ -50,10 +52,10 @@ func CreateDefaultTestSettings(test *Test) settings.Settings {
 	return settings.NewBaseProviders(getDefaultParams(test))
 }
 
-func getParamsNoDebug(test *Test) settings.ProviderParams {
+func getParamsNoDebug(_ *Test) settings.ProviderParams {
 	return settings.ProviderParams{
-		LoggerProvider: log.SimpleLoggerProvider(test.Logger),
-		IsDebug:        false,
+		Logger:  dhlog.FromContext(context.Background()),
+		IsDebug: false,
 	}
 }
 

@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,6 +28,7 @@ import (
 	"time"
 
 	"github.com/deckhouse/lib-dhctl/pkg/log"
+	dhlog "github.com/deckhouse/lib-dhctl/pkg/logger"
 	"github.com/name212/govalue"
 
 	connection "github.com/deckhouse/lib-connection/pkg"
@@ -171,10 +173,10 @@ func (b *Bundle) Execute(ctx context.Context, parentDir, bundleDir string) ([]by
 	logger := b.sett.Logger()
 	processLogger := b.processLogger
 	if govalue.Nil(processLogger) {
-		processLogger = logger.ProcessLogger()
+		processLogger = dhlog.NewAdapter(logger).ProcessLogger()
 	}
 
-	handler := newOutputHandler(b, bundleCmd, logger, processLogger)
+	handler := newOutputHandler(ctx, b, bundleCmd, logger, processLogger)
 
 	bundleCmd.WithStdoutHandler(handler.getStdoutHandlerFunc())
 	bundleCmd.WithStderrHandler(handler.getStderrHandlerFunc())
@@ -265,7 +267,7 @@ func (b *Bundle) killCommand(cmd connection.Command) {
 type outputHandler struct {
 	cmd           connection.Command
 	processLogger log.ProcessLogger
-	logger        log.Logger
+	logger        *slog.Logger
 	bundler       *Bundle
 
 	logsMu   sync.Mutex
@@ -274,9 +276,11 @@ type outputHandler struct {
 	lastStep       string
 	failsCounter   int
 	hasStepTimeout bool
+
+	ctx context.Context
 }
 
-func newOutputHandler(bundler *Bundle, cmd connection.Command, logger log.Logger, processLogger log.ProcessLogger) *outputHandler {
+func newOutputHandler(ctx context.Context, bundler *Bundle, cmd connection.Command, logger *slog.Logger, processLogger log.ProcessLogger) *outputHandler {
 	return &outputHandler{
 		bundler:       bundler,
 		cmd:           cmd,
@@ -284,6 +288,7 @@ func newOutputHandler(bundler *Bundle, cmd connection.Command, logger log.Logger
 		processLogger: processLogger,
 
 		stepLogs: make([]string, 0),
+		ctx:      ctx,
 	}
 }
 
@@ -327,14 +332,14 @@ func (h *outputHandler) handleStdout(l string) {
 
 	if !h.bundler.stepHeaderRegex.MatchString(l) {
 		outString := l
-		doLog := h.logger.DebugF
+		doLog := h.logger.DebugContext
 		if infoOut := h.bundler.shouldInfoOutCheck(l); infoOut != "" {
 			outString = infoOut
-			doLog = h.logger.InfoF
+			doLog = h.logger.InfoContext
 		}
 
 		h.appendLog(outString)
-		doLog("%s", outString)
+		doLog(h.ctx, outString)
 		return
 	}
 
@@ -349,12 +354,12 @@ func (h *outputHandler) handleStdout(l string) {
 		logMessage := h.flushLogs(false)
 		switch {
 		case h.bundler.noLogStepOutOnError && h.failsCounter == 0:
-			h.logger.ErrorF("%s", logMessage)
+			h.logger.ErrorContext(h.ctx, logMessage)
 		case h.bundler.noLogStepOutOnError && h.failsCounter > 0:
-			h.logger.ErrorF("Run step %s finished with error^^^\n", stepName)
-			h.logger.DebugF("%s", logMessage)
+			h.logger.ErrorContext(h.ctx, fmt.Sprintf("Run step %s finished with error^^^\n", stepName))
+			h.logger.DebugContext(h.ctx, logMessage)
 		default:
-			h.logger.ErrorF("%s", logMessage)
+			h.logger.ErrorContext(h.ctx, logMessage)
 		}
 		h.failsCounter++
 		if h.failsCounter > h.bundler.retries {

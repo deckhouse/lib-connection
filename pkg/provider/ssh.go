@@ -494,7 +494,7 @@ func (p *DefaultSSHProvider) useGoSSH(shouldLog bool) bool {
 			return
 		}
 
-		p.debug(format)
+		p.debug("%s", format)
 	}
 
 	if p.options.ForceGoSSH {
@@ -655,7 +655,7 @@ func (p *DefaultSSHProvider) keyPath() (string, error) {
 }
 
 func (p *DefaultSSHProvider) debug(format string, args ...any) {
-	p.sett.Logger().DebugF(format, args...)
+	p.sett.Logger().DebugContext(context.Background(), fmt.Sprintf(format, args...))
 }
 
 type createClientOpts struct {

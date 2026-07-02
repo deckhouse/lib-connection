@@ -16,6 +16,7 @@ package tests
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -23,6 +24,7 @@ import (
 	"testing"
 
 	"github.com/deckhouse/lib-dhctl/pkg/log"
+	dhlog "github.com/deckhouse/lib-dhctl/pkg/logger"
 	"github.com/name212/govalue"
 	"github.com/stretchr/testify/require"
 
@@ -168,9 +170,9 @@ func NewTest(testName string, opts ...TestOpt) (*Test, error) {
 	resTest.Logger.InfoF("Created tmp dir '%s' for test '%s'", resTest.tmpDir, resTest.testName)
 
 	params := settings.ProviderParams{
-		LoggerProvider: log.SimpleLoggerProvider(resTest.Logger),
-		IsDebug:        options.isDebug,
-		TmpDir:         resTest.tmpDir,
+		Logger:  dhlog.FromContext(context.Background()),
+		IsDebug: options.isDebug,
+		TmpDir:  resTest.tmpDir,
 	}
 
 	if options.authSock != "" {
@@ -289,6 +291,7 @@ func (s *Test) GetID() string {
 }
 
 func (s *Test) GenerateID(names ...string) string {
+	// nolint:prealloc
 	fullNames := []string{
 		s.Name(),
 	}

@@ -120,11 +120,11 @@ func runSSH(params *runSSHParams) error {
 		logger := sett.Logger()
 
 		if err := sshProvider.Cleanup(ctx); err != nil {
-			logger.ErrorF("Failed to cleanup ssh provider: %v", err)
+			logger.ErrorContext(ctx, fmt.Sprintf("Failed to cleanup ssh provider: %v", err))
 			return
 		}
 
-		logger.InfoF("SSH provider cleaned up successfully")
+		logger.InfoContext(ctx, "SSH provider cleaned up successfully")
 	}()
 
 	// example logic if you can use over ssh client and not
@@ -149,11 +149,11 @@ func runSSH(params *runSSHParams) error {
 		logger := sett.Logger()
 
 		if err := kubeProvider.Cleanup(ctx); err != nil {
-			logger.ErrorF("Failed to cleanup kube provider: %v", err)
+			logger.ErrorContext(ctx, fmt.Sprintf("Failed to cleanup kube provider: %v", err))
 			return
 		}
 
-		logger.InfoF("kube provider cleaned up successfully")
+		logger.InfoContext(ctx, "kube provider cleaned up successfully")
 	}()
 
 	if err != nil {
@@ -166,7 +166,7 @@ func runSSH(params *runSSHParams) error {
 
 	notUseSSH := os.Getenv("NOT_USE_SSH")
 	if notUseSSH != "" {
-		sett.Logger().InfoF("Not use ssh passed")
+		sett.Logger().InfoContext(ctx, "Not use ssh passed")
 		return nil
 	}
 
@@ -179,7 +179,7 @@ func runSSH(params *runSSHParams) error {
 		return err
 	}
 
-	sett.Logger().InfoF("SSH command succeeded")
+	sett.Logger().InfoContext(ctx, "SSH command succeeded")
 
 	return nil
 }

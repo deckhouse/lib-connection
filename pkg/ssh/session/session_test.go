@@ -136,6 +136,7 @@ func TestSession_ChoiceNewHost(t *testing.T) {
 				break
 			}
 		}
+		// nolint:prealloc
 		var expectedRemainedHosts []Host
 		expectedRemainedHosts = append(expectedRemainedHosts, remainedHosts...)
 

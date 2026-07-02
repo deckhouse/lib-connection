@@ -15,6 +15,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -58,7 +59,7 @@ func (s *SSHAdd) ListCmd() *exec.Cmd {
 func (s *SSHAdd) AddKeys(keys []string) error {
 	logger := s.settings.Logger()
 	for _, k := range keys {
-		logger.DebugF("add key %s\n", k)
+		logger.DebugContext(context.Background(), fmt.Sprintf("add key %s\n", k))
 		args := []string{
 			k,
 		}
@@ -75,12 +76,12 @@ func (s *SSHAdd) AddKeys(keys []string) error {
 
 		str := string(output)
 		if str != "" && str != "\n" {
-			logger.InfoF("ssh-add: %s\n", output)
+			logger.InfoContext(context.Background(), fmt.Sprintf("ssh-add: %s\n", output))
 		}
 	}
 
 	if s.settings.IsDebug() {
-		logger.DebugF("List added keys")
+		logger.DebugContext(context.Background(), "List added keys")
 		env := []string{
 			s.AgentSettings.AuthSockEnv(),
 		}
@@ -94,7 +95,7 @@ func (s *SSHAdd) AddKeys(keys []string) error {
 
 		str := string(output)
 		if str != "" && str != "\n" {
-			logger.InfoF("ssh-add -l: %s\n", output)
+			logger.InfoContext(context.Background(), fmt.Sprintf("ssh-add -l: %s\n", output))
 		}
 	}
 

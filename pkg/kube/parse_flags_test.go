@@ -411,6 +411,7 @@ func TestParseFlags(t *testing.T) {
 		t.Run("with args and with FlagSet", func(t *testing.T) {
 			flagSet := newParseFlagsAndExtractConfigFlagSet("test-connection-flagset")
 
+			// nolint:prealloc
 			args := []string{
 				"--kube-client-from-cluster",
 			}
@@ -572,6 +573,7 @@ func TestParseKubeFlagsAndExtractConfigNoArgs(t *testing.T) {
 		os.Args = oldArgs
 	})
 
+	// nolint:prealloc
 	withAdditional := []string{
 		os.Args[0],
 		flagSet.arguments[0],

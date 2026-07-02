@@ -96,7 +96,7 @@ func (t *Tunnel) Up(ctx context.Context) error {
 				tunnelReadyCh <- struct{}{}
 			}
 		})
-		t.settings.Logger().DebugF("stop line consumer for '%s'", t.String())
+		t.settings.Logger().DebugContext(ctx, fmt.Sprintf("stop line consumer for '%s'", t.String()))
 	}()
 
 	go func() {
@@ -114,9 +114,10 @@ func (t *Tunnel) Up(ctx context.Context) error {
 
 func (t *Tunnel) HealthMonitor(errorOutCh chan<- error) {
 	logger := t.settings.Logger()
+	ctx := context.Background()
 
-	defer logger.DebugF("Tunnel health monitor stopped\n")
-	logger.DebugF("Tunnel health monitor started\n")
+	defer logger.DebugContext(ctx, "Tunnel health monitor stopped\n")
+	logger.DebugContext(ctx, "Tunnel health monitor started\n")
 
 	t.stopCh = make(chan struct{}, 1)
 
@@ -136,7 +137,7 @@ func (t *Tunnel) Stop() {
 		return
 	}
 	if t.Session == nil {
-		t.settings.Logger().ErrorF("bug: down tunnel '%s': no session", t.String())
+		t.settings.Logger().ErrorContext(context.Background(), fmt.Sprintf("bug: down tunnel '%s': no session", t.String()))
 		return
 	}
 

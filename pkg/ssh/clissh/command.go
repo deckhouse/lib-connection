@@ -96,6 +96,7 @@ func (c *Command) Sudo(ctx context.Context) {
 		cmdLine,
 	)
 
+	// nolint:prealloc
 	var args []string
 	args = append(args, c.SSHArgs...)
 	args = append(args, []string{
@@ -126,12 +127,12 @@ func (c *Command) Sudo(ctx context.Context) {
 			}
 			if !passSent {
 				// send pass through stdin
-				logger.DebugF("Send become pass to cmd")
+				logger.DebugContext(ctx, "Send become pass to cmd")
 				_, _ = c.Executor.Stdin.Write([]byte(becomePass + "\n"))
 				passSent = true
 			} else {
 				// Second prompt is error!
-				logger.ErrorF("Bad sudo password")
+				logger.ErrorContext(ctx, "Bad sudo password")
 				// sending wrong password again will raise an error in process.Run()
 				_, _ = c.Executor.Stdin.Write([]byte(becomePass + "\n"))
 				// os.Exit(1)
@@ -139,7 +140,7 @@ func (c *Command) Sudo(ctx context.Context) {
 			return "reset"
 		}
 		if pattern == "SUDO-SUCCESS" {
-			logger.DebugF("Got SUCCESS")
+			logger.DebugContext(ctx, "Got SUCCESS")
 			if c.onCommandStart != nil {
 				c.onCommandStart()
 			}

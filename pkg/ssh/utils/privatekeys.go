@@ -18,9 +18,9 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 
-	"github.com/deckhouse/lib-dhctl/pkg/log"
 	ssh "github.com/deckhouse/lib-gossh"
 
 	"github.com/deckhouse/lib-connection/pkg/ssh/utils/terminal"
@@ -41,10 +41,10 @@ func (c *baseConsumer) DefaultPassword() []byte {
 
 type TerminalPassphraseConsumer struct {
 	*baseConsumer
-	logger log.Logger
+	logger *slog.Logger
 }
 
-func NewTerminalPassphraseConsumer(logger log.Logger, defaultPassword []byte) *TerminalPassphraseConsumer {
+func NewTerminalPassphraseConsumer(logger *slog.Logger, defaultPassword []byte) *TerminalPassphraseConsumer {
 	return &TerminalPassphraseConsumer{
 		baseConsumer: &baseConsumer{
 			defaultPassword: defaultPassword,
@@ -73,7 +73,7 @@ func (c *DefaultPassphraseOnlyConsumer) AskPassword(prompt string) ([]byte, erro
 	return nil, fmt.Errorf("%s. AskPassword not allow for DefaultPassphraseOnlyConsumer", prompt)
 }
 
-func ParseSSHPrivateKeyFile(path string, password string, logger log.Logger) (any, string, error) {
+func ParseSSHPrivateKeyFile(path string, password string, logger *slog.Logger) (any, string, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return nil, "", fmt.Errorf("Cannot read private key file %s: %w", path, err)

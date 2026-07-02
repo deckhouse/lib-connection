@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	dhlog "github.com/deckhouse/lib-dhctl/pkg/logger"
 	"github.com/deckhouse/lib-dhctl/pkg/retry"
 	"github.com/stretchr/testify/require"
 
@@ -162,7 +163,7 @@ exit $?
 			retry.WithName("Check tunnel"),
 			retry.WithAttempts(30),
 			retry.WithWait(2*time.Second),
-			retry.WithLogger(test.Logger),
+			retry.WithLogger(dhlog.FromContext(context.Background())),
 		)
 
 		checkTunnelAction := func() error {

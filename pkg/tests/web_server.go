@@ -153,7 +153,6 @@ func (s *HTTPServer) Start(waitStart bool) error {
 		retry.WithName("Check HTTP server %s started", s.logger.prefix),
 		retry.WithAttempts(10),
 		retry.WithWait(500*time.Millisecond),
-		retry.WithLogger(s.logger.Logger),
 	)
 
 	_, err := DoGetRequest(url, loop, s.logger)

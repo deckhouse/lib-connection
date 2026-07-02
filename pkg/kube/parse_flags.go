@@ -15,9 +15,10 @@
 package kube
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 
-	"github.com/deckhouse/lib-dhctl/pkg/log"
 	"github.com/name212/govalue"
 	flag "github.com/spf13/pflag"
 	"k8s.io/client-go/tools/clientcmd"
@@ -257,19 +258,19 @@ func (p *FlagsParser) fillFlagsToSet(set *flag.FlagSet, flags *Flags, envsExtrac
 	)
 }
 
-func (p *FlagsParser) validateKubeConfigWithContext(flags *Flags, logger log.Logger) error {
+func (p *FlagsParser) validateKubeConfigWithContext(flags *Flags, logger *slog.Logger) error {
 	kubeConfigFile := flags.KubeConfig
-	context := flags.KubeConfigContext
+	ctx := flags.KubeConfigContext
 
 	if kubeConfigFile == "" {
-		if context != "" {
+		if ctx != "" {
 			return fmt.Errorf("Pass context flag --%s without kubeconfig path --%s ", kubeConfigContextFlag, kubeConfigFlag)
 		}
 
 		return nil
 	}
 
-	content, fullPath, err := file.ReadFile(kubeConfigFile, "kube config", logger)
+	content, fullPath, err := file.ReadFile(context.Background(), kubeConfigFile, "kube config", logger)
 	if err != nil {
 		return err
 	}
@@ -279,10 +280,10 @@ func (p *FlagsParser) validateKubeConfigWithContext(flags *Flags, logger log.Log
 		return fmt.Errorf("Cannot parse kube config file '%s': %w", kubeConfigFile, err)
 	}
 
-	if context != "" {
-		_, ok := cfg.Contexts[context]
+	if ctx != "" {
+		_, ok := cfg.Contexts[ctx]
 		if !ok {
-			return fmt.Errorf("Cannot find context '%s' in kube config %s", context, kubeConfigFile)
+			return fmt.Errorf("Cannot find context '%s' in kube config %s", ctx, kubeConfigFile)
 		}
 	}
 

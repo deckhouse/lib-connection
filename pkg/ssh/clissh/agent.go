@@ -15,6 +15,7 @@
 package clissh
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"sync"
@@ -103,13 +104,13 @@ func (a *Agent) Start() error {
 
 	logger := a.sshSettings.Logger()
 
-	logger.DebugF("agent: start ssh-agent")
+	logger.DebugContext(context.Background(), "agent: start ssh-agent")
 	err := a.agent.Start()
 	if err != nil {
 		return fmt.Errorf("Start ssh-agent: %v", err)
 	}
 
-	logger.DebugF("agent: run ssh-add for keys")
+	logger.DebugContext(context.Background(), "agent: run ssh-add for keys")
 	err = a.AddKeys(a.agentSettings.PrivateKeys)
 	if err != nil {
 		return fmt.Errorf("Agent error: %v", err)
@@ -128,7 +129,7 @@ func (a *Agent) AddKeys(keys []session.AgentPrivateKey) error {
 	logger := a.sshSettings.Logger()
 
 	if a.sshSettings.IsDebug() {
-		logger.DebugF("list added keys")
+		logger.DebugContext(context.Background(), "list added keys")
 		listCmd := cmd.NewSSHAdd(a.sshSettings, a.agentSettings).ListCmd()
 
 		output, err := listCmd.CombinedOutput()
@@ -138,7 +139,7 @@ func (a *Agent) AddKeys(keys []session.AgentPrivateKey) error {
 
 		str := string(output)
 		if str != "" && str != "\n" {
-			logger.InfoF("ssh-add -l: %s\n", output)
+			logger.InfoContext(context.Background(), fmt.Sprintf("ssh-add -l: %s\n", output))
 		}
 	}
 
@@ -161,7 +162,7 @@ func (a *Agent) addKeys(authSock string, keys []session.AgentPrivateKey) error {
 
 	defer func() {
 		if err := conn.Close(); err != nil {
-			a.sshSettings.Logger().DebugF("Error closing connection to ssh-agent %s: %v", authSock, err)
+			a.sshSettings.Logger().DebugContext(context.Background(), fmt.Sprintf("Error closing connection to ssh-agent %s: %v", authSock, err))
 		}
 	}()
 

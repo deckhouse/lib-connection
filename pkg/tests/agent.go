@@ -209,7 +209,6 @@ func (a *Agent) RegisterCleanup(t *testing.T) {
 			retry.WithName("Wait socket %s leave", socket),
 			retry.WithWait(2*time.Second),
 			retry.WithAttempts(10),
-			retry.WithLogger(a.logger),
 		)
 
 		_ = retry.NewLoopWithParams(leaveSocket).Run(func() error {

@@ -15,6 +15,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -23,6 +24,7 @@ import (
 	"github.com/deckhouse/lib-connection/examples/cobra/cmd"
 	"github.com/deckhouse/lib-connection/pkg/settings"
 	"github.com/deckhouse/lib-dhctl/pkg/log"
+	dhlog "github.com/deckhouse/lib-dhctl/pkg/logger"
 	"github.com/spf13/cobra"
 )
 
@@ -64,11 +66,12 @@ func main() {
 	if isDebug {
 		log.InitKlog(logger, log.WithKlogVerbose("10"))
 	}
+	ctx := context.Background()
 
 	sett := settings.NewBaseProviders(settings.ProviderParams{
-		LoggerProvider: log.SimpleLoggerProvider(logger),
-		IsDebug:        isDebug,
-		EnvsPrefix:     envsPrefix,
+		Logger:     dhlog.FromContext(ctx),
+		IsDebug:    isDebug,
+		EnvsPrefix: envsPrefix,
 	})
 
 	// you can use PersistentPreRunE method for initialize globals
@@ -135,7 +138,7 @@ func main() {
 	for name, c := range subCommands {
 		cc, err := c.provider(settingsProvider, rootCmd)
 		if err != nil {
-			sett.Logger().ErrorF("Failed to append command %s: %s", name, err)
+			sett.Logger().ErrorContext(ctx, fmt.Sprintf("Failed to append command %s: %s", name, err))
 			os.Exit(1)
 			return
 		}
@@ -144,7 +147,7 @@ func main() {
 		help := cc.UsageString()
 		for _, h := range c.shouldContainsInHelp {
 			if !strings.Contains(help, h) {
-				sett.Logger().ErrorF("Failed to append command %s, help should contains %s", name, h)
+				sett.Logger().ErrorContext(ctx, fmt.Sprintf("Failed to append command %s, help should contains %s", name, h))
 				os.Exit(1)
 			}
 		}
@@ -156,7 +159,7 @@ func main() {
 	rootCmd.TraverseChildren = true
 
 	if err := rootCmd.Execute(); err != nil {
-		sett.Logger().ErrorF("Failed to execute command: %s", err)
+		sett.Logger().ErrorContext(ctx, fmt.Sprintf("Failed to execute command: %s", err))
 		os.Exit(1)
 	}
 }
@@ -168,26 +171,22 @@ type globalArgs struct {
 
 func initSettings(sett *settings.BaseProviders, args *globalArgs) (*settings.BaseProviders, error) {
 	tmpDir := args.tmpDir
+	ctx := context.Background()
 
-	sett.Logger().InfoF("Got tmp dir: %s", tmpDir)
-	sett.Logger().InfoF("Got logger type: %s", args.loggerType)
+	sett.Logger().InfoContext(ctx, fmt.Sprintf("Got tmp dir: %s", tmpDir))
+	sett.Logger().InfoContext(ctx, fmt.Sprintf("Got logger type: %s", args.loggerType))
 
 	if tmpDir == "" || tmpDir == "/" {
 		return nil, fmt.Errorf("pass incorect tmp dir '%s'", tmpDir)
 	}
 
 	if err := os.MkdirAll(tmpDir, os.ModePerm); err != nil {
-		sett.Logger().ErrorF("failed to create tmp dir %s: %v", tmpDir, err)
-		return nil, err
-	}
-
-	loggerFromArgs, err := log.NewLogger(log.Type(args.loggerType), sett.IsDebug())
-	if err != nil {
+		sett.Logger().ErrorContext(ctx, fmt.Sprintf("failed to create tmp dir %s: %v", tmpDir, err))
 		return nil, err
 	}
 
 	sett = sett.Clone(
-		settings.CloneWithLoggerProvider(log.SimpleLoggerProvider(loggerFromArgs)),
+		settings.CloneWithLogger(dhlog.FromContext(ctx)),
 		settings.CloneWithTmpDir(tmpDir),
 	)
 
@@ -200,11 +199,11 @@ func initSettings(sett *settings.BaseProviders, args *globalArgs) (*settings.Bas
 		logger := sett.Logger()
 
 		if err := os.RemoveAll(tmpDir); err != nil {
-			logger.ErrorF("Failed to remove tmp dir %s: %v", tmpDir, err)
+			logger.ErrorContext(ctx, fmt.Sprintf("Failed to remove tmp dir %s: %v", tmpDir, err))
 			return
 		}
 
-		logger.InfoF("Tmp dir: '%s' removed", tmpDir)
+		logger.InfoContext(ctx, fmt.Sprintf("Tmp dir: '%s' removed", tmpDir))
 	})
 
 	return sett, nil

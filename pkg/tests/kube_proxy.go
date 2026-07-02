@@ -34,7 +34,6 @@ func AssertKubeProxy(t *testing.T, test *Test, localServerPort string, wantError
 	defaultParams := retry.NewEmptyParams(
 		retry.WithAttempts(10),
 		retry.WithWait(500*time.Millisecond),
-		retry.WithLogger(test.Logger),
 	)
 
 	if wantError {

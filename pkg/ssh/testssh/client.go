@@ -26,7 +26,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/deckhouse/lib-dhctl/pkg/log"
+	dhlog "github.com/deckhouse/lib-dhctl/pkg/logger"
 	"github.com/name212/govalue"
 
 	connection "github.com/deckhouse/lib-connection/pkg"
@@ -288,9 +288,7 @@ func (p *SSHProvider) newClient(session *session.Session, k []session.AgentPriva
 func NewClient(session *session.Session, privKeys []session.AgentPrivateKey) *Client {
 	return &Client{
 		Settings: settings.NewBaseProviders(settings.ProviderParams{
-			LoggerProvider: log.SimpleLoggerProvider(log.NewSimpleLogger(log.LoggerOptions{
-				IsDebug: true,
-			})),
+			Logger:  dhlog.FromContext(context.Background()),
 			IsDebug: true,
 		}),
 		SessionSettings: session,
@@ -905,7 +903,7 @@ func getBastion(s *session.Session) Bastion {
 
 func CreateSettings() settings.Settings {
 	return settings.NewBaseProviders(settings.ProviderParams{
-		LoggerProvider: log.SimpleLoggerProvider(log.NewSimpleLogger(log.LoggerOptions{IsDebug: true})),
-		IsDebug:        true,
+		Logger:  dhlog.FromContext(context.Background()),
+		IsDebug: true,
 	})
 }

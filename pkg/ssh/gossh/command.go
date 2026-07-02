@@ -102,7 +102,7 @@ func NewSSHCommand(client *Client, name string, arg ...string) *SSHCommand {
 
 	// todo move new session to Start()
 	session, err := client.NewSSHSession()
-	client.settings.Logger().DebugF("Cannot create new SSH session for command '%s': %v", name, err)
+	client.settings.Logger().DebugContext(context.Background(), fmt.Sprintf("Cannot create new SSH session for command '%s': %v", name, err))
 
 	return &SSHCommand{
 		// Executor: process.NewDefaultExecutor(sess.Run(cmd)),
@@ -125,20 +125,21 @@ func (c *SSHCommand) OnCommandStart(fn func()) {
 
 func (c *SSHCommand) Start() error {
 	// setup stream handlers
-	c.logDebugF("Call start")
+	ctx := context.Background()
+	c.logDebugF(ctx, "Call start")
 	if c.session == nil {
 		return fmt.Errorf("ssh session not started")
 	}
 
 	err := c.SetupStreamHandlers()
 	if err != nil {
-		c.logDebugF("Could not set up stream handlers: %s", err)
+		c.logDebugF(ctx, "Could not set up stream handlers: %s", err)
 		return err
 	}
 
 	err = c.start()
 	if err != nil {
-		c.logDebugF("Could not start: %v", err)
+		c.logDebugF(ctx, "Could not start: %v", err)
 		return err
 	}
 
@@ -149,7 +150,7 @@ func (c *SSHCommand) Start() error {
 			if c.waitCh != nil {
 				<-c.waitCh
 			} else {
-				c.logDebugF("Wait channel is nil. Possible bug. Returns immediately")
+				c.logDebugF(ctx, "Wait channel is nil. Possible bug. Returns immediately")
 			}
 		}
 	} else {
@@ -232,6 +233,8 @@ func (c *SSHCommand) ProcessWait() {
 	c.waitCh = make(chan struct{}, 1)
 	c.stopCh = make(chan struct{}, 1)
 
+	ctx := context.Background()
+
 	// wait for process in go routine
 	go func() {
 		waitErrCh <- c.wait()
@@ -249,11 +252,11 @@ func (c *SSHCommand) ProcessWait() {
 				select {
 				case _, ok := <-c.stopCh:
 					if !ok {
-						c.logDebugF("StopCh was closed and '%s' timeout exceeded. Possible goroutine not closed.", c.timeout)
+						c.logDebugF(ctx, "StopCh was closed and '%s' timeout exceeded. Possible goroutine not closed.", c.timeout)
 						return
 					}
 				default:
-					c.logDebugF("StopCh is not close and '%s' timeout exceeded. Send stop", c.timeout)
+					c.logDebugF(ctx, "StopCh is not close and '%s' timeout exceeded. Send stop", c.timeout)
 				}
 
 				c.stopCh <- struct{}{}
@@ -307,7 +310,7 @@ func (c *SSHCommand) clientString() string {
 }
 
 func (c *SSHCommand) Run(ctx context.Context) error {
-	c.logDebugF("Call run")
+	c.logDebugF(ctx, "Call run")
 	c.Cmd(ctx)
 
 	if c.session == nil {
@@ -397,24 +400,24 @@ func (c *SSHCommand) Sudo(ctx context.Context) {
 	c.WithMatchHandler(func(pattern string) string {
 		logger := c.sshClient.settings.Logger()
 		if pattern == "SudoPassword" {
-			c.logDebugF("Send become pass to cmd")
+			c.logDebugF(ctx, "Send become pass to cmd")
 			becomePass := c.sshClient.Session().BecomePass
 
 			var err error
 			_, err = c.Stdin.Write([]byte(becomePass + "\n"))
 			if err != nil {
-				logger.ErrorF("Got error from sending pass to stdin for '%s': %v", c.clientString(), err)
+				logger.ErrorContext(ctx, fmt.Sprintf("Got error from sending pass to stdin for '%s': %v", c.clientString(), err))
 			}
 			if !passSent {
 				passSent = true
 			} else {
 				// Second prompt is error!
-				logger.ErrorF("Bad sudo password.")
+				logger.ErrorContext(ctx, "Bad sudo password.")
 			}
 			return "reset"
 		}
 		if pattern == "SUDO-SUCCESS" {
-			c.logDebugF("Got SUCCESS for sudo password")
+			c.logDebugF(ctx, "Got SUCCESS for sudo password")
 			if c.onCommandStart != nil {
 				c.onCommandStart()
 			}
@@ -577,6 +580,8 @@ func (c *SSHCommand) SetupStreamHandlers() error {
 	// connect console's stdin
 	// c.Cmd.Stdin = os.Stdin
 
+	ctx := context.Background()
+
 	// setup stdout stream handlers
 	if c.session != nil && c.out == nil && c.stdoutHandler == nil && len(c.Matchers) == 0 {
 		c.session.Stdout = os.Stdout
@@ -659,11 +664,11 @@ func (c *SSHCommand) SetupStreamHandlers() error {
 
 	go func() {
 		if c.stdoutHandler == nil {
-			c.logDebugF("stdout read pipe not set. Consumer does not start")
+			c.logDebugF(ctx, "stdout read pipe not set. Consumer does not start")
 			return
 		}
 		c.ConsumeLines(stdoutHandlerReadPipe, c.stdoutHandler)
-		c.logDebugF("Stop lines consumer")
+		c.logDebugF(ctx, "Stop lines consumer")
 	}()
 
 	// Start reading from stderr of a command.
@@ -672,12 +677,12 @@ func (c *SSHCommand) SetupStreamHandlers() error {
 	// Copy to pipe if StderrHandler is set
 	go func() {
 		if stderrReadPipe == nil {
-			c.logDebugF("stdterr read pipe not set. Pipe reader does not start")
+			c.logDebugF(ctx, "stdterr read pipe not set. Pipe reader does not start")
 			return
 		}
 
-		c.logDebugF("Start reading from stderr pipe")
-		defer c.logDebugF("Stop reading from stderr pipe")
+		c.logDebugF(ctx, "Start reading from stderr pipe")
+		defer c.logDebugF(ctx, "Stop reading from stderr pipe")
 
 		buf := make([]byte, 16)
 		for {
@@ -702,26 +707,27 @@ func (c *SSHCommand) SetupStreamHandlers() error {
 
 	go func() {
 		if c.stderrHandler == nil {
-			c.logDebugF("stdterr line consumer not set. Consumer does not start")
+			c.logDebugF(ctx, "stdterr line consumer not set. Consumer does not start")
 			return
 		}
 		c.ConsumeLines(stderrHandlerReadPipe, c.stderrHandler)
-		c.logDebugF("Stop stdterr line consumer")
+		c.logDebugF(ctx, "Stop stdterr line consumer")
 	}()
 
 	return nil
 }
 
 func (c *SSHCommand) readFromStreams(stdoutReadPipe io.Reader, stdoutHandlerWritePipe io.Writer, isError bool) {
-	defer c.logDebugF("readFromStreams stopped")
+	ctx := context.Background()
+	defer c.logDebugF(ctx, "readFromStreams stopped")
 	defer c.wg.Done()
 
 	if govalue.Nil(stdoutReadPipe) {
-		c.logDebugF("stdout pipe is nil")
+		c.logDebugF(ctx, "stdout pipe is nil")
 		return
 	}
 
-	c.logDebugF("Start read from streams")
+	c.logDebugF(ctx, "Start read from streams")
 
 	buf := make([]byte, 16)
 	matchersDone := false
@@ -729,7 +735,7 @@ func (c *SSHCommand) readFromStreams(stdoutReadPipe io.Reader, stdoutHandlerWrit
 	for {
 		n, err := stdoutReadPipe.Read(buf)
 		if err != nil && err != io.EOF {
-			c.logDebugF("Error reading from stdout: %v", err)
+			c.logDebugF(ctx, "Error reading from stdout: %v", err)
 			errorsCount++
 			if errorsCount > 1000 {
 				panic(fmt.Errorf("readFromStreams: too many errors, last error %v", err))
@@ -742,7 +748,7 @@ func (c *SSHCommand) readFromStreams(stdoutReadPipe io.Reader, stdoutHandlerWrit
 			for _, matcher := range c.Matchers {
 				m = matcher.Analyze(buf[:n])
 				if matcher.IsMatched() {
-					c.logDebugF("Triggered match for '%s'", matcher.Pattern)
+					c.logDebugF(ctx, "Triggered match for '%s'", matcher.Pattern)
 					// matcher is triggered
 					if c.MatchHandler != nil {
 						res := c.MatchHandler(matcher.Pattern)
@@ -782,7 +788,7 @@ func (c *SSHCommand) readFromStreams(stdoutReadPipe io.Reader, stdoutHandlerWrit
 		}
 
 		if err == io.EOF {
-			c.logDebugF("readFromStreams: EOF")
+			c.logDebugF(ctx, "readFromStreams: EOF")
 			break
 		}
 	}
@@ -801,36 +807,37 @@ func (c *SSHCommand) ConsumeLines(r io.Reader, fn func(l string)) {
 		}
 
 		if text != "" {
-			c.logDebugF("Line consumed: '%s'", text)
+			c.logDebugF(context.Background(), "Line consumed: '%s'", text)
 		}
 	}
 }
 
 func (c *SSHCommand) Stop() {
-	c.logDebugF("Running stop")
+	ctx := context.Background()
+	c.logDebugF(ctx, "Running stop")
 
 	if c.stop {
-		c.logDebugF("Already stopped")
+		c.logDebugF(ctx, "Already stopped")
 		return
 	}
 	if c.session == nil {
-		c.logDebugF("Session not started yet")
+		c.logDebugF(ctx, "Session not started yet")
 		return
 	}
 	if c.cmd == "" {
-		c.logDebugF("Possible BUG: Call Executor.Stop with Cmd==nil")
+		c.logDebugF(ctx, "Possible BUG: Call Executor.Stop with Cmd==nil")
 		return
 	}
 
 	c.stop = true
 	if c.stopCh != nil {
-		c.logDebugF("Send stop signal")
+		c.logDebugF(ctx, "Send stop signal")
 		close(c.stopCh)
 	}
-	c.logDebugF("Stopped")
-	c.logDebugF("Sending SIGINT...")
+	c.logDebugF(ctx, "Stopped")
+	c.logDebugF(ctx, "Sending SIGINT...")
 	_ = c.session.Signal(gossh.SIGINT)
-	c.logDebugF("Signal SIGINT sent")
+	c.logDebugF(ctx, "Signal SIGINT sent")
 	_ = c.session.Signal(gossh.SIGKILL)
 }
 
@@ -844,11 +851,11 @@ func (c *SSHCommand) closeSession() {
 	c.session.Close()
 	c.sshClient.UnregisterSession(c.session)
 }
-func (c *SSHCommand) logDebugF(format string, v ...interface{}) {
+func (c *SSHCommand) logDebugF(ctx context.Context, format string, v ...interface{}) {
 	msg := fmt.Sprintf(format, v...)
 	args := ""
 	if len(c.Args) > 0 {
 		args = strings.Join(c.Args, " ")
 	}
-	c.sshClient.settings.Logger().DebugF("'%s' for cmd '%s' with args '%s' with client '%s'\n", msg, c.cmd, args, c.clientString())
+	c.sshClient.settings.Logger().DebugContext(ctx, fmt.Sprintf("'%s' for cmd '%s' with args '%s' with client '%s'\n", msg, c.cmd, args, c.clientString()))
 }

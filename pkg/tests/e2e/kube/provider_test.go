@@ -768,7 +768,6 @@ func assertKubeClient(t *testing.T, test *tests.Test, client connection.KubeClie
 	defaultParams := retry.NewEmptyParams(
 		retry.WithAttempts(4),
 		retry.WithWait(2*time.Second),
-		retry.WithLogger(test.GetLogger()),
 	)
 
 	createCMParams := defaultParams.Clone(
@@ -933,7 +932,6 @@ func assertSSHClientLive(t *testing.T, test *tests.Test, sshClient connection.SS
 	loopParams := retry.NewEmptyParams(
 		retry.WithAttempts(3),
 		retry.WithWait(2*time.Second),
-		retry.WithLogger(test.GetLogger()),
 		retry.WithName("Check that ssh client live"),
 	)
 
