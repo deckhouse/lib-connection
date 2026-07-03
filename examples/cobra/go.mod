@@ -17,7 +17,6 @@ require (
 	atomicgo.dev/schedule v0.1.0 // indirect
 	github.com/DataDog/gostackparse v0.7.0 // indirect
 	github.com/asaskevich/govalidator v0.0.0-20200428143746-21a406dcc535 // indirect
-	github.com/avelino/slugify v0.0.0-20180501145920-855f152bd774 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/blang/semver/v4 v4.0.0 // indirect
 	github.com/bramvdbogaerde/go-scp v1.6.0 // indirect
@@ -76,7 +75,6 @@ require (
 	github.com/prometheus/procfs v0.15.1 // indirect
 	github.com/pterm/pterm v0.12.83 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
-	github.com/werf/logboek v0.5.5 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/xlab/treeprint v1.2.0 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
