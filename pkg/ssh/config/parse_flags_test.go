@@ -875,7 +875,7 @@ sshBastionPassword: "not_secure_password_bastion"
 
 			// because test stdin is not terminal and we do not emulate it in fast way
 			// we check that in tests we got error
-			hasErrorContains: "Cannot get bastion password: stdin is not a terminal, error reading password",
+			hasErrorContains: "Cannot get bastion password: stdin is not a terminal, cannot read password",
 		},
 
 		{
@@ -901,7 +901,7 @@ sshBastionPassword: "not_secure_password_bastion"
 
 			// because test stdin is not terminal and we do not emulate it in fast way
 			// we check that in tests we got error
-			hasErrorContains: "stdin is not a terminal, error reading password",
+			hasErrorContains: "stdin is not a terminal, cannot read password",
 		},
 
 		{
