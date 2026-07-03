@@ -10,11 +10,10 @@ require (
 	atomicgo.dev/schedule v0.1.0 // indirect
 	github.com/DataDog/gostackparse v0.7.0 // indirect
 	github.com/asaskevich/govalidator v0.0.0-20200428143746-21a406dcc535 // indirect
-	github.com/avelino/slugify v0.0.0-20180501145920-855f152bd774 // indirect
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
 	github.com/containerd/console v1.0.5 // indirect
 	github.com/deckhouse/deckhouse/pkg/log v0.1.1-0.20251230144142-2bad7c3d1edf // indirect
-	github.com/deckhouse/lib-dhctl v0.19.1-0.20260701151330-d191ab1f6589 // indirect
+	github.com/deckhouse/lib-dhctl v0.19.1-0.20260703052224-0e12fb294938 // indirect
 	github.com/deckhouse/lib-gossh v0.3.0 // indirect
 	github.com/emicklei/go-restful/v3 v3.11.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.7.0 // indirect
@@ -51,7 +50,6 @@ require (
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pterm/pterm v0.12.83 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
-	github.com/werf/logboek v0.5.5 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	go.mongodb.org/mongo-driver v1.5.1 // indirect
