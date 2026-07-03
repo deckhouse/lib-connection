@@ -26,6 +26,35 @@ import (
 	"github.com/deckhouse/lib-connection/pkg/tests"
 )
 
+func TestSSHCommandWatchCtxDoesNotBlockWhenResultIsNotRead(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cmd := &SSHCommand{
+		ctx: ctx,
+		Cancel: func() error {
+			return nil
+		},
+	}
+	resultCh := make(chan error, 1)
+	done := make(chan struct{})
+
+	cancel()
+	go func() {
+		cmd.watchCtx(resultCh)
+		close(done)
+	}()
+
+	require.Eventually(t, func() bool {
+		select {
+		case <-done:
+			return true
+		default:
+			return false
+		}
+	}, time.Second, 10*time.Millisecond, "watchCtx must not block when command wait already returned")
+
+	require.ErrorIs(t, <-resultCh, context.Canceled)
+}
+
 func TestCommandOutput(t *testing.T) {
 	test := tests.ShouldNewIntegrationTest(
 		t,

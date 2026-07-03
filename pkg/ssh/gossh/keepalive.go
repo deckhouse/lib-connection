@@ -48,19 +48,21 @@ func newKepAliveChecker(client *Client, sleep time.Duration, maxErrors int) *kee
 	}
 }
 
-func (c *keepAliveChecker) Check() error {
+func (c *keepAliveChecker) Check(stopCh <-chan struct{}) error {
 	c.debug("do next check...")
 
 	err := c.checkClientAlive()
 
 	if err != nil {
-		return c.handleClientAliveFailed(err)
+		return c.handleClientAliveFailed(stopCh, err)
 	}
 
 	c.sendAliveToSessions()
 
 	c.debug("success. Sleep %s before next check", c.sleep.String())
-	time.Sleep(c.sleep)
+	if c.sleepOrStopped(stopCh) {
+		return nil
+	}
 
 	return nil
 }
@@ -71,7 +73,12 @@ func (c *keepAliveChecker) sendKeepAlive(sess *gossh.Session) error {
 }
 
 func (c *keepAliveChecker) checkClientAlive() error {
-	sess, err := c.client.sshClient.NewSession()
+	sshClient, err := c.client.snapshotSSHClient()
+	if err != nil {
+		return fmt.Errorf("%w: %w", errKeepAliveSessionCreate, err)
+	}
+
+	sess, err := sshClient.NewSession()
 	if err != nil {
 		return fmt.Errorf("%w: %w", errKeepAliveSessionCreate, err)
 	}
@@ -90,9 +97,8 @@ func (c *keepAliveChecker) checkClientAlive() error {
 }
 
 func (c *keepAliveChecker) sendAliveToSessions() {
-	for indx, registeredSession := range c.client.sshSessionsList {
+	for indx, registeredSession := range c.client.sessionsSnapshot() {
 		if govalue.Nil(registeredSession) {
-			c.client.UnregisterSession(registeredSession)
 			continue
 		}
 
@@ -102,7 +108,7 @@ func (c *keepAliveChecker) sendAliveToSessions() {
 	}
 }
 
-func (c *keepAliveChecker) handleClientAliveFailed(err error) error {
+func (c *keepAliveChecker) handleClientAliveFailed(stopCh <-chan struct{}, err error) error {
 	c.errorsCount++
 
 	if c.errorsCount > c.maxErrors {
@@ -112,10 +118,22 @@ func (c *keepAliveChecker) handleClientAliveFailed(err error) error {
 
 	if errors.Is(err, errKeepAliveSessionCreate) {
 		c.debug("failed: '%v'. Error count %d. Sleep %s before next attempt", err, c.errorsCount, c.sleep.String())
-		time.Sleep(c.sleep)
+		c.sleepOrStopped(stopCh)
 	}
 
 	return nil
+}
+
+func (c *keepAliveChecker) sleepOrStopped(stopCh <-chan struct{}) bool {
+	timer := time.NewTimer(c.sleep)
+	defer timer.Stop()
+
+	select {
+	case <-timer.C:
+		return false
+	case <-stopCh:
+		return true
+	}
 }
 
 func (c *keepAliveChecker) debug(format string, a ...any) {

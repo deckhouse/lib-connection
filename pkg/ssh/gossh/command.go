@@ -89,6 +89,10 @@ type SSHCommand struct {
 }
 
 func NewSSHCommand(client *Client, name string, arg ...string) *SSHCommand {
+	return newSSHCommand(client, name, false, arg...)
+}
+
+func newSSHCommand(client *Client, name string, allowStopped bool, arg ...string) *SSHCommand {
 	args := make([]string, len(arg))
 	copy(args, arg)
 	cmd := name + " "
@@ -101,7 +105,7 @@ func NewSSHCommand(client *Client, name string, arg ...string) *SSHCommand {
 	}
 
 	// todo move new session to Start()
-	session, err := client.NewSSHSession()
+	session, err := client.newSSHSession(allowStopped)
 	client.settings.Logger().DebugF("Cannot create new SSH session for command '%s': %v", name, err)
 
 	return &SSHCommand{
@@ -172,7 +176,7 @@ func (c *SSHCommand) start() error {
 	}
 
 	if c.Cancel != nil && c.ctx != nil && c.ctx.Done() != nil {
-		resultc := make(chan error)
+		resultc := make(chan error, 1)
 		c.ctxResult = resultc
 		go c.watchCtx(resultc)
 	}
