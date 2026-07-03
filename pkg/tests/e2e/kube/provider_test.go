@@ -824,7 +824,7 @@ func kubeRequestCtx() (context.Context, context.CancelFunc) {
 func registerCleanupSSHProvider(t *testing.T, test *tests.Test, p *provider.DefaultSSHProvider) {
 	t.Cleanup(func() {
 		if err := p.Cleanup(context.TODO()); err != nil {
-			test.GetLogger().ErrorF("Failed to clean up %s provider ssh: %v", t.Name(), err)
+			test.GetLogger().ErrorContext(context.Background(), fmt.Sprintf("Failed to clean up %s provider ssh: %v", t.Name(), err))
 		}
 	})
 }
@@ -832,7 +832,7 @@ func registerCleanupSSHProvider(t *testing.T, test *tests.Test, p *provider.Defa
 func registerCleanupKubeProvider(t *testing.T, test *tests.Test, p *provider.DefaultKubeProvider) {
 	t.Cleanup(func() {
 		if err := p.Cleanup(context.TODO()); err != nil {
-			test.GetLogger().ErrorF("Failed to clean up %s provider kube provider: %v", t.Name(), err)
+			test.GetLogger().ErrorContext(context.Background(), fmt.Sprintf("Failed to clean up %s provider kube provider: %v", t.Name(), err))
 		}
 	})
 }
@@ -925,7 +925,7 @@ func disJoinClients(all []connection.KubeClient, subSet []connection.KubeClient)
 
 func assertSSHClientLive(t *testing.T, test *tests.Test, sshClient connection.SSHClient, live bool) {
 	if _, ok := sshClient.(*clissh.Client); ok {
-		test.GetLogger().InfoF("SSH client always should be live")
+		test.GetLogger().InfoContext(context.Background(), "SSH client always should be live")
 		live = true
 	}
 
@@ -958,7 +958,7 @@ func assertSSHClientLive(t *testing.T, test *tests.Test, sshClient connection.SS
 }
 
 func logClientSwitching(test *tests.Test) {
-	test.GetLogger().InfoF("Start switching ssh client")
+	test.GetLogger().InfoContext(context.Background(), "Start switching ssh client")
 }
 
 func assertNoGetSSHConnection(t *testing.T, sshProvider *provider.DefaultSSHProvider) {

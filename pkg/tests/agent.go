@@ -17,6 +17,7 @@ package tests
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,14 +29,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/deckhouse/lib-dhctl/pkg/log"
+	dhlog "github.com/deckhouse/lib-dhctl/pkg/logger"
 	"github.com/deckhouse/lib-dhctl/pkg/retry"
 	"github.com/name212/govalue"
 	"github.com/stretchr/testify/require"
 )
 
 type Agent struct {
-	logger log.Logger
+	logger *slog.Logger
 
 	mu       sync.RWMutex
 	sockPath string
@@ -76,7 +77,7 @@ func StartTestAgent(t *testing.T, wrapper *TestContainerWrapper) *Agent {
 	return agent
 }
 
-func StartAgent(sockDir string, logger log.Logger, keysPath ...PrivateKey) (*Agent, error) {
+func StartAgent(sockDir string, logger *slog.Logger, keysPath ...PrivateKey) (*Agent, error) {
 	_, err := os.Stat(sockDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to stat agent socket directory %s: %s", sockDir, err)
@@ -86,7 +87,7 @@ func StartAgent(sockDir string, logger log.Logger, keysPath ...PrivateKey) (*Age
 	sockPath := filepath.Join(sockDir, fmt.Sprintf("test-ssh-agent-%s.sock", id))
 
 	if govalue.Nil(logger) {
-		logger = TestLogger(TestWithDebug(false))
+		logger = dhlog.FromContext(context.Background())
 	}
 
 	agent := &Agent{
@@ -264,18 +265,18 @@ func (a *Agent) cleanupAndLog(msg string, err error) {
 }
 
 func (a *Agent) logDebug(f string, args ...any) {
-	a.log(a.logger.DebugF, f, args...)
+	a.log(a.logger.DebugContext, f, args...)
 }
 
 func (a *Agent) logError(f string, args ...any) {
-	a.log(a.logger.ErrorF, f, args...)
+	a.log(a.logger.ErrorContext, f, args...)
 }
 
 func (a *Agent) wrapError(msg string, err error) error {
 	return fmt.Errorf("%s %s: %w", msg, a.String(), err)
 }
 
-func (a *Agent) log(writeLog func(string, ...any), f string, args ...any) {
+func (a *Agent) log(writeLog func(context.Context, string, ...any), f string, args ...any) {
 	f = a.String() + ": " + f
-	writeLog(f, args...)
+	writeLog(context.Background(), f, args...)
 }

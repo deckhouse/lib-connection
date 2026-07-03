@@ -15,16 +15,17 @@
 package tests
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/pem"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/deckhouse/lib-dhctl/pkg/log"
 	"github.com/deckhouse/lib-dhctl/pkg/retry"
 	gossh "github.com/deckhouse/lib-gossh"
 	"github.com/name212/govalue"
@@ -97,7 +98,7 @@ func WritePubKeyFileForPrivate(test *Test, privateKeyPath string, pubKey string)
 	return test.CreateFileWithSameSuffix(privateKeyPath, pubKey, false, PrivateKeysRoot, "id_rsa.pub")
 }
 
-func LogErrorOrAssert(t *testing.T, description string, err error, logger log.Logger) {
+func LogErrorOrAssert(t *testing.T, description string, err error, logger *slog.Logger) {
 	if err == nil {
 		return
 	}
@@ -107,7 +108,7 @@ func LogErrorOrAssert(t *testing.T, description string, err error, logger log.Lo
 		return
 	}
 
-	logger.ErrorF("%s: %v", description, err)
+	logger.ErrorContext(context.Background(), "%s: %v", description, err)
 }
 
 func CheckSkipSSHTest(t *testing.T, testName string) {

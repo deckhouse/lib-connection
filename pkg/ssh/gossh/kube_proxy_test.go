@@ -42,7 +42,7 @@ func TestKubeProxy(t *testing.T) {
 
 	waitRestart := func(op string) {
 		sleep := 20 * time.Second
-		test.GetLogger().InfoF("Waiting %s for finish %s", sleep.String(), op)
+		test.GetLogger().InfoContext(context.Background(), fmt.Sprintf("Waiting %s for finish %s", sleep.String(), op))
 		time.Sleep(sleep)
 	}
 
@@ -95,7 +95,7 @@ func TestKubeProxy(t *testing.T) {
 
 		// restart container case
 		restartSleep := 5 * time.Second
-		test.GetLogger().InfoF("Restart container with wait %s", restartSleep.String())
+		test.GetLogger().InfoContext(context.Background(), fmt.Sprintf("Restart container with wait %s", restartSleep.String()))
 		err = container.Container.SoftRestart(true, restartSleep)
 		require.NoError(t, err, "container should restart")
 
@@ -177,10 +177,10 @@ func TestKubeProxy(t *testing.T) {
 func prepareContainerForTestKubeProxy(t *testing.T, test *tests.Test) (*Client, *tests.TestContainerWrapper) {
 	sshClient, container := startContainerAndClientAndKind(t, test)
 
-	test.GetLogger().InfoF("Try to check run kubectl on ssh container...")
+	test.GetLogger().InfoContext(context.Background(), "Try to check run kubectl on ssh container...")
 	cmd := NewSSHCommand(sshClient, "kubectl", "get", "no")
 	out, err := cmd.CombinedOutput(context.Background())
-	test.Logger.InfoF("kubectl get no\n%s", out)
+	test.Logger.InfoContext(context.Background(), fmt.Sprintf("kubectl get no\n%s", out))
 	require.NoError(t, err)
 
 	return sshClient, container

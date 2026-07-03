@@ -15,6 +15,7 @@
 package kube
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -458,7 +459,7 @@ func TestParseFlags(t *testing.T) {
 				string(output),
 			)
 
-			tst.GetLogger().InfoF("Got output from TestParseFlagsAndExtractConfigNoArgs:\n%s", string(output))
+			tst.GetLogger().InfoContext(context.Background(), fmt.Sprintf("Got output from TestParseFlagsAndExtractConfigNoArgs:\n%s", string(output)))
 		})
 	})
 }

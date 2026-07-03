@@ -83,21 +83,21 @@ func (c *KINDCluster) runKind(args ...string) (string, error) {
 func (c *KINDCluster) RegisterCleanup(t *testing.T) {
 	t.Cleanup(func() {
 		if err := c.Delete(); err != nil {
-			c.test.GetLogger().ErrorF("Failed to delete cluster %s: %s", c.Name, err)
+			c.test.GetLogger().ErrorContext(context.Background(), fmt.Sprintf("Failed to delete cluster %s: %s", c.Name, err))
 		}
 	})
 }
 
 func (c *KINDCluster) Delete() error {
 	logger := c.test.GetLogger()
-	logger.InfoF("Deleting KIND cluster %s...", c.Name)
+	logger.InfoContext(context.Background(), fmt.Sprintf("Deleting KIND cluster %s...", c.Name))
 	out, err := c.runKind("delete", "cluster")
 	if err != nil {
-		logger.ErrorF("Failed to delete KIND cluster %s: %v:\n%s", c.Name, err, out)
+		logger.ErrorContext(context.Background(), fmt.Sprintf("Failed to delete KIND cluster %s: %v:\n%s", c.Name, err, out))
 		return err
 	}
 
-	logger.InfoF("KIND Cluster %s deleted:\n%s", c.Name, out)
+	logger.InfoContext(context.Background(), fmt.Sprintf("KIND Cluster %s deleted:\n%s", c.Name, out))
 	return nil
 }
 
@@ -237,12 +237,12 @@ func CreateKINDCluster(t *testing.T, params *KINDClusterCreateParams) *KINDClust
 		fmt.Sprintf("--config=%s", configPath),
 	}
 
-	test.GetLogger().InfoF("Creating KIND cluster %s...", clusterName)
+	test.GetLogger().InfoContext(context.Background(), fmt.Sprintf("Creating KIND cluster %s...", clusterName))
 
 	out, err := cluster.runKind(args...)
 	require.NoError(t, err, "not create kind cluster: %w:%s\n", err, out)
 
-	test.GetLogger().InfoF("KIND cluster %s created:\n%s", clusterName, out)
+	test.GetLogger().InfoContext(context.Background(), fmt.Sprintf("KIND cluster %s created:\n%s", clusterName, out))
 
 	cluster.ControlPlaneIP, err = getKINDControlPlaneIP(cluster)
 	checkErrorDuringCreateCluster(t, cluster, err, "failed to get kind control plane IP")
@@ -264,7 +264,7 @@ func CreateKINDCluster(t *testing.T, params *KINDClusterCreateParams) *KINDClust
 		if !params.NoPrepareLocalKubectlInSSHContainer {
 			kubectlPreparator.prepareLocalKubeCtlInSSHContainer(t, sshContainer)
 		} else {
-			params.Test.GetLogger().InfoF("Skipping prepare local kubectl in ssh container %s", containerName)
+			params.Test.GetLogger().InfoContext(context.Background(), fmt.Sprintf("Skipping prepare local kubectl in ssh container %s", containerName))
 		}
 	}
 
@@ -400,7 +400,7 @@ func checkErrorDuringCreateCluster(t *testing.T, cluster *KINDCluster, err error
 
 	deleteErr := cluster.Delete()
 	if deleteErr != nil {
-		cluster.test.GetLogger().ErrorF("Cannot delete kind cluster %s after create fail: %w", cluster.Name, deleteErr)
+		cluster.test.GetLogger().ErrorContext(context.Background(), fmt.Sprintf("Cannot delete kind cluster %s after create fail: %v", cluster.Name, deleteErr))
 	}
 
 	require.NoError(t, err, fmt.Sprintf(msg, args...))

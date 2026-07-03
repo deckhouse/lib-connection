@@ -18,12 +18,12 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/deckhouse/lib-dhctl/pkg/log"
 	dhlog "github.com/deckhouse/lib-dhctl/pkg/logger"
 	"github.com/name212/govalue"
 	"github.com/stretchr/testify/require"
@@ -101,7 +101,7 @@ func applyTestOpts(opts ...TestOpt) testOpts {
 type Test struct {
 	tmpDir string
 	id     string
-	Logger *log.InMemoryLogger
+	Logger *slog.Logger
 
 	testName    string
 	subTestName string
@@ -155,7 +155,7 @@ func NewTest(testName string, opts ...TestOpt) (*Test, error) {
 	}
 
 	if govalue.Nil(resTest.Logger) {
-		resTest.Logger = TestLogger(opts...)
+		resTest.Logger = dhlog.FromContext(context.Background())
 	}
 
 	localTmpDirStr := filepath.Join(os.TempDir(), tmpGlobalDirName, id)
@@ -167,7 +167,7 @@ func NewTest(testName string, opts ...TestOpt) (*Test, error) {
 
 	resTest.tmpDir = localTmpDirStr
 
-	resTest.Logger.InfoF("Created tmp dir '%s' for test '%s'", resTest.tmpDir, resTest.testName)
+	resTest.Logger.InfoContext(context.Background(), fmt.Sprintf("Created tmp dir '%s' for test '%s'", resTest.tmpDir, resTest.testName))
 
 	params := settings.ProviderParams{
 		Logger:  dhlog.FromContext(context.Background()),
@@ -207,7 +207,7 @@ func (s *Test) WithNodeTmpDir(p string) *Test {
 	return s
 }
 
-func (s *Test) GetLogger() *log.InMemoryLogger {
+func (s *Test) GetLogger() *slog.Logger {
 	return s.Logger
 }
 
@@ -448,7 +448,7 @@ func (s *Test) Cleanup(t *testing.T) {
 
 	logger := s.GetLogger()
 	if !govalue.Nil(logger) {
-		logger.InfoF("Temp dir '%s' removed for test '%s'", tmpDir, s.FullName())
+		logger.InfoContext(context.Background(), fmt.Sprintf("Temp dir '%s' removed for test '%s'", tmpDir, s.FullName()))
 	}
 }
 

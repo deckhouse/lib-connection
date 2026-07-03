@@ -172,7 +172,7 @@ func TestTunnelStop(t *testing.T) {
 
 	waitAfter := func(op string) {
 		sleep := 3 * time.Second
-		test.GetLogger().InfoF("Waiting %s perform operation after %s", sleep.String(), op)
+		test.GetLogger().InfoContext(context.Background(), fmt.Sprintf("Waiting %s perform operation after %s", sleep.String(), op))
 		time.Sleep(sleep)
 	}
 
@@ -286,11 +286,11 @@ done`, remoteServerPort)
 	t.Cleanup(func() {
 		err := runRemoteServerSession.Signal(ssh.SIGKILL)
 		if err != nil {
-			test.Logger.ErrorF("error killing remote server: %v", err)
+			test.Logger.ErrorContext(context.Background(), fmt.Sprintf("error killing remote server: %v", err))
 		}
 		err = runRemoteServerSession.Close()
 		if err != nil {
-			test.Logger.ErrorF("error closing remote server session: %v", err)
+			test.Logger.ErrorContext(context.Background(), fmt.Sprintf("error closing remote server session: %v", err))
 		}
 	})
 

@@ -459,7 +459,7 @@ func TestFileDownload(t *testing.T) {
 
 		cmd = exec.Command("ls", downloadWholeDirDir)
 		lsResult, err = cmd.CombinedOutput()
-		test.Logger.InfoF(string(lsResult))
+		test.Logger.InfoContext(context.Background(), string(lsResult))
 		require.NoError(t, err)
 
 		err = goSSHClient2.Start(context.Background())

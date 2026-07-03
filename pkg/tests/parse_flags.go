@@ -17,6 +17,7 @@ package tests
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -80,17 +81,17 @@ func AssertParseFlagsHelp(t *testing.T, params AssertParseFlagsHelpParams) {
 		time.Sleep(3 * time.Second)
 
 		if err := pr.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
-			logger.ErrorF("Error closing read pipe: %v", err)
+			logger.ErrorContext(context.Background(), fmt.Sprintf("Error closing read pipe: %v", err))
 		}
 
 		if err := pw.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
-			logger.ErrorF("Error closing read pipe: %v", err)
+			logger.ErrorContext(context.Background(), fmt.Sprintf("Error closing read pipe: %v", err))
 		}
 
 		wg.Wait()
 
 		if err := bufio.NewWriter(&buf).Flush(); err != nil {
-			logger.ErrorF("Error flushing buf: %v", err)
+			logger.ErrorContext(context.Background(), fmt.Sprintf("Error flushing buf: %v", err))
 		}
 
 		closed = true
@@ -115,7 +116,7 @@ func AssertParseFlagsHelp(t *testing.T, params AssertParseFlagsHelpParams) {
 		_, err := io.Copy(&buf, pr)
 		// Copy all content from the pipe reader to the buffer
 		if err != nil && hasCopyErr(err) {
-			logger.ErrorF("Error copying data from stderr: %v", err)
+			logger.ErrorContext(context.Background(), fmt.Sprintf("Error copying data from stderr: %v", err))
 		}
 	}()
 
@@ -124,8 +125,8 @@ func AssertParseFlagsHelp(t *testing.T, params AssertParseFlagsHelpParams) {
 		restoreStderr()
 		if t.Failed() {
 			out := buf.String()
-			logger.InfoF("Got usage from Parse:")
-			logger.InfoF("%s", out)
+			logger.InfoContext(context.Background(), "Got usage from Parse:")
+			logger.InfoContext(context.Background(), out)
 		}
 	})
 
@@ -133,7 +134,7 @@ func AssertParseFlagsHelp(t *testing.T, params AssertParseFlagsHelpParams) {
 	assertNoError := func(t *testing.T, msg string, err error) {
 		if err != nil {
 			restoreStderr()
-			logger.ErrorF("%s: %v", msg, err)
+			logger.ErrorContext(context.Background(), fmt.Sprintf("%s: %v", msg, err))
 			t.FailNow()
 		}
 	}
@@ -191,5 +192,5 @@ func AssertParseFlagsHelp(t *testing.T, params AssertParseFlagsHelpParams) {
 		)
 	}
 
-	logger.InfoF("Has valid help:\n%s", out)
+	logger.InfoContext(context.Background(), fmt.Sprintf("Has valid help:\n%s", out))
 }

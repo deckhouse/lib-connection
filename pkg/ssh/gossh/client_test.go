@@ -283,7 +283,7 @@ func TestClientStart(t *testing.T) {
 
 			if !c.wantErr {
 				require.NoError(t, err)
-				test.Logger.DebugF("client started successfully")
+				test.Logger.DebugContext(context.Background(), "client started successfully")
 				return
 			}
 
@@ -329,7 +329,7 @@ func TestClientKeepalive(t *testing.T) {
 			defer func() {
 				err := s.Close()
 				if err != nil {
-					test.Logger.DebugF("failed to close runEcho session: %v", err)
+					test.Logger.DebugContext(context.Background(), fmt.Sprintf("failed to close runEcho session: %v", err))
 				}
 			}()
 

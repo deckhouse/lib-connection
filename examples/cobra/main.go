@@ -23,7 +23,6 @@ import (
 
 	"github.com/deckhouse/lib-connection/examples/cobra/cmd"
 	"github.com/deckhouse/lib-connection/pkg/settings"
-	"github.com/deckhouse/lib-dhctl/pkg/log"
 	dhlog "github.com/deckhouse/lib-dhctl/pkg/logger"
 	"github.com/spf13/cobra"
 )
@@ -49,8 +48,7 @@ func main() {
 	}
 
 	global := &globalArgs{
-		loggerType: string(log.Pretty),
-		tmpDir:     filepath.Join(os.TempDir(), "cobra-example"),
+		tmpDir: filepath.Join(os.TempDir(), "cobra-example"),
 	}
 
 	// example usage global flags with sub commands using with our flags
@@ -59,13 +57,6 @@ func main() {
 
 	isDebug := os.Getenv(fmt.Sprintf("%s_DEBUG", envsPrefix)) != ""
 
-	logger := log.NewPrettyLogger(log.LoggerOptions{
-		IsDebug: isDebug,
-	})
-
-	if isDebug {
-		log.InitKlog(logger, log.WithKlogVerbose("10"))
-	}
 	ctx := context.Background()
 
 	sett := settings.NewBaseProviders(settings.ProviderParams{

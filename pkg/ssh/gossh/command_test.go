@@ -17,6 +17,7 @@ package gossh
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -523,10 +524,10 @@ func TestCommandStart(t *testing.T) {
 				prepareFunc: func(c *SSHCommand) error {
 					c.WithWaitHandler(func(err error) {
 						if err != nil {
-							test.Logger.ErrorF("SSH-agent process exited, now stop. Wait error: %v", err)
+							test.Logger.ErrorContext(context.Background(), fmt.Sprintf("SSH-agent process exited, now stop. Wait error: %v", err))
 							return
 						}
-						test.Logger.DebugF("SSH-agent process exited, now stop")
+						test.Logger.DebugContext(context.Background(), "SSH-agent process exited, now stop")
 					})
 					return nil
 				},

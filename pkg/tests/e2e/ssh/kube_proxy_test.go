@@ -71,7 +71,7 @@ func TestKubeProxy(t *testing.T) {
 			test := tests.ShouldNewIntegrationTest(t, "TestKubeProxy"+rt.name)
 
 			wait := func(op string) {
-				test.GetLogger().InfoF("%s", op)
+				test.GetLogger().InfoContext(context.Background(), op)
 				time.Sleep(10 * time.Second)
 			}
 
@@ -103,7 +103,7 @@ func TestKubeProxy(t *testing.T) {
 
 			// forth proxy start on custom port
 			customPort := tests.RandRange(30001, 30199)
-			test.GetLogger().InfoF("Got custom Port: %d", customPort)
+			test.GetLogger().InfoContext(context.Background(), fmt.Sprintf("Got custom Port: %d", customPort))
 			forthProxy := client.KubeProxy()
 			forthProxyPort, err := forthProxy.Start(customPort)
 			require.NoError(t, err, "second proxy should start")

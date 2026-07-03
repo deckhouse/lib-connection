@@ -169,7 +169,7 @@ exit $?
 		checkTunnelAction := func() error {
 			out, err := checker.CheckTunnel(context.Background())
 			if err != nil {
-				test.Logger.DebugF("Failed to check tunnel: %s %v", out, err)
+				test.Logger.DebugContext(context.Background(), fmt.Sprintf("Failed to check tunnel: %s %v", out, err))
 				return err
 			}
 			return nil
@@ -189,10 +189,13 @@ exit $?
 		restartSleep := 5 * time.Second
 
 		tun.StartHealthMonitor(context.Background(), checker, killer)
-		test.Logger.DebugF(
-			"Waiting %s for tunnel monitor to start. And restart container. Wait %s before start container for fail check",
-			upMonitorSleep.String(),
-			restartSleep.String(),
+		test.Logger.DebugContext(
+			context.Background(),
+			fmt.Sprintf(
+				"Waiting %s for tunnel monitor to start. And restart container. Wait %s before start container for fail check",
+				upMonitorSleep.String(),
+				restartSleep.String(),
+			),
 		)
 
 		time.Sleep(upMonitorSleep)
@@ -201,9 +204,12 @@ exit $?
 		err = container.Container.CreateDeckhouseDirs()
 		require.NoError(t, err, "create deckhouse dirs")
 
-		test.Logger.DebugF(
-			"Waiting %s for tunnel monitor to restart",
-			upMonitorSleep.String(),
+		test.Logger.DebugContext(
+			context.Background(),
+			fmt.Sprintf(
+				"Waiting %s for tunnel monitor to restart",
+				upMonitorSleep.String(),
+			),
 		)
 
 		time.Sleep(upMonitorSleep)
@@ -214,10 +220,13 @@ exit $?
 		err = retry.NewLoopWithParams(checkLoopAfterRestart).Run(checkTunnelAction)
 		require.NoError(t, err, "tunnel check after restart")
 
-		test.Logger.DebugF(
-			"Disconnect (fail connection between server and client) case. Wait %s before connect. Wait %s before check",
-			restartSleep.String(),
-			upMonitorSleep.String(),
+		test.Logger.DebugContext(
+			context.Background(),
+			fmt.Sprintf(
+				"Disconnect (fail connection between server and client) case. Wait %s before connect. Wait %s before check",
+				restartSleep.String(),
+				upMonitorSleep.String(),
+			),
 		)
 
 		// fail connection case

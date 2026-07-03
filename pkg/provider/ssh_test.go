@@ -1651,7 +1651,7 @@ func newTest(t *testing.T) *tests.Test {
 		tests.TestWithParallelRun(true),
 	).WithEnvsPrefix("TEST_SSH_PROVIDER")
 
-	res.GetLogger().InfoF("Got name: %s", res.Name())
+	res.GetLogger().InfoContext(context.Background(), fmt.Sprintf("Got name: %s", res.Name()))
 
 	return res
 }

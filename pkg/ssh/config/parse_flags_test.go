@@ -1055,7 +1055,7 @@ sshBastionPassword: "not_secure_password_bastion"
 				string(output),
 			)
 
-			params.test.GetLogger().InfoF("Got output from TestParseFlagsAndExtractConfigNoArgs:\n%s", string(output))
+			params.test.GetLogger().InfoContext(context.Background(), fmt.Sprintf("Got output from TestParseFlagsAndExtractConfigNoArgs:\n%s", string(output)))
 		})
 	})
 }

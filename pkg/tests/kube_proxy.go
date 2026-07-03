@@ -15,6 +15,7 @@
 package tests
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"testing"
@@ -27,7 +28,7 @@ import (
 func AssertKubeProxy(t *testing.T, test *Test, localServerPort string, wantError bool) {
 	url := fmt.Sprintf("http://127.0.0.1:%s/api/v1/nodes", localServerPort)
 
-	test.GetLogger().InfoF("Assert kube proxy on '%s' want err: %v", url, wantError)
+	test.GetLogger().InfoContext(context.Background(), fmt.Sprintf("Assert kube proxy on '%s' want err: %v", url, wantError))
 
 	prefixLogger := NewPrefixLogger(test.Logger).WithPrefix(test.FullName())
 
@@ -53,7 +54,7 @@ func AssertKubeProxy(t *testing.T, test *Test, localServerPort string, wantError
 
 			_, errGet := DoGetRequest(url, getLoopParams, prefixLogger)
 			if errGet == nil && err != nil {
-				test.GetLogger().InfoF("Dial not success %v but get is success", err)
+				test.GetLogger().InfoContext(context.Background(), fmt.Sprintf("Dial not success %v but get is success", err))
 			}
 
 			return err
