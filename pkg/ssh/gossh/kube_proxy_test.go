@@ -33,6 +33,9 @@ func TestKubeProxy(t *testing.T) {
 	// kube-proxy tests occupy the fixed DefaultLocalAPIPort and the port
 	// provider range; serialize them across parallel test binaries
 	tests.AcquireGlobalTestLock(t, "kube-proxy")
+	// the previous holder may still be tearing its listener down, so wait for
+	// the fixed port to drain before we start our own proxy on it
+	tests.WaitPortFree(t, kubeproxy.DefaultLocalAPIPort)
 
 	if kindBinEnv := os.Getenv("TEST_KIND_BINARY"); kindBinEnv == "" {
 		t.Setenv("TEST_KIND_BINARY", "../../../bin/kind")

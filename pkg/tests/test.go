@@ -98,6 +98,23 @@ func applyTestOpts(opts ...TestOpt) testOpts {
 	return options
 }
 
+// buildTestLogger wires the test logger to the options. When a log buffer is
+// requested the logger writes to it (the pretty variant renders the compact
+// ┌/│/└ process boxes, which the bundle assertions match against) so tests can
+// capture and assert log output. Without a buffer it falls back to the default
+// context logger.
+func buildTestLogger(options testOpts) *slog.Logger {
+	if options.logBuffer == nil {
+		return dhlog.FromContext(context.Background())
+	}
+
+	if options.prettyLogger {
+		return dhlog.NewStreamLogger(options.logBuffer)
+	}
+
+	return dhlog.NewBufferLogger(options.logBuffer)
+}
+
 type Test struct {
 	tmpDir string
 	id     string
@@ -155,7 +172,7 @@ func NewTest(testName string, opts ...TestOpt) (*Test, error) {
 	}
 
 	if govalue.Nil(resTest.Logger) {
-		resTest.Logger = dhlog.FromContext(context.Background())
+		resTest.Logger = buildTestLogger(options)
 	}
 
 	localTmpDirStr := filepath.Join(os.TempDir(), tmpGlobalDirName, id)
@@ -170,7 +187,7 @@ func NewTest(testName string, opts ...TestOpt) (*Test, error) {
 	resTest.Logger.InfoContext(context.Background(), fmt.Sprintf("Created tmp dir '%s' for test '%s'", resTest.tmpDir, resTest.testName))
 
 	params := settings.ProviderParams{
-		Logger:  dhlog.FromContext(context.Background()),
+		Logger:  resTest.Logger,
 		IsDebug: options.isDebug,
 		TmpDir:  resTest.tmpDir,
 	}

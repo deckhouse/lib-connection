@@ -221,10 +221,12 @@ func AssertLogBufferWithErrorBundle(t *testing.T, buf *bytes.Buffer) {
 	// Stdout and stderr of the bundle arrive over separate channels, so the
 	// relative order of stream lines is not deterministic (e.g. the stderr
 	// retry message may land between stdout lines); assert presence only.
+	// The captured step output is logged at error level, which the compact
+	// renderer prints as plain lines (no │ gutter, unlike info-level lines).
 	expects := map[string]string{
-		"step output":   `│ second step`,
-		"step failure":  `│ oops! failure!`,
-		"retry message": `│ Failed to execute step /var/lib/bashible/bundle_steps/02-step.sh ... retry in 2 seconds.`,
+		"step output":   `second step`,
+		"step failure":  `oops! failure!`,
+		"retry message": `Failed to execute step /var/lib/bashible/bundle_steps/02-step.sh ... retry in 2 seconds.`,
 
 		"first debug content": `+ export TERM=xterm-256color`,
 
