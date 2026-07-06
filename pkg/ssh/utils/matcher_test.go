@@ -100,6 +100,7 @@ func TestMatchOneBuffer(t *testing.T) {
 	pattern := []byte("SUCCESS\r")
 	after := []byte("More text")
 
+	// nolint:prealloc
 	var buf []byte
 
 	buf = append(buf, before...)

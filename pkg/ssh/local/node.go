@@ -15,6 +15,8 @@
 package local
 
 import (
+	"context"
+
 	connection "github.com/deckhouse/lib-connection/pkg"
 	"github.com/deckhouse/lib-connection/pkg/settings"
 )
@@ -42,9 +44,10 @@ func NewNodeInterface(sett settings.Settings) *NodeInterface {
 
 func (n *NodeInterface) Command(name string, args ...string) connection.Command {
 	logger := n.settings.Logger()
+	ctx := context.Background()
 
-	logger.DebugF("Starting NodeInterface.Command")
-	defer logger.DebugF("Stop NodeInterface.Command")
+	logger.DebugContext(ctx, "Starting NodeInterface.Command")
+	defer logger.DebugContext(ctx, "Stop NodeInterface.Command")
 
 	return NewCommand(n.settings, name, args...)
 }
@@ -55,9 +58,10 @@ func (n *NodeInterface) File() connection.File {
 
 func (n *NodeInterface) UploadScript(scriptPath string, args ...string) connection.Script {
 	logger := n.settings.Logger()
+	ctx := context.Background()
 
-	logger.DebugF("Starting NodeInterface.UploadScript")
-	defer logger.DebugF("Stop NodeInterface.UploadScript")
+	logger.DebugContext(ctx, "Starting NodeInterface.UploadScript")
+	defer logger.DebugContext(ctx, "Stop NodeInterface.UploadScript")
 
 	return NewScript(n, scriptPath, args...)
 }

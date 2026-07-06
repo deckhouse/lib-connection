@@ -15,6 +15,7 @@
 package kubeproxy
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"os"
@@ -231,7 +232,7 @@ func (k *BaseKubeProxy) tryToRestartFully(startID int) {
 			sleep.String(),
 		)
 
-		k.sett.Logger().WarnF(msg, args...)
+		k.sett.Logger().WarnContext(context.Background(), fmt.Sprintf(msg, args...))
 
 		time.Sleep(sleep)
 
@@ -540,7 +541,7 @@ func (k *BaseKubeProxy) appendIDs(id int, f string, args ...any) (string, []any)
 
 func (k *BaseKubeProxy) debugWithID(id int, f string, args ...any) {
 	f, args = k.appendIDs(id, f, args...)
-	k.sett.Logger().DebugF(f, args...)
+	k.sett.Logger().DebugContext(context.Background(), fmt.Sprintf(f, args...))
 }
 
 func ExtractTunnelAddressFromEnv(localPort int, kubeProxyPort string) string {

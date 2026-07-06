@@ -15,6 +15,7 @@
 package gossh
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -121,5 +122,5 @@ func (c *keepAliveChecker) handleClientAliveFailed(err error) error {
 func (c *keepAliveChecker) debug(format string, a ...any) {
 	debugPrefix := fmt.Sprintf("Keepalive[%d] to %s ", c.id, c.client.sessionClient.String())
 	format = debugPrefix + format
-	c.client.settings.Logger().DebugF(format, a...)
+	c.client.settings.Logger().DebugContext(context.Background(), fmt.Sprintf(format, a...))
 }

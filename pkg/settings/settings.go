@@ -15,24 +15,26 @@
 package settings
 
 import (
+	"context"
+	"log/slog"
 	"os"
 
-	"github.com/deckhouse/lib-dhctl/pkg/log"
+	"github.com/deckhouse/lib-dhctl/pkg/logger"
+	"github.com/name212/govalue"
 )
 
 var (
-	defaultLogger      log.Logger = log.NewSilentLogger()
-	defaultNodeBinPath string     = "/opt/deckhouse/bin"
-	defaultNodeTmpPath            = "/opt/deckhouse/tmp"
-	defaultTmpDir                 = os.TempDir() + "/dhctl"
-	defaultOnShutdown  OnShutdown = func(string, func()) {}
+	defaultLogger      *slog.Logger = logger.FromContext(context.Background())
+	defaultNodeBinPath string       = "/opt/deckhouse/bin"
+	defaultNodeTmpPath              = "/opt/deckhouse/tmp"
+	defaultTmpDir                   = os.TempDir() + "/dhctl"
+	defaultOnShutdown  OnShutdown   = func(string, func()) {}
 )
 
 type OnShutdown func(name string, action func())
 
 type Settings interface {
-	Logger() log.Logger
-	LoggerProvider() log.LoggerProvider
+	Logger() *slog.Logger
 	NodeTmpDir() string
 	NodeBinPath() string
 	IsDebug() bool
@@ -43,14 +45,14 @@ type Settings interface {
 }
 
 type ProviderParams struct {
-	LoggerProvider log.LoggerProvider
-	IsDebug        bool
-	NodeTmpPath    string
-	NodeBinPath    string
-	TmpDir         string
-	AuthSock       string
-	EnvsPrefix     string
-	OnShutdown     OnShutdown
+	Logger      *slog.Logger
+	IsDebug     bool
+	NodeTmpPath string
+	NodeBinPath string
+	TmpDir      string
+	AuthSock    string
+	EnvsPrefix  string
+	OnShutdown  OnShutdown
 }
 
 type BaseProviders struct {
@@ -71,17 +73,17 @@ func NewBaseProviders(params ProviderParams) *BaseProviders {
 	}
 }
 
-func (b *BaseProviders) Logger() log.Logger {
-	return log.ProvideSafe(b.params.LoggerProvider, defaultLogger)
+func (b *BaseProviders) Logger() *slog.Logger {
+	if govalue.NotNil(b.params.Logger) {
+		return b.params.Logger
+	}
+
+	return defaultLogger
 }
 
-func (b *BaseProviders) WithLogger(provider log.LoggerProvider) *BaseProviders {
-	b.params.LoggerProvider = provider
+func (b *BaseProviders) WithLogger(l *slog.Logger) *BaseProviders {
+	b.params.Logger = l
 	return b
-}
-
-func (b *BaseProviders) LoggerProvider() log.LoggerProvider {
-	return b.params.LoggerProvider
 }
 
 func (b *BaseProviders) NodeTmpDir() string {
@@ -140,9 +142,9 @@ func CloneWithAuthSock(path string) CloneOpt {
 	}
 }
 
-func CloneWithLoggerProvider(provider log.LoggerProvider) CloneOpt {
+func CloneWithLogger(l *slog.Logger) CloneOpt {
 	return func(p *BaseProviders) {
-		p.params.LoggerProvider = provider
+		p.params.Logger = l
 	}
 }
 

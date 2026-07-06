@@ -55,6 +55,9 @@ func TestKubeProxy(t *testing.T) {
 	// kube-proxy tests occupy the fixed DefaultLocalAPIPort and the port
 	// provider range; serialize them across parallel test binaries
 	tests.AcquireGlobalTestLock(t, "kube-proxy")
+	// the previous holder may still be tearing its listener down, so wait for
+	// the fixed port to drain before we start our own proxy on it
+	tests.WaitPortFree(t, kubeproxy.DefaultLocalAPIPort)
 
 	container := startContainerAndKind(t, baseTest)
 
@@ -71,7 +74,7 @@ func TestKubeProxy(t *testing.T) {
 			test := tests.ShouldNewIntegrationTest(t, "TestKubeProxy"+rt.name)
 
 			wait := func(op string) {
-				test.GetLogger().InfoF("%s", op)
+				test.GetLogger().InfoContext(context.Background(), op)
 				time.Sleep(10 * time.Second)
 			}
 
@@ -103,7 +106,7 @@ func TestKubeProxy(t *testing.T) {
 
 			// forth proxy start on custom port
 			customPort := tests.RandRange(30001, 30199)
-			test.GetLogger().InfoF("Got custom Port: %d", customPort)
+			test.GetLogger().InfoContext(context.Background(), fmt.Sprintf("Got custom Port: %d", customPort))
 			forthProxy := client.KubeProxy()
 			forthProxyPort, err := forthProxy.Start(customPort)
 			require.NoError(t, err, "second proxy should start")
@@ -193,7 +196,7 @@ func startClientForContainer(t *testing.T, test *tests.Test, rt runTest, contain
 		sshClient = clissh.NewClient(sshSettings, sess, keys, true)
 	}
 
-	err := sshClient.Start()
+	err := sshClient.Start(ctx)
 	// expecting no error on client start
 	require.NoError(t, err)
 

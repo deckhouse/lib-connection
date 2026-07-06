@@ -24,7 +24,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/deckhouse/lib-dhctl/pkg/log"
 	"github.com/deckhouse/lib-dhctl/pkg/retry"
 	gossh "github.com/deckhouse/lib-gossh"
 	"github.com/deckhouse/lib-gossh/agent"
@@ -119,8 +118,8 @@ func (s *Client) WithLoopsParams(p ClientLoopsParams) *Client {
 	return s
 }
 
-func (s *Client) OnlyPreparePrivateKeys() error {
-	return s.initSigners()
+func (s *Client) OnlyPreparePrivateKeys(ctx context.Context) error {
+	return s.initSigners(ctx)
 }
 
 // Tunnel is used to open local (L) and remote (R) tunnels
@@ -182,7 +181,7 @@ func (s *Client) PrivateKeys() []session.AgentPrivateKey {
 	return s.privateKeys
 }
 
-func (s *Client) RefreshPrivateKeys() error {
+func (s *Client) RefreshPrivateKeys(_ context.Context) error {
 	// new go ssh client already have all keys
 	return nil
 }
@@ -239,8 +238,8 @@ func (s *Client) Live() bool {
 	return s.live
 }
 
-func (s *Client) Start() error {
-	return s.startWithContext(s.ctx)
+func (s *Client) Start(ctx context.Context) error {
+	return s.startWithContext(ctx)
 }
 
 func (s *Client) UnregisterSession(sess *gossh.Session) {
@@ -289,7 +288,7 @@ func (s *Client) startWithContext(ctx context.Context) error {
 
 	s.debug("Starting go ssh client....")
 
-	if err := s.initSigners(); err != nil {
+	if err := s.initSigners(ctx); err != nil {
 		return err
 	}
 
@@ -590,7 +589,7 @@ func (s *Client) restart() {
 	s.live = false
 	s.stopChan = nil
 	s.silent = true
-	if err := s.Start(); err != nil {
+	if err := s.Start(s.ctx); err != nil {
 		s.debug("Start failed during restart: %v", err)
 	}
 	s.sshSessionsList = nil
@@ -615,13 +614,7 @@ func (s *Client) createSSHConnection(c net.Conn, addr string, config *gossh.Clie
 	)
 
 	if s.settings.IsDebug() {
-		sshLogger := log.NewSLogWithPrefixAndDebug(
-			context.TODO(),
-			s.settings.LoggerProvider(),
-			"go-ssh",
-			true,
-		)
-		conn, ch, requestCh, err = gossh.NewClientConnWithDebug(c, addr, config, sshLogger)
+		conn, ch, requestCh, err = gossh.NewClientConnWithDebug(c, addr, config, s.settings.Logger())
 	} else {
 		conn, ch, requestCh, err = gossh.NewClientConn(c, addr, config)
 	}
@@ -687,15 +680,15 @@ func (s *Client) dialContext(ctx context.Context, network, addr string, config *
 	return sshConn.createGoClient(), nil
 }
 
-func (s *Client) initSigners() error {
+func (s *Client) initSigners(ctx context.Context) error {
 	if len(s.signers) > 0 {
-		s.settings.Logger().DebugF("Signers already initialized")
+		s.settings.Logger().DebugContext(context.Background(), "Signers already initialized")
 		return nil
 	}
 
 	signers := make([]gossh.Signer, 0, len(s.privateKeys))
 	for _, keypath := range s.privateKeys {
-		key, _, err := utils.ParseSSHPrivateKeyFile(keypath.Key, keypath.Passphrase, s.settings.Logger())
+		key, _, err := utils.ParseSSHPrivateKeyFile(ctx, keypath.Key, keypath.Passphrase, s.settings.Logger())
 		if err != nil {
 			return err
 		}
@@ -717,7 +710,7 @@ func (s *Client) stopAllAndLogErrors(cause string) {
 		s.debug("Have %d errors after stop:", len(errors))
 	}
 	for _, err := range errors {
-		s.debug(err.Error())
+		s.debug("%s", err.Error())
 	}
 }
 
@@ -878,7 +871,7 @@ func (s *Client) stopRemoteD8KProxy(ctx context.Context) error {
 }
 
 func (s *Client) debug(format string, v ...any) {
-	s.settings.Logger().DebugF(format, v...)
+	s.settings.Logger().DebugContext(context.Background(), fmt.Sprintf(format, v...))
 }
 
 func (s *Client) logPresentHandler(connectionName string) []utils.PresentCloseHandler {

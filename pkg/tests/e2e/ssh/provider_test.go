@@ -309,6 +309,7 @@ echo -n "%s"
 	scriptLocalPath := test.MustCreateTmpFile(t, script, true, scriptName)
 	remotePath := fmt.Sprintf("/tmp/%s", scriptName)
 
+	// nolint:prealloc
 	cOpts := []tests.TestContainerWrapperSettingsOpts{
 		tests.WithVolumes([]tests.Volume{
 			{
@@ -382,7 +383,7 @@ func sessionForConnectionConfig(config *sshconfig.ConnectionConfig) (*session.Se
 func registerCleanup(t *testing.T, test *tests.Test, p *provider.DefaultSSHProvider) {
 	t.Cleanup(func() {
 		if err := p.Cleanup(context.TODO()); err != nil {
-			test.GetLogger().ErrorF("Failed to clean up %s provider: %v", t.Name(), err)
+			test.GetLogger().ErrorContext(context.Background(), fmt.Sprintf("Failed to clean up %s provider: %v", t.Name(), err))
 		}
 	})
 }
@@ -409,7 +410,6 @@ func assertRunScript(t *testing.T, params assertRunScriptParams) {
 		retry.WithAttempts(4),
 		retry.WithWait(2*time.Second),
 		retry.WithName("Run script %s", params.executePath),
-		retry.WithLogger(params.test.GetLogger()),
 	)).RunContext(ctx, func() error {
 		var err error
 		cmd := params.client.Command(params.executePath)
@@ -432,7 +432,7 @@ func assertRunScript(t *testing.T, params assertRunScriptParams) {
 	require.NoError(t, err, "command should run")
 	require.Contains(t, strOut, params.expectedOut, "have correct output")
 
-	params.test.GetLogger().InfoF("Got output for %s: %s", params.executePath, strOut)
+	params.test.GetLogger().InfoContext(context.Background(), fmt.Sprintf("Got output for %s: %s", params.executePath, strOut))
 }
 
 func getProvider(test *tests.Test, config *sshconfig.ConnectionConfig) *provider.DefaultSSHProvider {

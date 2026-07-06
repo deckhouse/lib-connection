@@ -83,21 +83,21 @@ func (c *KINDCluster) runKind(args ...string) (string, error) {
 func (c *KINDCluster) RegisterCleanup(t *testing.T) {
 	t.Cleanup(func() {
 		if err := c.Delete(); err != nil {
-			c.test.GetLogger().ErrorF("Failed to delete cluster %s: %s", c.Name, err)
+			c.test.GetLogger().ErrorContext(context.Background(), fmt.Sprintf("Failed to delete cluster %s: %s", c.Name, err))
 		}
 	})
 }
 
 func (c *KINDCluster) Delete() error {
 	logger := c.test.GetLogger()
-	logger.InfoF("Deleting KIND cluster %s...", c.Name)
+	logger.InfoContext(context.Background(), fmt.Sprintf("Deleting KIND cluster %s...", c.Name))
 	out, err := c.runKind("delete", "cluster")
 	if err != nil {
-		logger.ErrorF("Failed to delete KIND cluster %s: %v:\n%s", c.Name, err, out)
+		logger.ErrorContext(context.Background(), fmt.Sprintf("Failed to delete KIND cluster %s: %v:\n%s", c.Name, err, out))
 		return err
 	}
 
-	logger.InfoF("KIND Cluster %s deleted:\n%s", c.Name, out)
+	logger.InfoContext(context.Background(), fmt.Sprintf("KIND Cluster %s deleted:\n%s", c.Name, out))
 	return nil
 }
 
@@ -207,6 +207,7 @@ func (c *KINDCluster) copyREST() *rest.Config {
 }
 
 func (c *KINDCluster) runKubectlInSystemNs(name string, args ...string) (string, error) {
+	// nolint:prealloc
 	runArgs := []string{
 		"kubectl",
 		"-n",
@@ -236,12 +237,12 @@ func CreateKINDCluster(t *testing.T, params *KINDClusterCreateParams) *KINDClust
 		fmt.Sprintf("--config=%s", configPath),
 	}
 
-	test.GetLogger().InfoF("Creating KIND cluster %s...", clusterName)
+	test.GetLogger().InfoContext(context.Background(), fmt.Sprintf("Creating KIND cluster %s...", clusterName))
 
 	out, err := cluster.runKind(args...)
 	require.NoError(t, err, "not create kind cluster: %w:%s\n", err, out)
 
-	test.GetLogger().InfoF("KIND cluster %s created:\n%s", clusterName, out)
+	test.GetLogger().InfoContext(context.Background(), fmt.Sprintf("KIND cluster %s created:\n%s", clusterName, out))
 
 	cluster.ControlPlaneIP, err = getKINDControlPlaneIP(cluster)
 	checkErrorDuringCreateCluster(t, cluster, err, "failed to get kind control plane IP")
@@ -263,7 +264,7 @@ func CreateKINDCluster(t *testing.T, params *KINDClusterCreateParams) *KINDClust
 		if !params.NoPrepareLocalKubectlInSSHContainer {
 			kubectlPreparator.prepareLocalKubeCtlInSSHContainer(t, sshContainer)
 		} else {
-			params.Test.GetLogger().InfoF("Skipping prepare local kubectl in ssh container %s", containerName)
+			params.Test.GetLogger().InfoContext(context.Background(), fmt.Sprintf("Skipping prepare local kubectl in ssh container %s", containerName))
 		}
 	}
 
@@ -287,7 +288,6 @@ func (c *KINDCluster) LoadDockerImage(t *testing.T, sourceImage, targetTag strin
 		retry.WithName("Load image %s into KIND cluster %s", targetTag, c.Name),
 		retry.WithAttempts(10),
 		retry.WithWait(2*time.Second),
-		retry.WithLogger(c.test.GetLogger()),
 	)
 
 	err = retry.NewLoopWithParams(loadParams).Run(func() error {
@@ -303,6 +303,7 @@ func (c *KINDCluster) LoadDockerImage(t *testing.T, sourceImage, targetTag strin
 }
 
 func execInKINDContainer(cluster *KINDCluster, name string, args ...string) (string, error) {
+	// nolint:prealloc
 	a := []string{
 		"exec",
 		cluster.containerName(),
@@ -313,12 +314,11 @@ func execInKINDContainer(cluster *KINDCluster, name string, args ...string) (str
 	return runDockerForKINDContainer(cluster, name, a...)
 }
 
-func runDockerForKINDContainer(cluster *KINDCluster, name string, args ...string) (string, error) {
+func runDockerForKINDContainer(_ *KINDCluster, name string, args ...string) (string, error) {
 	params := retry.NewEmptyParams(
 		retry.WithName("%s", name),
 		retry.WithAttempts(10),
 		retry.WithWait(2*time.Second),
-		retry.WithLogger(cluster.test.GetLogger()),
 	)
 
 	out := ""
@@ -400,7 +400,7 @@ func checkErrorDuringCreateCluster(t *testing.T, cluster *KINDCluster, err error
 
 	deleteErr := cluster.Delete()
 	if deleteErr != nil {
-		cluster.test.GetLogger().ErrorF("Cannot delete kind cluster %s after create fail: %w", cluster.Name, deleteErr)
+		cluster.test.GetLogger().ErrorContext(context.Background(), fmt.Sprintf("Cannot delete kind cluster %s after create fail: %v", cluster.Name, deleteErr))
 	}
 
 	require.NoError(t, err, fmt.Sprintf(msg, args...))
@@ -450,7 +450,6 @@ func (p *localKubectlPreparator) prepareLocalKubeCtlInSSHContainer(t *testing.T,
 	container := sshContainer.Container.Container
 	containerName := container.ContainerSettings().ContainerName
 	cluster := p.cluster
-	test := cluster.test
 
 	kubectlVersion := p.getKubectlVersion(t)
 
@@ -458,7 +457,6 @@ func (p *localKubectlPreparator) prepareLocalKubeCtlInSSHContainer(t *testing.T,
 		retry.WithName("Download kubectl to ssh container %s", containerName),
 		retry.WithAttempts(10),
 		retry.WithWait(2*time.Second),
-		retry.WithLogger(test.GetLogger()),
 	)
 	err := retry.NewLoopWithParams(downloadKubectlParams).Run(func() error {
 		return container.DownloadKubectl(kubectlVersion)
@@ -473,7 +471,6 @@ func (p *localKubectlPreparator) prepareLocalKubeCtlInSSHContainer(t *testing.T,
 		retry.WithName("Upload kubeconfig to ssh container %s", containerName),
 		retry.WithAttempts(10),
 		retry.WithWait(2*time.Second),
-		retry.WithLogger(test.GetLogger()),
 	)
 
 	configTmp := p.getKubeConfigPath(t)

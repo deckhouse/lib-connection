@@ -20,7 +20,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/deckhouse/lib-dhctl/pkg/log"
+	dhlog "github.com/deckhouse/lib-dhctl/pkg/logger"
 	"github.com/deckhouse/lib-dhctl/pkg/retry"
 	"github.com/name212/govalue"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -182,7 +182,7 @@ func (p *DefaultKubeProvider) createAndInitClient(ctx context.Context, forceStop
 
 	var client *kube.KubernetesClient
 
-	err := logger.Process(log.ProcessCommon, "Connect to Kubernetes API", func() error {
+	err := dhlog.RunProcess(ctx, logger, "Connect to Kubernetes API", func(ctx context.Context) error {
 		// await availability if need here
 		newClient, err := p.newClient(ctx, forceStopOnError, opts...)
 		if err != nil {

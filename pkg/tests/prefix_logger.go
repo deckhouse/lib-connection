@@ -15,24 +15,24 @@
 package tests
 
 import (
+	"context"
 	"fmt"
-
-	"github.com/deckhouse/lib-dhctl/pkg/log"
+	"log/slog"
 )
 
 type PrefixLogger struct {
-	log.Logger
+	*slog.Logger
 	prefix  string
 	address string
 }
 
-func newPrefixLoggerWithAddress(logger log.Logger, address string) *PrefixLogger {
+func newPrefixLoggerWithAddress(logger *slog.Logger, address string) *PrefixLogger {
 	l := NewPrefixLogger(logger)
 	l.address = address
 	return l.WithPrefix("")
 }
 
-func NewPrefixLogger(logger log.Logger) *PrefixLogger {
+func NewPrefixLogger(logger *slog.Logger) *PrefixLogger {
 	l := &PrefixLogger{
 		Logger: logger,
 	}
@@ -40,20 +40,20 @@ func NewPrefixLogger(logger log.Logger) *PrefixLogger {
 	return l.WithPrefix("")
 }
 
-func (l *PrefixLogger) Log(write func(string, ...any), f string, args ...any) {
+func (l *PrefixLogger) Log(write func(context.Context, string, ...any), f string, args ...any) {
 	if l.prefix != "" {
 		f = l.prefix + ": " + f
 	}
 
-	write(f, args...)
+	write(context.Background(), f, args...)
 }
 
 func (l *PrefixLogger) Error(f string, args ...any) {
-	l.Log(l.ErrorF, f, args...)
+	l.Log(l.Logger.ErrorContext, f, args...)
 }
 
 func (l *PrefixLogger) Info(f string, args ...any) {
-	l.Log(l.InfoF, f, args...)
+	l.Log(l.Logger.InfoContext, f, args...)
 }
 
 func (l *PrefixLogger) WithPrefix(p string) *PrefixLogger {

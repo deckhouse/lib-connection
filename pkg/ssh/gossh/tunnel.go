@@ -196,7 +196,7 @@ func (t *Tunnel) acceptTunnelConnection(ctx context.Context, id int, remoteAddre
 			t.errorCh <- err
 
 			if isContextError(err) {
-				t.debug("acceptTunnelConnection: got context error return from accept loop", err)
+				t.debug("acceptTunnelConnection: got context error return from accept loop: %v", err)
 				return
 			}
 
@@ -302,7 +302,7 @@ func (t *Tunnel) getListener() (net.Listener, error) {
 }
 
 func (t *Tunnel) debug(format string, args ...any) {
-	t.sshClient.settings.Logger().DebugF(format, args...)
+	t.sshClient.settings.Logger().DebugContext(context.Background(), fmt.Sprintf(format, args...))
 }
 
 func (t *Tunnel) debugWithID(id int, format string, args ...any) {
@@ -311,5 +311,5 @@ func (t *Tunnel) debugWithID(id int, format string, args ...any) {
 		args = append([]any{id}, args...)
 	}
 
-	t.sshClient.settings.Logger().DebugF(format, args...)
+	t.sshClient.settings.Logger().DebugContext(context.Background(), fmt.Sprintf(format, args...))
 }

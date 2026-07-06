@@ -119,7 +119,7 @@ func (u *SSHUploadScript) Execute(ctx context.Context) ([]byte, error) {
 	scriptName := filepath.Base(u.ScriptPath)
 
 	remotePath := utils.ExecuteRemoteScriptPath(u, scriptName, false)
-	logger.DebugF("Uploading script %s to %s\n", u.ScriptPath, remotePath)
+	logger.DebugContext(ctx, fmt.Sprintf("Uploading script %s to %s\n", u.ScriptPath, remotePath))
 	err := NewSSHFile(u.sshClient.settings, u.sshClient).Upload(ctx, u.ScriptPath, remotePath)
 	if err != nil {
 		return nil, fmt.Errorf("upload: %v", err)
@@ -160,7 +160,7 @@ func (u *SSHUploadScript) Execute(ctx context.Context) ([]byte, error) {
 		defer func() {
 			err := NewSSHCommand(u.sshClient, "rm", "-f", scriptFullPath).Run(ctx)
 			if err != nil {
-				logger.DebugF("Failed to delete uploaded script %s: %v", scriptFullPath, err)
+				logger.DebugContext(ctx, fmt.Sprintf("Failed to delete uploaded script %s: %v", scriptFullPath, err))
 			}
 		}()
 	}

@@ -70,7 +70,7 @@ func startClient(t *testing.T, test *tests.Test, container *tests.TestContainerW
 		CheckReverseTunnel:      defaultLoop.Clone(),
 	})
 
-	err := sshClient.Start()
+	err := sshClient.Start(context.Background())
 	// expecting no error on client start
 	require.NoError(t, err)
 

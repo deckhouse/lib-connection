@@ -84,7 +84,7 @@ func (f *File) UploadBytes(ctx context.Context, data []byte, remotePath string) 
 	defer func() {
 		err := os.Remove(srcPath)
 		if err != nil {
-			logger.ErrorF("Error: cannot remove tmp file '%s': %v\n", srcPath, err)
+			logger.ErrorContext(ctx, fmt.Sprintf("Error: cannot remove tmp file '%s': %v\n", srcPath, err))
 		}
 	}()
 
@@ -111,7 +111,7 @@ func (f *File) UploadBytes(ctx context.Context, data []byte, remotePath string) 
 	}
 
 	if len(scp.StdoutBytes()) > 0 {
-		logger.InfoF("Upload file: %s", string(scp.StdoutBytes()))
+		logger.InfoContext(ctx, fmt.Sprintf("Upload file: %s", string(scp.StdoutBytes())))
 	}
 	return nil
 }
@@ -122,7 +122,7 @@ func (f *File) Download(ctx context.Context, remotePath, dstPath string) error {
 	scp := cmd.NewSCP(f.settings, f.Session)
 	scp.WithRecursive(true)
 	scpCmd := scp.WithRemoteSrc(remotePath).WithDst(dstPath).SCP(ctx)
-	logger.DebugF("run scp: %s\n", scpCmd.Cmd().String())
+	logger.DebugContext(ctx, fmt.Sprintf("run scp: %s\n", scpCmd.Cmd().String()))
 
 	stdout, err := scpCmd.Cmd().CombinedOutput()
 	if err != nil {
@@ -130,7 +130,7 @@ func (f *File) Download(ctx context.Context, remotePath, dstPath string) error {
 	}
 
 	if len(stdout) > 0 {
-		logger.InfoF("Download file: %s", string(stdout))
+		logger.InfoContext(ctx, fmt.Sprintf("Download file: %s", string(stdout)))
 	}
 	return nil
 }
@@ -146,13 +146,13 @@ func (f *File) DownloadBytes(ctx context.Context, remotePath string) ([]byte, er
 	defer func() {
 		err := os.Remove(dstPath)
 		if err != nil {
-			logger.InfoF("Error: cannot remove tmp file '%s': %v\n", dstPath, err)
+			logger.InfoContext(ctx, fmt.Sprintf("Error: cannot remove tmp file '%s': %v\n", dstPath, err))
 		}
 	}()
 
 	scp := cmd.NewSCP(f.settings, f.Session)
 	scpCmd := scp.WithRemoteSrc(remotePath).WithDst(dstPath).SCP(ctx)
-	logger.DebugF("run scp: %s\n", scpCmd.Cmd().String())
+	logger.DebugContext(ctx, fmt.Sprintf("run scp: %s\n", scpCmd.Cmd().String()))
 
 	stdout, err := scpCmd.Cmd().CombinedOutput()
 	if err != nil {
@@ -160,7 +160,7 @@ func (f *File) DownloadBytes(ctx context.Context, remotePath string) ([]byte, er
 	}
 
 	if len(stdout) > 0 {
-		logger.InfoF("Download file: %s", string(stdout))
+		logger.InfoContext(ctx, fmt.Sprintf("Download file: %s", string(stdout)))
 	}
 
 	data, err := os.ReadFile(dstPath)

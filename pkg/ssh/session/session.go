@@ -253,24 +253,24 @@ func (s *Session) String() string {
 	if s.BastionHost != "" {
 		builder.WriteString("-J ")
 		if s.BastionUser != "" {
-			builder.WriteString(fmt.Sprintf("%s@%s", s.BastionUser, s.BastionHost))
+			fmt.Fprintf(&builder, "%s@%s", s.BastionUser, s.BastionHost)
 		} else {
 			builder.WriteString(s.BastionHost)
 		}
 		if s.BastionPort != "" {
-			builder.WriteString(fmt.Sprintf(":%s", s.BastionPort))
+			fmt.Fprintf(&builder, ":%s", s.BastionPort)
 		}
 		builder.WriteString(" ")
 	}
 
 	if s.User != "" {
-		builder.WriteString(fmt.Sprintf("%s@%s", s.User, s.host))
+		fmt.Fprintf(&builder, "%s@%s", s.User, s.host)
 	} else {
 		builder.WriteString(s.host)
 	}
 
 	if s.Port != "" && s.Port != "22" {
-		builder.WriteString(fmt.Sprintf(" -p %s", s.Port))
+		fmt.Fprintf(&builder, " -p %s", s.Port)
 	}
 
 	return builder.String()

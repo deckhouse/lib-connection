@@ -158,7 +158,7 @@ func (s *SSH) Cmd(ctx context.Context) *exec.Cmd {
 		args = append(args, s.CommandArgs...)
 	}
 
-	s.settings.Logger().DebugF("SSH arguments %v\n", args)
+	s.settings.Logger().DebugContext(ctx, fmt.Sprintf("SSH arguments %v\n", args))
 
 	sshCmd := exec.CommandContext(ctx, "ssh", args...)
 	sshCmd.Env = env

@@ -15,6 +15,7 @@
 package clissh
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"sync"
@@ -36,6 +37,7 @@ var (
 
 // initializeNewInstance disables singleton logic
 func initAgentInstance(
+	ctx context.Context,
 	sett settings.Settings,
 	privateKeys []session.AgentPrivateKey,
 	initializeNewInstance bool,
@@ -47,7 +49,7 @@ func initAgentInstance(
 			PrivateKeys: privateKeys,
 		})
 
-		err = inst.Start()
+		err = inst.Start(ctx)
 		return inst, err
 	}
 
@@ -57,7 +59,7 @@ func initAgentInstance(
 				PrivateKeys: privateKeys,
 			})
 
-			err = inst.Start()
+			err = inst.Start(ctx)
 			if err != nil {
 				return
 			}
@@ -93,7 +95,7 @@ func NewAgent(sshSettings settings.Settings, agentSettings *session.AgentSetting
 	}
 }
 
-func (a *Agent) Start() error {
+func (a *Agent) Start(ctx context.Context) error {
 	a.agent = cmd.NewAgent(a.sshSettings, a.agentSettings)
 
 	if len(a.agentSettings.PrivateKeys) == 0 {
@@ -103,14 +105,14 @@ func (a *Agent) Start() error {
 
 	logger := a.sshSettings.Logger()
 
-	logger.DebugF("agent: start ssh-agent")
+	logger.DebugContext(ctx, "agent: start ssh-agent")
 	err := a.agent.Start()
 	if err != nil {
 		return fmt.Errorf("Start ssh-agent: %v", err)
 	}
 
-	logger.DebugF("agent: run ssh-add for keys")
-	err = a.AddKeys(a.agentSettings.PrivateKeys)
+	logger.DebugContext(ctx, "agent: run ssh-add for keys")
+	err = a.AddKeys(ctx, a.agentSettings.PrivateKeys)
 	if err != nil {
 		return fmt.Errorf("Agent error: %v", err)
 	}
@@ -119,8 +121,8 @@ func (a *Agent) Start() error {
 }
 
 // TODO replace with x/crypto/ssh/agent ?
-func (a *Agent) AddKeys(keys []session.AgentPrivateKey) error {
-	err := a.addKeys(a.agentSettings.AuthSock, keys)
+func (a *Agent) AddKeys(ctx context.Context, keys []session.AgentPrivateKey) error {
+	err := a.addKeys(ctx, a.agentSettings.AuthSock, keys)
 	if err != nil {
 		return fmt.Errorf("Add keys: %w", err)
 	}
@@ -128,7 +130,7 @@ func (a *Agent) AddKeys(keys []session.AgentPrivateKey) error {
 	logger := a.sshSettings.Logger()
 
 	if a.sshSettings.IsDebug() {
-		logger.DebugF("list added keys")
+		logger.DebugContext(ctx, "list added keys")
 		listCmd := cmd.NewSSHAdd(a.sshSettings, a.agentSettings).ListCmd()
 
 		output, err := listCmd.CombinedOutput()
@@ -138,7 +140,7 @@ func (a *Agent) AddKeys(keys []session.AgentPrivateKey) error {
 
 		str := string(output)
 		if str != "" && str != "\n" {
-			logger.InfoF("ssh-add -l: %s\n", output)
+			logger.InfoContext(ctx, fmt.Sprintf("ssh-add -l: %s\n", output))
 		}
 	}
 
@@ -153,7 +155,7 @@ func (a *Agent) Stop() {
 	a.agent.Stop()
 }
 
-func (a *Agent) addKeys(authSock string, keys []session.AgentPrivateKey) error {
+func (a *Agent) addKeys(ctx context.Context, authSock string, keys []session.AgentPrivateKey) error {
 	conn, err := net.DialTimeout("unix", authSock, 5*time.Second)
 	if err != nil {
 		return fmt.Errorf("Error dialing with ssh agent %s: %w", authSock, err)
@@ -161,14 +163,14 @@ func (a *Agent) addKeys(authSock string, keys []session.AgentPrivateKey) error {
 
 	defer func() {
 		if err := conn.Close(); err != nil {
-			a.sshSettings.Logger().DebugF("Error closing connection to ssh-agent %s: %v", authSock, err)
+			a.sshSettings.Logger().DebugContext(context.Background(), fmt.Sprintf("Error closing connection to ssh-agent %s: %v", authSock, err))
 		}
 	}()
 
 	agentClient := agent.NewClient(conn)
 
 	for _, key := range keys {
-		privateKey, _, err := utils.ParseSSHPrivateKeyFile(key.Key, key.Passphrase, a.sshSettings.Logger())
+		privateKey, _, err := utils.ParseSSHPrivateKeyFile(ctx, key.Key, key.Passphrase, a.sshSettings.Logger())
 		if err != nil {
 			return err
 		}

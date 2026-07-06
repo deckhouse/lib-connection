@@ -122,7 +122,7 @@ func (c *Command) scanLines(
 		}
 	}
 	if err := scan.Err(); err != nil {
-		c.settings.Logger().ErrorF("scan cmd output failed: %v\n", err)
+		c.settings.Logger().ErrorContext(context.Background(), fmt.Sprintf("scan cmd output failed: %v\n", err))
 	}
 }
 
@@ -256,7 +256,7 @@ func (c *Command) prepareCmd(ctx context.Context) (*exec.Cmd, context.CancelFunc
 		}
 	}
 
-	c.settings.Logger().DebugF("Command prepared: %#v\n", cmd)
+	c.settings.Logger().DebugContext(ctx, fmt.Sprintf("Command prepared: %#v\n", cmd))
 
 	return cmd, cancel
 }

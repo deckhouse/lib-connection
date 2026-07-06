@@ -15,13 +15,14 @@
 package config
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"slices"
 	"strings"
 
-	"github.com/deckhouse/lib-dhctl/pkg/log"
 	"github.com/deckhouse/lib-dhctl/pkg/yaml"
 	"github.com/deckhouse/lib-dhctl/pkg/yaml/validation"
 	yamlk8s "sigs.k8s.io/yaml"
@@ -54,9 +55,10 @@ func ParseConnectionConfig(reader io.Reader, sett settings.Settings, opts ...Val
 	errs := newParseErrors()
 
 	logger := sett.Logger()
-	logger.DebugF("Parsing connection config has %d documents", len(docs))
+	ctx := context.Background()
+	logger.DebugContext(ctx, fmt.Sprintf("Parsing connection config has %d documents", len(docs)))
 
-	validator := getValidator(sett.LoggerProvider())
+	validator := getValidator(logger)
 	validatorOpts := parseOptionsToValidatorOpts(options)
 
 	config := &ConnectionConfig{}
@@ -66,7 +68,7 @@ func ParseConnectionConfig(reader io.Reader, sett settings.Settings, opts ...Val
 	for i, doc := range docs {
 		doc = strings.TrimSpace(doc)
 		if doc == "" {
-			logger.DebugF("Skip empty document %d", i)
+			logger.DebugContext(ctx, fmt.Sprintf("Skip empty document %d", i))
 			continue
 		}
 
@@ -80,7 +82,7 @@ func ParseConnectionConfig(reader io.Reader, sett settings.Settings, opts ...Val
 
 		if !slices.Contains(supportedKinds, index.Kind) {
 			if options.skipUnknownKinds {
-				logger.DebugF("Skip document %d with unknown kind %s", i, index.Kind)
+				logger.DebugContext(ctx, fmt.Sprintf("Skip document %d with unknown kind %s", i, index.Kind))
 			} else {
 				errs.appendUnknownKind(index, i)
 			}
@@ -88,7 +90,7 @@ func ParseConnectionConfig(reader io.Reader, sett settings.Settings, opts ...Val
 			continue
 		}
 
-		logger.DebugF("Process validate and parse connection config document %d for index %v", i, index)
+		logger.DebugContext(ctx, fmt.Sprintf("Process validate and parse connection config document %d for index %v", i, index))
 
 		err = validator.ValidateWithIndex(index, &docData, validatorOpts...)
 		if err != nil {
@@ -107,7 +109,7 @@ func ParseConnectionConfig(reader io.Reader, sett settings.Settings, opts ...Val
 				continue
 			}
 			config.Config = &sshConfig
-			logger.DebugF("SSHConfig added in result config")
+			logger.DebugContext(ctx, "SSHConfig added in result config")
 		case sshHostKind:
 			sshHostConfigDocsCount++
 			sshHost := Host{}
@@ -118,7 +120,7 @@ func ParseConnectionConfig(reader io.Reader, sett settings.Settings, opts ...Val
 			}
 
 			config.Hosts = append(config.Hosts, sshHost)
-			logger.DebugF("SSHHost '%s' added in result config, host in result config %d", sshHost.Host, len(config.Hosts))
+			logger.DebugContext(ctx, fmt.Sprintf("SSHHost '%s' added in result config, host in result config %d", sshHost.Host, len(config.Hosts)))
 		default:
 			errs.appendUnknownKind(index, i)
 			continue
@@ -146,7 +148,7 @@ func ParseConnectionConfig(reader io.Reader, sett settings.Settings, opts ...Val
 	return config, nil
 }
 
-func getValidator(logger log.LoggerProvider) *validation.Validator {
+func getValidator(logger *slog.Logger) *validation.Validator {
 	validator := validation.NewValidatorWithLogger(specsForValidator, logger)
 	return addXRules(validator)
 }

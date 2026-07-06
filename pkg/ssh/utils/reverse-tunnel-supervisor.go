@@ -16,9 +16,9 @@ package utils
 
 import (
 	"context"
+	"fmt"
+	"log/slog"
 	"sync"
-
-	"github.com/deckhouse/lib-dhctl/pkg/log"
 
 	connection "github.com/deckhouse/lib-connection/pkg"
 )
@@ -64,14 +64,14 @@ type TunnelBackend interface {
 type TunnelSupervisor struct {
 	backend TunnelBackend
 	killer  connection.ReverseTunnelKiller
-	logger  log.Logger
+	logger  *slog.Logger
 
 	mu     sync.Mutex
 	cancel context.CancelFunc
 	done   chan struct{}
 }
 
-func NewTunnelSupervisor(backend TunnelBackend, killer connection.ReverseTunnelKiller, logger log.Logger) *TunnelSupervisor {
+func NewTunnelSupervisor(backend TunnelBackend, killer connection.ReverseTunnelKiller, logger *slog.Logger) *TunnelSupervisor {
 	return &TunnelSupervisor{
 		backend: backend,
 		killer:  killer,
@@ -116,9 +116,9 @@ func (s *TunnelSupervisor) Stop() {
 }
 
 func (s *TunnelSupervisor) run(ctx context.Context, done chan<- struct{}) {
-	s.logger.DebugF("Start health monitor")
+	s.logger.DebugContext(ctx, "Start health monitor")
 	defer func() {
-		s.logger.DebugF("Stop health monitor")
+		s.logger.DebugContext(ctx, "Stop health monitor")
 		close(done)
 	}()
 
@@ -170,7 +170,7 @@ func (s *TunnelSupervisor) run(ctx context.Context, done chan<- struct{}) {
 		case <-ctx.Done():
 			return
 		case err := <-s.backend.TunnelDone():
-			s.logger.DebugF("Tunnel was stopped with error '%v'. Try restart fully\n", err)
+			s.logger.DebugContext(ctx, fmt.Sprintf("Tunnel was stopped with error '%v'. Try restart fully\n", err))
 		}
 	}
 }
@@ -181,17 +181,17 @@ func (s *TunnelSupervisor) run(ctx context.Context, done chan<- struct{}) {
 func (s *TunnelSupervisor) restartTunnel(ctx context.Context) bool {
 	s.backend.StopTunnel()
 
-	s.logger.DebugF("Kill remote tunnel listener\n")
+	s.logger.DebugContext(ctx, "Kill remote tunnel listener\n")
 	if out, err := s.killer.KillTunnel(ctx); err != nil {
-		s.logger.DebugF("Kill tunnel was finished with error: %v; stdout: '%s'\n", err, out)
+		s.logger.DebugContext(ctx, fmt.Sprintf("Kill tunnel was finished with error: %v; stdout: '%s'\n", err, out))
 		return false
 	}
 
 	if err := s.backend.StartTunnel(ctx); err != nil {
-		s.logger.DebugF("Restart failed with error: %v\n", err)
+		s.logger.DebugContext(ctx, fmt.Sprintf("Restart failed with error: %v\n", err))
 		return false
 	}
 
-	s.logger.DebugF("Restart successful\n")
+	s.logger.DebugContext(ctx, "Restart successful\n")
 	return true
 }

@@ -77,17 +77,17 @@ func (c *Check) AwaitAvailability(ctx context.Context, loopParams retry.Params) 
 
 	return retry.NewLoopWithParams(retryParams).RunContext(ctx, func() error {
 		host := c.Session.Host()
-		logger.InfoF("Try to connect to host: %v", host)
+		logger.InfoContext(ctx, fmt.Sprintf("Try to connect to host: %v", host))
 
 		output, err := c.ExpectAvailable(ctx)
 		if err == nil {
-			logger.InfoF("Successfully connected to host: %v", host)
+			logger.InfoContext(ctx, fmt.Sprintf("Successfully connected to host: %v", host))
 			return nil
 		}
 
 		target := c.Session.Host()
 
-		logger.InfoF("Connection attempt failed to host: %v", target)
+		logger.InfoContext(ctx, fmt.Sprintf("Connection attempt failed to host: %v", target))
 
 		c.Session.ChoiceNewHost()
 
@@ -102,10 +102,10 @@ func (c *Check) CheckAvailability(ctx context.Context) error {
 
 	logger := c.settings.Logger()
 
-	logger.InfoF("Try to connect to %v host", c.Session.Host())
+	logger.InfoContext(ctx, fmt.Sprintf("Try to connect to %v host", c.Session.Host()))
 	output, err := c.ExpectAvailable(ctx)
 	if err != nil {
-		logger.InfoF(string(output))
+		logger.InfoContext(ctx, string(output))
 		return err
 	}
 	return nil

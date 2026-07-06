@@ -22,7 +22,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/deckhouse/lib-dhctl/pkg/log"
+	dhlog "github.com/deckhouse/lib-dhctl/pkg/logger"
 )
 
 // fakeBackend simulates a tunnel whose health check can be made to block —
@@ -110,7 +110,7 @@ func TestSupervisorStopDuringBlockedCheck(t *testing.T) {
 	b := newFakeBackend()
 	b.checkGate = make(chan struct{}) // never closed: check blocks until ctx
 
-	s := NewTunnelSupervisor(b, &fakeKiller{}, log.NewSilentLogger())
+	s := NewTunnelSupervisor(b, &fakeKiller{}, dhlog.FromContext(context.Background()))
 	s.Start(context.Background())
 
 	time.Sleep(50 * time.Millisecond) // loop is now inside CheckTunnel
@@ -122,7 +122,7 @@ func TestSupervisorStopDuringRestartChurn(t *testing.T) {
 	b := newFakeBackend()
 	b.healthy.Store(false) // every check fails -> restart loop
 
-	s := NewTunnelSupervisor(b, &fakeKiller{}, log.NewSilentLogger())
+	s := NewTunnelSupervisor(b, &fakeKiller{}, dhlog.FromContext(context.Background()))
 	s.Start(context.Background())
 
 	time.Sleep(100 * time.Millisecond)
@@ -139,7 +139,7 @@ func TestSupervisorRestartsDeadTunnel(t *testing.T) {
 	b.healthy.Store(true)
 	k := &fakeKiller{}
 
-	s := NewTunnelSupervisor(b, k, log.NewSilentLogger())
+	s := NewTunnelSupervisor(b, k, dhlog.FromContext(context.Background()))
 	s.Start(context.Background())
 	defer stopWithin(t, s, 5*time.Second)
 
@@ -164,7 +164,7 @@ func TestSupervisorNoResurrectionAfterStop(t *testing.T) {
 	b := newFakeBackend()
 	b.healthy.Store(false)
 
-	s := NewTunnelSupervisor(b, &fakeKiller{}, log.NewSilentLogger())
+	s := NewTunnelSupervisor(b, &fakeKiller{}, dhlog.FromContext(context.Background()))
 	s.Start(context.Background())
 	time.Sleep(100 * time.Millisecond)
 	stopWithin(t, s, 5*time.Second)
@@ -181,7 +181,7 @@ func TestSupervisorStopIdempotent(t *testing.T) {
 	b := newFakeBackend()
 	b.healthy.Store(true)
 
-	s := NewTunnelSupervisor(b, &fakeKiller{}, log.NewSilentLogger())
+	s := NewTunnelSupervisor(b, &fakeKiller{}, dhlog.FromContext(context.Background()))
 	stopWithin(t, s, time.Second) // never started
 
 	s.Start(context.Background())
@@ -195,7 +195,7 @@ func TestSupervisorRestartReplacesLoop(t *testing.T) {
 	b := newFakeBackend()
 	b.healthy.Store(true)
 
-	s := NewTunnelSupervisor(b, &fakeKiller{}, log.NewSilentLogger())
+	s := NewTunnelSupervisor(b, &fakeKiller{}, dhlog.FromContext(context.Background()))
 	s.Start(context.Background())
 	s.Start(context.Background()) // replaces the first loop
 	stopWithin(t, s, 5*time.Second)
@@ -319,7 +319,7 @@ func TestSupervisorFreesZombiePortViaKiller(t *testing.T) {
 	b := newZombiePortBackend(rec)
 	k := &freeingKiller{backend: b, rec: rec}
 
-	s := NewTunnelSupervisor(b, k, log.NewSilentLogger())
+	s := NewTunnelSupervisor(b, k, dhlog.FromContext(context.Background()))
 	s.Start(context.Background())
 	defer stopWithin(t, s, 5*time.Second)
 
@@ -359,7 +359,7 @@ func TestSupervisorZombiePortStuckWithUselessKiller(t *testing.T) {
 	rec := &recorder{}
 	b := newZombiePortBackend(rec)
 
-	s := NewTunnelSupervisor(b, uselessKiller{}, log.NewSilentLogger())
+	s := NewTunnelSupervisor(b, uselessKiller{}, dhlog.FromContext(context.Background()))
 	s.Start(context.Background())
 
 	time.Sleep(150 * time.Millisecond)

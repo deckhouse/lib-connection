@@ -15,6 +15,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -71,7 +72,7 @@ func (a *SSHAgent) Start() error {
 	a.Executor = process.NewDefaultExecutor(a.settings, a.agentCmd)
 	// a.EnableLive()
 	a.WithStdoutHandler(func(l string) {
-		a.settings.Logger().DebugF("ssh agent: got '%s'\n", l)
+		a.settings.Logger().DebugContext(context.Background(), fmt.Sprintf("ssh agent: got '%s'\n", l))
 
 		m := SSHAgentAuthSockRe.FindStringSubmatch(l)
 		if len(m) == 2 && m[1] != "" {
@@ -82,10 +83,10 @@ func (a *SSHAgent) Start() error {
 	a.WithWaitHandler(func(err error) {
 		logger := a.settings.Logger()
 		if err != nil {
-			logger.ErrorF("SSH-agent process exited, now stop. Wait error: %v\n", err)
+			logger.ErrorContext(context.Background(), fmt.Sprintf("SSH-agent process exited, now stop. Wait error: %v\n", err))
 			return
 		}
-		logger.InfoF("SSH-agent process exited, now stop.\n")
+		logger.InfoContext(context.Background(), "SSH-agent process exited, now stop.\n")
 	})
 
 	err := a.Executor.Start()
@@ -102,7 +103,7 @@ func (a *SSHAgent) Start() error {
 	for {
 		<-t.C
 		if a.authSock != "" {
-			a.settings.Logger().DebugF("ssh-agent: SSH_AUTH_SOCK=%s\n", a.authSock)
+			a.settings.Logger().DebugContext(context.Background(), fmt.Sprintf("ssh-agent: SSH_AUTH_SOCK=%s\n", a.authSock))
 			success = true
 			break
 		}

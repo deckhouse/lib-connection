@@ -240,7 +240,7 @@ func (k *KubernetesClient) startRemoteKubeProxy(ctx context.Context, sshCl conne
 	port := ""
 	err := retry.NewLoopWithParams(startLoopParams).
 		RunContext(ctx, func() error {
-			logger.InfoF("Using host %s\n", sshCl.Session().Host())
+			logger.InfoContext(ctx, fmt.Sprintf("Using host %s\n", sshCl.Session().Host()))
 
 			k.KubeProxy = sshCl.KubeProxy()
 			var err error
@@ -258,7 +258,7 @@ func (k *KubernetesClient) startRemoteKubeProxy(ctx context.Context, sshCl conne
 		return "", err
 	}
 
-	logger.InfoF("Proxy started on port %s\n", port)
+	logger.InfoContext(ctx, fmt.Sprintf("Proxy started on port %s\n", port))
 
 	return port, nil
 }

@@ -15,6 +15,7 @@
 package flags
 
 import (
+	"context"
 	"os"
 
 	"github.com/name212/govalue"
@@ -49,7 +50,7 @@ func (p *BaseParser) WithEnvsPrefix(envsPrefix string) {
 
 func (p *BaseParser) WithEnvsLookup(lookup env.LookupFunc) {
 	if govalue.Nil(lookup) {
-		p.sett.Logger().WarnF("Envs lookup function is nil. Skip set ask function.")
+		p.sett.Logger().WarnContext(context.Background(), "Envs lookup function is nil. Skip set ask function.")
 		return
 	}
 

@@ -68,6 +68,7 @@ func CheckSSHHosts(userPassedHosts []session.Host, nodesNames []string, phase st
 		warnMsg = tooManyWarn
 	}
 
+	// nolint:prealloc
 	var nodesSorted []string
 	nodesSorted = append(nodesSorted, nodesNames...)
 	sort.Strings(nodesSorted)
