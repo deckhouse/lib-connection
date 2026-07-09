@@ -514,15 +514,8 @@ func (p *DefaultSSHProvider) useGoSSH(shouldLog bool) bool {
 		return false
 	}
 
-	// if passed private keys force cli
-	// if use password auth use gossh
-	if len(config.PrivateKeys) == 0 {
-		logDebug("Force go-ssh client because use password auth. cli-ssh does not support password auth")
-		return true
-	}
-
-	logDebug("Use cli-ssh by default")
-	return false
+	logDebug("Use go-ssh by default")
+	return true
 }
 
 func (p *DefaultSSHProvider) prepareConfigPrivateKeys() error {
