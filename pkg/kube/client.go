@@ -42,6 +42,12 @@ var (
 	_ connection.KubeClient = &KubernetesClient{}
 
 	ErrStoppedKubeClient = fmt.Errorf("use stopped kube client")
+
+	// ErrKubeClientTransient marks InitContext failures that may succeed on retry
+	// (e.g. flaky kube-proxy startup over SSH), as opposed to permanent configuration
+	// errors (bad kubeconfig path/context, malformed rest config) which do not involve
+	// any network call and fail identically on every attempt.
+	ErrKubeClientTransient = fmt.Errorf("kube client: transient error, may succeed on retry")
 )
 
 type ClientLoopParams struct {
@@ -182,14 +188,14 @@ func (k *KubernetesClient) initContext(ctx context.Context, params *Config, opts
 		if !options.NoStartKubeProxy {
 			_, err := k.StartKubernetesProxy(ctx, options)
 			if err != nil {
-				return err
+				return fmt.Errorf("%w: %w", ErrKubeClientTransient, err)
 			}
 		}
 	default:
 		if !options.NoStartKubeProxy {
 			port, err := k.StartKubernetesProxy(ctx, options)
 			if err != nil {
-				return err
+				return fmt.Errorf("%w: %w", ErrKubeClientTransient, err)
 			}
 			kubeClient.WithServer("http://localhost:" + port)
 		}

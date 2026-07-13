@@ -5,7 +5,7 @@ go 1.25.8
 require (
 	al.essio.dev/pkg/shellescape v1.6.0
 	github.com/bramvdbogaerde/go-scp v1.6.0
-	github.com/deckhouse/lib-dhctl v0.20.0
+	github.com/deckhouse/lib-dhctl v0.21.1-0.20260713132922-dc00fabeeec3
 	github.com/deckhouse/lib-gossh v0.3.0
 	github.com/flant/kube-client v1.6.0
 	github.com/go-openapi/spec v0.19.8
