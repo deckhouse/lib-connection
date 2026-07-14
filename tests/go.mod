@@ -13,7 +13,7 @@ require (
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
 	github.com/containerd/console v1.0.5 // indirect
 	github.com/deckhouse/deckhouse/pkg/log v0.1.1-0.20251230144142-2bad7c3d1edf // indirect
-	github.com/deckhouse/lib-dhctl v0.21.1-0.20260713132922-dc00fabeeec3 // indirect
+	github.com/deckhouse/lib-dhctl v0.21.1-0.20260714100121-89ca3451ee2b // indirect
 	github.com/deckhouse/lib-gossh v0.3.0 // indirect
 	github.com/emicklei/go-restful/v3 v3.11.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.7.0 // indirect
