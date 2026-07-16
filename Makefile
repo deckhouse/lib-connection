@@ -112,13 +112,13 @@ go-deps/update: go-installed
 	  echo -e "${RED}Please pass dependency version over VER like make go-deps/update DEP=github.com/some/lib VER=v1.1.1${NO_COLOR}"; \
 	  exit 1; \
 	fi; \
-	for ii in $$(find $(CURDIR) -type f -name "go.mod" -printf "%h\n" | sort -u); do \
+	for ii in $$(find $(CURDIR) -type f -name "go.mod" -exec dirname {} \; | sort -u); do \
 	  echo "Run go get in $$(realpath $$ii)"; \
       cd "$$ii" && go get "$(DEP)@$(VER)"; \
 	done
 
 go-deps/tidy: go-installed
-	@for ii in $$(find $(CURDIR) -type f -name "go.mod" -printf "%h\n" | sort -u); do \
+	@for ii in $$(find $(CURDIR) -type f -name "go.mod" -exec dirname {} \; | sort -u); do \
 	  echo "Run go mod tidy in $$(realpath $$ii)"; \
       cd "$$ii" && go mod tidy; \
 	done
