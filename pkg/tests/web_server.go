@@ -19,13 +19,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/deckhouse/lib-dhctl/pkg/log"
 	"github.com/deckhouse/lib-dhctl/pkg/retry"
 	"github.com/name212/govalue"
 	"github.com/stretchr/testify/require"
@@ -86,7 +86,7 @@ func MustStartHTTPServer(t *testing.T, test *Test, port int, handlers ...*HTTPHa
 	return server
 }
 
-func NewHTTPServer(port int, logger *log.InMemoryLogger, handlers ...*HTTPHandler) *HTTPServer {
+func NewHTTPServer(port int, logger *slog.Logger, handlers ...*HTTPHandler) *HTTPServer {
 	mux := http.NewServeMux()
 
 	address := net.JoinHostPort("127.0.0.1", fmt.Sprintf("%d", port))
@@ -153,7 +153,6 @@ func (s *HTTPServer) Start(waitStart bool) error {
 		retry.WithName("Check HTTP server %s started", s.logger.prefix),
 		retry.WithAttempts(10),
 		retry.WithWait(500*time.Millisecond),
-		retry.WithLogger(s.logger.Logger),
 	)
 
 	_, err := DoGetRequest(url, loop, s.logger)

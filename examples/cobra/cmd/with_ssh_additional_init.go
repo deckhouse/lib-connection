@@ -54,7 +54,7 @@ func AppendSSHAdditionalCommand(settProvider SettingsProvider, rootCmd *cobra.Co
 		return nil, err
 	}
 
-	sshParser := sshconfig.NewFlagsParser(settProvider())
+	sshParser := sshconfig.NewFlagsParser(rootCmd.Context(), settProvider())
 	sshFlags, err := sshParser.InitFlags(flagSet)
 	if err != nil {
 		return nil, err
@@ -126,7 +126,7 @@ func doSSHAdditional(ctx context.Context, sett settings.Settings, consumer provi
 
 	sshProvider, err := consumer.GetSSHProvider(ctx)
 	if errors.Is(err, errNotPassedSSHHost) {
-		sett.Logger().WarnF("SSH host not passed. Skip run ssh command. Pass SSH_HOST_CONNECT env")
+		sett.Logger().WarnContext(ctx, "SSH host not passed. Skip run ssh command. Pass SSH_HOST_CONNECT env")
 		return nil
 	}
 
@@ -139,7 +139,7 @@ func doSSHAdditional(ctx context.Context, sett settings.Settings, consumer provi
 		return fmt.Errorf("fail to run ssh command: %w", err)
 	}
 
-	sett.Logger().InfoF("SSH command succeeded")
+	sett.Logger().InfoContext(ctx, "SSH command succeeded")
 
 	return nil
 }
@@ -213,18 +213,18 @@ func (i *additionalProvidersConsumer) Cleanup(ctx context.Context) error {
 
 	if govalue.NotNil(i.kubeProvider) {
 		if err := i.kubeProvider.Cleanup(ctx); err != nil {
-			logger.ErrorF("Failed to cleanup kube provider: %v", err)
+			logger.ErrorContext(ctx, fmt.Sprintf("Failed to cleanup kube provider: %v", err))
 		} else {
-			logger.InfoF("Kube provider cleaned up successfully")
+			logger.InfoContext(ctx, "Kube provider cleaned up successfully")
 
 		}
 	}
 
 	if govalue.NotNil(i.sshProvider) {
 		if err := i.sshProvider.Cleanup(ctx); err != nil {
-			logger.ErrorF("Failed to cleanup SSH provider: %v", err)
+			logger.ErrorContext(ctx, fmt.Sprintf("Failed to cleanup SSH provider: %v", err))
 		} else {
-			logger.InfoF("SSH provider cleaned up successfully")
+			logger.InfoContext(ctx, "SSH provider cleaned up successfully")
 		}
 	}
 

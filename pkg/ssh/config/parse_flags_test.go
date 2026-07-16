@@ -15,7 +15,9 @@
 package config
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"os/user"
@@ -24,7 +26,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/deckhouse/lib-dhctl/pkg/log"
+	"github.com/deckhouse/lib-dhctl/pkg/logger"
 	flag "github.com/spf13/pflag"
 	"github.com/stretchr/testify/require"
 
@@ -48,7 +50,7 @@ func TestParseFlags(t *testing.T) {
 	// by default, we have ~/.ssh/id_rsa key
 	// it can be protected with password with local development env
 	defaultPrivateKeyExtractor := func(homePath string) PrivateKeyExtractorFunc {
-		return func(path string, logger log.Logger) (string, error) {
+		return func(path string, logger *slog.Logger) (string, error) {
 			expected := filepath.Join(homePath, ".ssh", "id_rsa")
 			if path != expected {
 				return "", fmt.Errorf("expected %s, got %s", homePath, path)
@@ -70,13 +72,13 @@ func TestParseFlags(t *testing.T) {
 		hasErrorContains    string
 		expected            *ConnectionConfig
 		privateKeys         []*testPrivateKey
-		before              func(*testing.T, *test, log.Logger)
+		before              func(*testing.T, *test, *slog.Logger)
 		privateKeyExtractor PrivateKeyExtractorFunc
 		test                *tests.Test
 		defaultAsk          bool
 	}
 
-	beforeAddPrivateKeys := func(_ *testing.T, tst *test, _ log.Logger) {
+	beforeAddPrivateKeys := func(_ *testing.T, tst *test, _ *slog.Logger) {
 		pathToPassword := make(map[string]string)
 
 		for _, privateKey := range tst.privateKeys {
@@ -98,13 +100,13 @@ func TestParseFlags(t *testing.T) {
 		}
 
 		if tst.privateKeyExtractor == nil && len(pathToPassword) > 0 {
-			tst.privateKeyExtractor = func(path string, _ log.Logger) (string, error) {
+			tst.privateKeyExtractor = func(path string, _ *slog.Logger) (string, error) {
 				return pathToPassword[path], nil
 			}
 		}
 	}
 
-	beforeSetSudoPasswordToExpected := func(t *testing.T, tst *test, logger log.Logger) {
+	beforeSetSudoPasswordToExpected := func(t *testing.T, tst *test, logger *slog.Logger) {
 		require.NotNil(t, tst.passwords, "passwords should not be nil")
 		require.NotNil(t, tst.expected, "expected should not be nil")
 		tst.expected.Config.SudoPassword = tst.passwords.Sudo
@@ -180,7 +182,7 @@ func TestParseFlags(t *testing.T) {
 			arguments:        []string{},
 			hasErrorContains: "",
 
-			before: func(t *testing.T, tst *test, logger log.Logger) {
+			before: func(t *testing.T, tst *test, logger *slog.Logger) {
 				homePath := tst.test.MustMkSubDirs(t, "testhome")
 				tests.SetEnvs(t, map[string]string{
 					"HOME": homePath,
@@ -219,7 +221,7 @@ func TestParseFlags(t *testing.T) {
 
 			envsPrefix: "EXTRACT_USER",
 
-			before: func(t *testing.T, tst *test, logger log.Logger) {
+			before: func(t *testing.T, tst *test, logger *slog.Logger) {
 				homePath := tst.test.MustMkSubDirs(t, "testhomeextract")
 
 				tst.privateKeyExtractor = defaultPrivateKeyExtractor(homePath)
@@ -261,7 +263,7 @@ func TestParseFlags(t *testing.T) {
 
 			envsPrefix: "EXTRACT_ENVS_EMPTY",
 
-			before: func(t *testing.T, tst *test, logger log.Logger) {
+			before: func(t *testing.T, tst *test, logger *slog.Logger) {
 				tst.privateKeyExtractor = defaultPrivateKeyExtractor(currentHomeDir)
 
 				tst.envs = map[string]string{
@@ -357,7 +359,7 @@ func TestParseFlags(t *testing.T) {
 				{password: tests.Ptr("")},
 			},
 
-			before: func(t *testing.T, tst *test, logger log.Logger) {
+			before: func(t *testing.T, tst *test, logger *slog.Logger) {
 				beforeAddPrivateKeys(t, tst, logger)
 				tst.expected.Config.SudoPassword = tst.passwords.Sudo
 				tst.expected.Config.BastionPassword = tst.passwords.Bastion
@@ -447,7 +449,7 @@ func TestParseFlags(t *testing.T) {
 				{password: tests.Ptr("")},
 			},
 
-			before: func(t *testing.T, tst *test, logger log.Logger) {
+			before: func(t *testing.T, tst *test, logger *slog.Logger) {
 				beforeAddPrivateKeys(t, tst, logger)
 				tests.SetEnvs(t, map[string]string{
 					"MY_SSH_HOSTS":        "192.168.1.2,192.168.1.3",
@@ -600,7 +602,7 @@ func TestParseFlags(t *testing.T) {
 
 			privateKeyExtractor: defaultPrivateKeyExtractor(currentHomeDir),
 
-			before: func(t *testing.T, ts *test, logger log.Logger) {
+			before: func(t *testing.T, ts *test, logger *slog.Logger) {
 				p := ts.test.MustCreateTmpFile(t, "", false, "auth_sock")
 				ts.test.WithAuthSock(p)
 			},
@@ -632,7 +634,7 @@ func TestParseFlags(t *testing.T) {
 
 			arguments: []string{},
 
-			before: func(t *testing.T, tst *test, logger log.Logger) {
+			before: func(t *testing.T, tst *test, logger *slog.Logger) {
 				validPrivateKeys := []AgentPrivateKey{
 					{
 						Key:        tests.GeneratePrivateKey(t, "no_secure_password"),
@@ -791,7 +793,7 @@ sshBastionPassword: "not_secure_password_bastion"
 			name:      "connection-config not regular file",
 			passwords: nil,
 			arguments: []string{},
-			before: func(t *testing.T, tst *test, logger log.Logger) {
+			before: func(t *testing.T, tst *test, logger *slog.Logger) {
 				configPath := tst.test.MustMkSubDirs(t, "connection-config-dir")
 				tst.arguments = append(tst.arguments, fmt.Sprintf("--connection-config=%s", configPath))
 			},
@@ -822,10 +824,10 @@ sshBastionPassword: "not_secure_password_bastion"
 				{expectedPassword: tests.RandPassword(6)},
 			},
 
-			before: func(t *testing.T, tst *test, logger log.Logger) {
+			before: func(t *testing.T, tst *test, logger *slog.Logger) {
 				defaultPassword := []byte(tst.privateKeys[0].expectedPassword)
-				tst.privateKeyExtractor = func(path string, logger log.Logger) (string, error) {
-					return terminalPrivateKeyPasswordExtractor(path, defaultPassword, logger)
+				tst.privateKeyExtractor = func(path string, logger *slog.Logger) (string, error) {
+					return terminalPrivateKeyPasswordExtractor(context.Background(), path, defaultPassword, logger)
 				}
 				beforeAddPrivateKeys(t, tst, logger)
 			},
@@ -839,7 +841,7 @@ sshBastionPassword: "not_secure_password_bastion"
 
 			envsPrefix: "EXTRACT_HOME",
 
-			before: func(t *testing.T, tst *test, logger log.Logger) {
+			before: func(t *testing.T, tst *test, logger *slog.Logger) {
 				homePath := tst.test.MustCreateTmpFile(t, "content", false, "testhome")
 				tst.envs = map[string]string{
 					"HOME": homePath,
@@ -873,7 +875,7 @@ sshBastionPassword: "not_secure_password_bastion"
 
 			// because test stdin is not terminal and we do not emulate it in fast way
 			// we check that in tests we got error
-			hasErrorContains: "Cannot get bastion password: stdin is not a terminal, error reading password",
+			hasErrorContains: "Cannot get bastion password: stdin is not a terminal, cannot read password",
 		},
 
 		{
@@ -889,7 +891,7 @@ sshBastionPassword: "not_secure_password_bastion"
 				{password: tests.Ptr(tests.RandPassword(10))},
 			},
 
-			before: func(t *testing.T, tst *test, logger log.Logger) {
+			before: func(t *testing.T, tst *test, logger *slog.Logger) {
 				for _, privateKey := range tst.privateKeys {
 					tst.arguments = append(tst.arguments, fmt.Sprintf("--ssh-agent-private-keys=%s", privateKey.path))
 				}
@@ -899,7 +901,7 @@ sshBastionPassword: "not_secure_password_bastion"
 
 			// because test stdin is not terminal and we do not emulate it in fast way
 			// we check that in tests we got error
-			hasErrorContains: "stdin is not a terminal, error reading password",
+			hasErrorContains: "stdin is not a terminal, cannot read password",
 		},
 
 		{
@@ -942,7 +944,7 @@ sshBastionPassword: "not_secure_password_bastion"
 
 			privateKeyExtractor: defaultPrivateKeyExtractor(currentHomeDir),
 
-			before: func(t *testing.T, ts *test, logger log.Logger) {
+			before: func(t *testing.T, ts *test, logger *slog.Logger) {
 				p := ts.test.MustMkSubDirs(t, "auth_sock")
 				ts.test.WithAuthSock(p)
 			},
@@ -965,7 +967,7 @@ sshBastionPassword: "not_secure_password_bastion"
 
 			sett := tst.Settings()
 
-			parser := NewFlagsParser(sett)
+			parser := NewFlagsParser(context.Background(), sett)
 			parser.WithEnvsPrefix(testCase.envsPrefix)
 
 			if !testCase.defaultAsk {
@@ -1053,7 +1055,7 @@ sshBastionPassword: "not_secure_password_bastion"
 				string(output),
 			)
 
-			params.test.GetLogger().InfoF("Got output from TestParseFlagsAndExtractConfigNoArgs:\n%s", string(output))
+			params.test.GetLogger().InfoContext(context.Background(), fmt.Sprintf("Got output from TestParseFlagsAndExtractConfigNoArgs:\n%s", string(output)))
 		})
 	})
 }
@@ -1061,7 +1063,7 @@ sshBastionPassword: "not_secure_password_bastion"
 func TestParseFlagsNoInitialize(t *testing.T) {
 	getParser := func(t *testing.T) *FlagsParser {
 		test := tests.ShouldNewTest(t, tests.Name(t))
-		return NewFlagsParser(test.Settings())
+		return NewFlagsParser(context.Background(), test.Settings())
 	}
 
 	assertError := func(t *testing.T, config *ConnectionConfig, err error, contains string) {
@@ -1181,6 +1183,7 @@ func TestParseFlagsAndExtractConfigNoArgs(t *testing.T) {
 		os.Args = oldArgs
 	})
 
+	// nolint:prealloc
 	withAdditional := []string{
 		os.Args[0],
 		params.arguments[0],
@@ -1201,7 +1204,7 @@ func TestParseFlagsHelp(t *testing.T) {
 		ExpectedFlags: 15,
 		Name:          "lib-connection-ssh-internal",
 		Provider: func(sett settings.Settings, envsPrefix string) tests.TestFlagsParser {
-			parser := NewFlagsParser(sett)
+			parser := NewFlagsParser(context.Background(), sett)
 			parser.WithEnvsPrefix(envsPrefix)
 
 			return &testHelpParser{parser: parser}
@@ -1326,7 +1329,7 @@ func defaultArgsForParseFlagsAndExtractConfig(t *testing.T, name string, overrid
 }
 
 func assertParseAndExtract(t *testing.T, params *parseFlagsAndExtractConfigParams, flagSet *flag.FlagSet) {
-	logger := params.test.GetLogger()
+	logger := logger.FromContext(context.Background())
 
 	name := t.Name()
 	namesSet := strings.Split(name, "/")
@@ -1337,9 +1340,9 @@ func assertParseAndExtract(t *testing.T, params *parseFlagsAndExtractConfigParam
 	prefix = strings.ReplaceAll(prefix, ":", "_")
 	prefix = strings.ToTitle(prefix)
 
-	logger.InfoF("Got prefix: %s", prefix)
+	logger.InfoContext(context.Background(), fmt.Sprintf("Got prefix: %s", prefix))
 
-	parser := NewFlagsParser(params.test.Settings())
+	parser := NewFlagsParser(context.Background(), params.test.Settings())
 	parser.WithEnvsPrefix(prefix)
 
 	config, err := parser.ParseFlagsAndExtractConfig(params.arguments, flagSet, ParseWithRequiredSSHHost(true))
@@ -1361,13 +1364,13 @@ type testPrivateKey struct {
 	readKeyFromPath  bool
 }
 
-func (k *testPrivateKey) processKeyPath(t *testing.T, logger log.Logger) bool {
+func (k *testPrivateKey) processKeyPath(t *testing.T, logger *slog.Logger) bool {
 	if k.path == "" {
 		return false
 	}
 
 	if !k.readKeyFromPath {
-		logger.InfoF("Private path present %s Skip creating", k.path)
+		logger.InfoContext(context.Background(), fmt.Sprintf("Private path present %s Skip creating", k.path))
 		return true
 	}
 
@@ -1375,7 +1378,7 @@ func (k *testPrivateKey) processKeyPath(t *testing.T, logger log.Logger) bool {
 	require.NoError(t, err, "cannot read private key %s", k.path)
 	k.content = string(content)
 
-	logger.InfoF("Private path %s content read successfully", k.path)
+	logger.InfoContext(context.Background(), fmt.Sprintf("Private path %s content read successfully", k.path))
 
 	return true
 }
@@ -1398,7 +1401,7 @@ func (k *testPrivateKeys) create(t *testing.T) {
 		return
 	}
 
-	logger := k.test.GetLogger()
+	logger := logger.FromContext(context.Background())
 
 	for i, key := range k.keys {
 		if key.processKeyPath(t, logger) {
@@ -1415,13 +1418,13 @@ func (k *testPrivateKeys) create(t *testing.T) {
 		if keyContent == "" {
 			keyContent = tests.GeneratePrivateKey(t, *password)
 		} else {
-			logger.InfoF("Private key content present for %d Skip generating", i)
+			logger.InfoContext(context.Background(), fmt.Sprintf("Private key content present for %d Skip generating", i))
 		}
 
 		keyID := k.test.GenerateID(fmt.Sprintf("%d", i))
 
 		keyPath := k.test.MustCreateFile(t, keyContent, false, fmt.Sprintf("id_rsa.%s", keyID))
-		logger.InfoF("Private key %s written", keyPath)
+		logger.InfoContext(context.Background(), fmt.Sprintf("Private key %s written", keyPath))
 
 		key.path = keyPath
 		key.password = password

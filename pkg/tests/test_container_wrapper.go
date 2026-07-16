@@ -15,6 +15,8 @@
 package tests
 
 import (
+	"context"
+	"fmt"
 	"testing"
 
 	"github.com/name212/govalue"
@@ -124,7 +126,7 @@ func (c *TestContainerWrapper) generatePrivateKey(t *testing.T) {
 	}
 
 	if testSettings.NoGeneratePrivateKey {
-		c.Settings.Test.GetLogger().InfoF("Generate private key for testing skipping")
+		c.Settings.Test.GetLogger().InfoContext(context.Background(), "Generate private key for testing skipping")
 		return
 	}
 
@@ -142,7 +144,7 @@ func (c *TestContainerWrapper) generatePrivateKey(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	test.Logger.DebugF("Private key created: path '%s' pub key path: %s", privateKeyPath, publicKeyPath)
+	test.Logger.DebugContext(context.Background(), fmt.Sprintf("Private key created: path '%s' pub key path: %s", privateKeyPath, publicKeyPath))
 
 	testSettings.PublicKey = &PublicKey{
 		Path: publicKeyPath,

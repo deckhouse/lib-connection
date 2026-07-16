@@ -115,18 +115,18 @@ func runKube(params *runKubeParams) error {
 		logger := sett.Logger()
 
 		if err := kubeProvider.Cleanup(ctx); err != nil {
-			logger.ErrorF("Failed to cleanup kube provider: %v", err)
+			logger.ErrorContext(ctx, fmt.Sprintf("Failed to cleanup kube provider: %v", err))
 			return
 		}
 
-		logger.InfoF("kube provider cleaned up successfully")
+		logger.InfoContext(ctx, "kube provider cleaned up successfully")
 	}()
 
 	logger := sett.Logger()
 
 	// example that additional flags also parsed
 	if *params.printWarn {
-		logger.WarnF("WARNING: printing warnings flag set")
+		logger.WarnContext(ctx, "WARNING: printing warnings flag set")
 	}
 
 	if err != nil {
@@ -149,12 +149,12 @@ func runKube(params *runKubeParams) error {
 	_, err = kubeErrProvider.Client(ctx)
 	if err != nil {
 		if errors.Is(err, provider.ErrSSHClientCannotProvided) {
-			logger.InfoF("Cannot provide kube client because %v", err)
+			logger.InfoContext(ctx, fmt.Sprintf("Cannot provide kube client because %v", err))
 		} else {
-			logger.ErrorF("Cannot provide kube client with unknown %v", err)
+			logger.ErrorContext(ctx, fmt.Sprintf("Cannot provide kube client with unknown %v", err))
 		}
 	} else {
-		logger.ErrorF("Kube client should not provided")
+		logger.ErrorContext(ctx, "Kube client should not provided")
 	}
 
 	// example fail fast with ProvideErrorSSHProviderInitializer
@@ -162,12 +162,12 @@ func runKube(params *runKubeParams) error {
 	_, err = provider.GetRunnerInterface(ctx, useSSHKubeConfig, sett, failFastInitializer)
 	if err != nil {
 		if errors.Is(err, provider.ErrCannotProvideSSHProvider) {
-			logger.InfoF("Cannot provide kube runner provider because %v", err)
+			logger.InfoContext(ctx, fmt.Sprintf("Cannot provide kube runner provider because %v", err))
 		} else {
-			logger.ErrorF("Cannot provide kube runner with unknown %v", err)
+			logger.ErrorContext(ctx, fmt.Sprintf("Cannot provide kube runner with unknown %v", err))
 		}
 	} else {
-		logger.ErrorF("Kube runner should not provided")
+		logger.ErrorContext(ctx, "Kube runner should not provided")
 	}
 
 	return nil
@@ -194,10 +194,10 @@ func getNodes(ctx context.Context, sett settings.Settings, kubeProvider connecti
 			return fmt.Errorf("cannot list kube nodes: %w", err)
 		}
 
-		sett.Logger().InfoF("Got kube nodes: %d\n", len(nodes.Items))
+		sett.Logger().InfoContext(ctx, fmt.Sprintf("Got kube nodes: %d\n", len(nodes.Items)))
 
 		for _, node := range nodes.Items {
-			sett.Logger().InfoF("\t%s\n", node.Name)
+			sett.Logger().InfoContext(ctx, fmt.Sprintf("\t%s\n", node.Name))
 		}
 
 		return nil

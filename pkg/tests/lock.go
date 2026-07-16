@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -43,4 +44,29 @@ func AcquireGlobalTestLock(t *testing.T, name string) {
 		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 		_ = f.Close()
 	})
+}
+
+// WaitPortFree blocks until the given TCP port on localhost can be bound again,
+// or fails the test after the timeout. Use it right after AcquireGlobalTestLock
+// for tests that reuse a fixed port (e.g. the kube-proxy local API port): the
+// previous lock holder tears the listener down asynchronously, so the port may
+// still be in use for a short while after that holder releases the lock.
+func WaitPortFree(t *testing.T, port int) {
+	t.Helper()
+
+	const timeout = 30 * time.Second
+	const pollInterval = 200 * time.Millisecond
+
+	deadline := time.Now().Add(timeout)
+	for {
+		if portIsFree(port) {
+			return
+		}
+
+		if time.Now().After(deadline) {
+			t.Fatalf("port %d did not become free within %s", port, timeout)
+		}
+
+		time.Sleep(pollInterval)
+	}
 }

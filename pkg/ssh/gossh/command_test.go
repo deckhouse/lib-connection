@@ -17,6 +17,7 @@ package gossh
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -163,7 +164,7 @@ func TestCommandOutput(t *testing.T) {
 				sshSettings := tests.CreateDefaultTestSettings(test)
 				sshClient := NewClient(ctx, sshSettings, sess, keys).
 					WithLoopsParams(newSessionTestLoopParams())
-				err := sshClient.Start()
+				err := sshClient.Start(ctx)
 				// expecting no error on client start
 				require.NoError(t, err)
 
@@ -298,7 +299,7 @@ func TestCommandCombinedOutput(t *testing.T) {
 				sshSettings := tests.CreateDefaultTestSettings(test)
 				sshClient := NewClient(ctx, sshSettings, sess, keys).
 					WithLoopsParams(newSessionTestLoopParams())
-				err := sshClient.Start()
+				err := sshClient.Start(ctx)
 				// expecting no error on client start
 				require.NoError(t, err)
 
@@ -423,7 +424,7 @@ func TestCommandRun(t *testing.T) {
 				sshSettings := tests.CreateDefaultTestSettings(test)
 				sshClient := NewClient(ctx, sshSettings, sess, keys).
 					WithLoopsParams(newSessionTestLoopParams())
-				err := sshClient.Start()
+				err := sshClient.Start(ctx)
 				// expecting no error on client start
 				require.NoError(t, err)
 
@@ -482,7 +483,7 @@ func TestCommandStart(t *testing.T) {
 	sshSettings := tests.CreateDefaultTestSettings(test)
 	sshClient := NewClient(ctx, sshSettings, sess, keys).
 		WithLoopsParams(newSessionTestLoopParams())
-	err := sshClient.Start()
+	err := sshClient.Start(ctx)
 	// expecting no error on client start
 	require.NoError(t, err)
 
@@ -552,10 +553,10 @@ func TestCommandStart(t *testing.T) {
 				prepareFunc: func(c *SSHCommand) error {
 					c.WithWaitHandler(func(err error) {
 						if err != nil {
-							test.Logger.ErrorF("SSH-agent process exited, now stop. Wait error: %v", err)
+							test.Logger.ErrorContext(context.Background(), fmt.Sprintf("SSH-agent process exited, now stop. Wait error: %v", err))
 							return
 						}
-						test.Logger.DebugF("SSH-agent process exited, now stop")
+						test.Logger.DebugContext(context.Background(), "SSH-agent process exited, now stop")
 					})
 					return nil
 				},
@@ -687,7 +688,7 @@ func TestCommandSudoRun(t *testing.T) {
 				sshClient := NewClient(ctx, sshSettings, c.settings, c.keys).
 					WithLoopsParams(newSessionTestLoopParams())
 
-				err := sshClient.Start()
+				err := sshClient.Start(ctx)
 				// expecting no error on client start
 				require.NoError(t, err)
 

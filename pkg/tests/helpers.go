@@ -15,23 +15,21 @@
 package tests
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/pem"
 	"fmt"
+	"log/slog"
 	"os"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/deckhouse/lib-dhctl/pkg/log"
 	"github.com/deckhouse/lib-dhctl/pkg/retry"
 	gossh "github.com/deckhouse/lib-gossh"
 	"github.com/name212/govalue"
 	"github.com/stretchr/testify/require"
-
-	"github.com/deckhouse/lib-connection/pkg/settings"
 )
 
 const PrivateKeysRoot = "private_keys"
@@ -100,7 +98,7 @@ func WritePubKeyFileForPrivate(test *Test, privateKeyPath string, pubKey string)
 	return test.CreateFileWithSameSuffix(privateKeyPath, pubKey, false, PrivateKeysRoot, "id_rsa.pub")
 }
 
-func LogErrorOrAssert(t *testing.T, description string, err error, logger log.Logger) {
+func LogErrorOrAssert(t *testing.T, description string, err error, logger *slog.Logger) {
 	if err == nil {
 		return
 	}
@@ -110,7 +108,7 @@ func LogErrorOrAssert(t *testing.T, description string, err error, logger log.Lo
 		return
 	}
 
-	logger.ErrorF("%s: %v", description, err)
+	logger.ErrorContext(context.Background(), "%s: %v", description, err)
 }
 
 func CheckSkipSSHTest(t *testing.T, testName string) {
@@ -231,39 +229,41 @@ func Name(t *testing.T) string {
 	return prepareTestNames(t.Name())
 }
 
-func findLogMsg(t *testing.T, sett settings.Settings, msgInLog string) []string {
-	loggerInterface := sett.Logger()
+// should be rewritten to slog
 
-	logger, ok := loggerInterface.(*log.InMemoryLogger)
-	require.True(t, ok, "logger is not of type *log.InMemoryLogger")
+// func findLogMsg(t *testing.T, sett settings.Settings, msgInLog string) []string {
+// 	loggerInterface := sett.Logger()
 
-	getMatch, err := logger.AllMatches(&log.Match{
-		Regex: []*regexp.Regexp{
-			regexp.MustCompile(fmt.Sprintf(`.*%s.*`, regexp.QuoteMeta(msgInLog))),
-		},
-	})
+// 	logger, ok := loggerInterface.(*log.InMemoryLogger)
+// 	require.True(t, ok, "logger is not of type *log.InMemoryLogger")
 
-	require.NoError(t, err, "failed to find match in log")
+// 	getMatch, err := logger.AllMatches(&log.Match{
+// 		Regex: []*regexp.Regexp{
+// 			regexp.MustCompile(fmt.Sprintf(`.*%s.*`, regexp.QuoteMeta(msgInLog))),
+// 		},
+// 	})
 
-	return getMatch
-}
+// 	require.NoError(t, err, "failed to find match in log")
 
-func AssertLogMessage(t *testing.T, sett settings.Settings, msgInLog string) {
-	getMatch := findLogMsg(t, sett, msgInLog)
-	require.Len(t, getMatch, 1, "should have one match %s", msgInLog)
-	require.Contains(t, getMatch[0], msgInLog, "should contain %s", msgInLog)
-}
+// 	return getMatch
+// }
 
-func AssertNoLogMessage(t *testing.T, sett settings.Settings, msgInLog string) {
-	getMatch := findLogMsg(t, sett, msgInLog)
-	require.Len(t, getMatch, 0, "should not have any match %s", msgInLog)
-}
+// func AssertLogMessage(t *testing.T, sett settings.Settings, msgInLog string) {
+// 	getMatch := findLogMsg(t, sett, msgInLog)
+// 	require.Len(t, getMatch, 1, "should have one match %s", msgInLog)
+// 	require.Contains(t, getMatch[0], msgInLog, "should contain %s", msgInLog)
+// }
 
-func AssertLogMessagesCount(t *testing.T, sett settings.Settings, msgInLog string, expected int) {
-	getMatch := findLogMsg(t, sett, msgInLog)
-	require.Len(t, getMatch, expected, "should have %d matches %s", expected, msgInLog)
+// func AssertNoLogMessage(t *testing.T, sett settings.Settings, msgInLog string) {
+// 	getMatch := findLogMsg(t, sett, msgInLog)
+// 	require.Len(t, getMatch, 0, "should not have any match %s", msgInLog)
+// }
 
-	for _, m := range getMatch {
-		require.Contains(t, m, msgInLog, "should contain %s", msgInLog)
-	}
-}
+// func AssertLogMessagesCount(t *testing.T, sett settings.Settings, msgInLog string, expected int) {
+// 	getMatch := findLogMsg(t, sett, msgInLog)
+// 	require.Len(t, getMatch, expected, "should have %d matches %s", expected, msgInLog)
+
+// 	for _, m := range getMatch {
+// 		require.Contains(t, m, msgInLog, "should contain %s", msgInLog)
+// 	}
+// }

@@ -341,7 +341,7 @@ func (e *Executor) SetupStreamHandlers() error {
 		}
 		defer e.closeStdoutHandlerReadPipe()
 		e.ConsumeLines(stdoutHandlerReadPipe, e.StdoutHandler)
-		logger.DebugF("stop line consumer for '%s'", e.cmd.Args[0])
+		logger.DebugContext(context.Background(), fmt.Sprintf("stop line consumer for '%s'", e.cmd.Args[0]))
 	}()
 
 	// Start reading from stderr of a command.
@@ -353,8 +353,9 @@ func (e *Executor) SetupStreamHandlers() error {
 			return
 		}
 
-		logger.DebugF("Start reading from stderr pipe")
-		defer logger.DebugF("Stop reading from stderr pipe")
+		logger.DebugContext(context.Background(), "Start reading from stderr pipe")
+		defer logger.DebugContext(context.Background(), "Stop reading from stderr pipe")
+
 		defer func() {
 			if stderrHandlerWritePipe != nil {
 				_ = stderrHandlerWritePipe.Close()
@@ -393,7 +394,7 @@ func (e *Executor) SetupStreamHandlers() error {
 		}
 		defer e.closeStderrHandlerReadPipe()
 		e.ConsumeLines(stderrHandlerReadPipe, e.StderrHandler)
-		logger.DebugF("stop sdterr line consumer for '%s'", e.cmd.Args[0])
+		logger.DebugContext(context.Background(), fmt.Sprintf("stop sdterr line consumer for '%s'", e.cmd.Args[0]))
 	}()
 
 	return nil
@@ -402,13 +403,13 @@ func (e *Executor) SetupStreamHandlers() error {
 func (e *Executor) readFromStreams(stdoutReadPipe io.Reader, stdoutHandlerWritePipe io.Writer) {
 	logger := e.settings.Logger()
 
-	defer logger.DebugF("stop readFromStreams")
+	defer logger.DebugContext(context.Background(), "stop readFromStreams")
 
 	if stdoutReadPipe == nil || reflect.ValueOf(stdoutReadPipe).IsNil() {
 		return
 	}
 
-	logger.DebugF("Start read from streams for command: %s", e.cmd.String())
+	logger.DebugContext(context.Background(), fmt.Sprintf("Start read from streams for command: %s", e.cmd.String()))
 
 	buf := make([]byte, 16)
 	var matchersDone bool
@@ -425,7 +426,7 @@ func (e *Executor) readFromStreams(stdoutReadPipe io.Reader, stdoutHandlerWriteP
 			for _, matcher := range e.Matchers {
 				m = matcher.Analyze(buf[:n])
 				if matcher.IsMatched() {
-					logger.DebugF("Trigger matcher '%s'\n", matcher.Pattern)
+					logger.DebugContext(context.Background(), fmt.Sprintf("Trigger matcher '%s'\n", matcher.Pattern))
 					// matcher is triggered
 					if e.MatchHandler != nil {
 						res := e.MatchHandler(matcher.Pattern)
@@ -458,11 +459,11 @@ func (e *Executor) readFromStreams(stdoutReadPipe io.Reader, stdoutHandlerWriteP
 
 		if err != nil {
 			if errors.Is(err, io.EOF) || errors.Is(err, os.ErrClosed) {
-				logger.DebugF("readFromStreams: EOF")
+				logger.DebugContext(context.Background(), "readFromStreams: EOF")
 				break
 			}
 
-			logger.DebugF("Error reading from stdout: %s\n", err)
+			logger.DebugContext(context.Background(), fmt.Sprintf("Error reading from stdout: %s\n", err))
 			errorsCount++
 			if errorsCount > 1000 {
 				panic(fmt.Errorf("readFromStreams: too many errors, last error %v", err))
@@ -485,7 +486,7 @@ func (e *Executor) ConsumeLines(r io.Reader, fn func(l string)) {
 		}
 
 		if text != "" {
-			e.settings.Logger().DebugF("%s: %s", e.cmd.Args[0], text)
+			e.settings.Logger().DebugContext(context.Background(), fmt.Sprintf("%s: %s", e.cmd.Args[0], text))
 		}
 	}
 }
@@ -494,7 +495,7 @@ func (e *Executor) Start() error {
 	logger := e.settings.Logger()
 
 	// setup stream handlers
-	logger.DebugF("executor: start '%s'", e.cmd.String())
+	logger.DebugContext(context.Background(), fmt.Sprintf("executor: start '%s'", e.cmd.String()))
 	err := e.SetupStreamHandlers()
 	if err != nil {
 		return err
@@ -508,7 +509,7 @@ func (e *Executor) Start() error {
 	e.ProcessWait()
 	e.started.Store(true)
 
-	logger.DebugF("Register stoppable: '%s'", e.cmd.String())
+	logger.DebugContext(context.Background(), fmt.Sprintf("Register stoppable: '%s'", e.cmd.String()))
 	e.Session.RegisterStoppable(e)
 
 	return nil
@@ -589,8 +590,8 @@ func (e *Executor) killProcessGroup() {
 func (e *Executor) closeWritePipes() {
 	logger := e.settings.Logger()
 
-	logger.DebugF("Starting close write pipes")
-	defer logger.DebugF("Stop close write pipes")
+	logger.DebugContext(context.Background(), "Starting close write pipes")
+	defer logger.DebugContext(context.Background(), "Stop close write pipes")
 
 	e.pipesMutex.Lock()
 	defer e.pipesMutex.Unlock()
@@ -598,7 +599,7 @@ func (e *Executor) closeWritePipes() {
 	if e.stdoutPipeFile != nil {
 		err := e.stdoutPipeFile.Close()
 		if err != nil {
-			logger.DebugF("Cannot close stdout pipe: %v", err)
+			logger.DebugContext(context.Background(), fmt.Sprintf("Cannot close stdout pipe: %v", err))
 		}
 		e.stdoutPipeFile = nil
 	}
@@ -606,7 +607,7 @@ func (e *Executor) closeWritePipes() {
 	if e.stderrPipeFile != nil {
 		err := e.stderrPipeFile.Close()
 		if err != nil {
-			logger.DebugF("Cannot close stderr pipe: %v", err)
+			logger.DebugContext(context.Background(), fmt.Sprintf("Cannot close stderr pipe: %v", err))
 		}
 		e.stderrPipeFile = nil
 	}
@@ -659,7 +660,7 @@ func (e *Executor) Stop() {
 	logger := e.settings.Logger()
 
 	if e.cmd == nil {
-		logger.DebugF("Possible BUG: Call Executor.Stop with Cmd==nil")
+		logger.DebugContext(context.Background(), "Possible BUG: Call Executor.Stop with Cmd==nil")
 		return
 	}
 	if !e.started.Load() {
@@ -668,15 +669,15 @@ func (e *Executor) Stop() {
 	}
 
 	if e.stop.CompareAndSwap(false, true) {
-		logger.DebugF("Stop '%s'", e.cmd.String())
+		logger.DebugContext(context.Background(), fmt.Sprintf("Stop '%s'", e.cmd.String()))
 		e.signalStop()
 	} else {
-		logger.DebugF("Stop '%s': already stopping", e.cmd.String())
+		logger.DebugContext(context.Background(), fmt.Sprintf("Stop '%s': already stopping", e.cmd.String()))
 	}
 
 	e.forceClosePipes()
 	<-e.waitCh
-	logger.DebugF("Stopped '%s': %d", e.cmd.String(), e.cmd.ProcessState.ExitCode())
+	logger.DebugContext(context.Background(), fmt.Sprintf("Stopped '%s': %d", e.cmd.String(), e.cmd.ProcessState.ExitCode()))
 }
 
 func (e *Executor) signalStop() {
@@ -690,7 +691,7 @@ func (e *Executor) signalStop() {
 
 // Run executes a command and blocks until it is finished or stopped.
 func (e *Executor) Run(_ context.Context) error {
-	e.settings.Logger().DebugF("executor: run '%s'\n", e.cmd.String())
+	e.settings.Logger().DebugContext(context.Background(), fmt.Sprintf("executor: run '%s'\n", e.cmd.String()))
 
 	err := e.Start()
 	if err != nil {

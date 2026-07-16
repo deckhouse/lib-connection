@@ -16,12 +16,14 @@ package config
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
+	"log/slog"
 	"strings"
 	"testing"
 	"text/template"
 
-	"github.com/deckhouse/lib-dhctl/pkg/log"
 	"github.com/stretchr/testify/require"
 )
 
@@ -30,7 +32,7 @@ type connectionConfigAssertParams struct {
 	err              error
 	got              *ConnectionConfig
 	expected         *ConnectionConfig
-	logger           log.Logger
+	logger           *slog.Logger
 }
 
 func assertConnectionConfig(t *testing.T, params connectionConfigAssertParams) {
@@ -40,7 +42,7 @@ func assertConnectionConfig(t *testing.T, params connectionConfigAssertParams) {
 	if params.hasErrorContains != "" {
 		require.Error(t, err, "expected error but got none")
 		// show log msg for human observability
-		params.logger.ErrorF("%v", err)
+		params.logger.ErrorContext(context.Background(), fmt.Sprintf("%v", err))
 		require.Contains(t, err.Error(), params.hasErrorContains, "error should contain")
 		require.Nil(t, cfg, "cfg should be nil")
 		return

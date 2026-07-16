@@ -15,13 +15,13 @@
 package file
 
 import (
+	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
-
-	"github.com/deckhouse/lib-dhctl/pkg/log"
 
 	"github.com/deckhouse/lib-connection/pkg/utils/defaults"
 	"github.com/deckhouse/lib-connection/pkg/utils/env"
@@ -32,7 +32,7 @@ func Reader(path string, fileType string) (io.ReadCloser, error) {
 	return r, err
 }
 
-func ReadFile(path string, fileType string, logger ...log.Logger) ([]byte, string, error) {
+func ReadFile(ctx context.Context, path string, fileType string, logger ...*slog.Logger) ([]byte, string, error) {
 	reader, fullPath, err := getReader(path, fileType)
 	if err != nil {
 		return nil, "", err
@@ -41,7 +41,7 @@ func ReadFile(path string, fileType string, logger ...log.Logger) ([]byte, strin
 	defer func() {
 		err := reader.Close()
 		if err != nil && len(logger) > 0 {
-			logger[0].DebugF("Error closing config file: %v", err)
+			logger[0].DebugContext(ctx, fmt.Sprintf("Error closing config file: %v", err))
 		}
 	}()
 

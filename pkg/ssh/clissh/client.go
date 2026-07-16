@@ -15,6 +15,7 @@
 package clissh
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/name212/govalue"
@@ -57,17 +58,17 @@ type Client struct {
 	id string
 }
 
-func (s *Client) OnlyPreparePrivateKeys() error {
+func (s *Client) OnlyPreparePrivateKeys(ctx context.Context) error {
 	// Double start is safe here because for initializing private keys we are using sync.Once
-	return s.Start()
+	return s.Start(ctx)
 }
 
-func (s *Client) Start() error {
+func (s *Client) Start(ctx context.Context) error {
 	if s.SessionSettings == nil {
 		return fmt.Errorf("possible bug in ssh client: session should be created before start")
 	}
 
-	a, err := initAgentInstance(s.settings, s.privateKeys, s.InitializeNewAgent)
+	a, err := initAgentInstance(ctx, s.settings, s.privateKeys, s.InitializeNewAgent)
 	if err != nil {
 		return err
 	}
@@ -145,8 +146,8 @@ func (s *Client) PrivateKeys() []session.AgentPrivateKey {
 	return s.privateKeys
 }
 
-func (s *Client) RefreshPrivateKeys() error {
-	return s.Agent.AddKeys(s.PrivateKeys())
+func (s *Client) RefreshPrivateKeys(ctx context.Context) error {
+	return s.Agent.AddKeys(ctx, s.PrivateKeys())
 }
 
 // Loop Looping all available hosts

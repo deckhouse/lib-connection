@@ -15,6 +15,7 @@
 package kube
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -411,6 +412,7 @@ func TestParseFlags(t *testing.T) {
 		t.Run("with args and with FlagSet", func(t *testing.T) {
 			flagSet := newParseFlagsAndExtractConfigFlagSet("test-connection-flagset")
 
+			// nolint:prealloc
 			args := []string{
 				"--kube-client-from-cluster",
 			}
@@ -457,7 +459,7 @@ func TestParseFlags(t *testing.T) {
 				string(output),
 			)
 
-			tst.GetLogger().InfoF("Got output from TestParseFlagsAndExtractConfigNoArgs:\n%s", string(output))
+			tst.GetLogger().InfoContext(context.Background(), fmt.Sprintf("Got output from TestParseFlagsAndExtractConfigNoArgs:\n%s", string(output)))
 		})
 	})
 }
@@ -572,6 +574,7 @@ func TestParseKubeFlagsAndExtractConfigNoArgs(t *testing.T) {
 		os.Args = oldArgs
 	})
 
+	// nolint:prealloc
 	withAdditional := []string{
 		os.Args[0],
 		flagSet.arguments[0],

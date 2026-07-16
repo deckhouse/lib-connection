@@ -115,8 +115,8 @@ func NewDefaultSSHProvider(sett settings.Settings, config *sshconfig.ConnectionC
 	return provider.WithOptions(opts...)
 }
 
-func NewDefaultSSHProviderFromFlags(sett settings.Settings, flags *sshconfig.Flags, opts ...sshconfig.ValidateOption) (*DefaultSSHProvider, error) {
-	parser := sshconfig.NewFlagsParser(sett)
+func NewDefaultSSHProviderFromFlags(ctx context.Context, sett settings.Settings, flags *sshconfig.Flags, opts ...sshconfig.ValidateOption) (*DefaultSSHProvider, error) {
+	parser := sshconfig.NewFlagsParser(ctx, sett)
 	config, err := parser.ExtractConfigAfterParse(flags, opts...)
 	if err != nil {
 		return nil, err
@@ -324,7 +324,7 @@ func (p *DefaultSSHProvider) createClient(ctx context.Context, parent *session.S
 	}
 
 	if p.options.StartClient {
-		if err := client.Start(); err != nil {
+		if err := client.Start(ctx); err != nil {
 			return nil, fmt.Errorf("Cannot start client after create: %v", err)
 		}
 	}
@@ -494,7 +494,7 @@ func (p *DefaultSSHProvider) useGoSSH(shouldLog bool) bool {
 			return
 		}
 
-		p.debug(format)
+		p.debug("%s", format)
 	}
 
 	if p.options.ForceGoSSH {
@@ -514,15 +514,8 @@ func (p *DefaultSSHProvider) useGoSSH(shouldLog bool) bool {
 		return false
 	}
 
-	// if passed private keys force cli
-	// if use password auth use gossh
-	if len(config.PrivateKeys) == 0 {
-		logDebug("Force go-ssh client because use password auth. cli-ssh does not support password auth")
-		return true
-	}
-
-	logDebug("Use cli-ssh by default")
-	return false
+	logDebug("Use go-ssh by default")
+	return true
 }
 
 func (p *DefaultSSHProvider) prepareConfigPrivateKeys() error {
@@ -655,7 +648,7 @@ func (p *DefaultSSHProvider) keyPath() (string, error) {
 }
 
 func (p *DefaultSSHProvider) debug(format string, args ...any) {
-	p.sett.Logger().DebugF(format, args...)
+	p.sett.Logger().DebugContext(context.Background(), fmt.Sprintf(format, args...))
 }
 
 type createClientOpts struct {

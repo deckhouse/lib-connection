@@ -128,7 +128,7 @@ func (t *Tunnel) Up(ctx context.Context) error {
 				tunnelReadyCh <- struct{}{}
 			}
 		})
-		t.settings.Logger().DebugF("stop line consumer for '%s'", t.String())
+		t.settings.Logger().DebugContext(ctx, fmt.Sprintf("stop line consumer for '%s'", t.String()))
 	}()
 
 	sshCmd := t.sshCmd
@@ -161,9 +161,10 @@ func (t *Tunnel) waitForSSH(sshCmd *exec.Cmd, errorCh chan<- error, pipes tunnel
 
 func (t *Tunnel) HealthMonitor(errorOutCh chan<- error) {
 	logger := t.settings.Logger()
+	ctx := context.Background()
 
-	defer logger.DebugF("Tunnel health monitor stopped\n")
-	logger.DebugF("Tunnel health monitor started\n")
+	defer logger.DebugContext(ctx, "Tunnel health monitor stopped\n")
+	logger.DebugContext(ctx, "Tunnel health monitor started\n")
 
 	for {
 		select {
@@ -193,7 +194,7 @@ func (t *Tunnel) Stop() {
 		t.signalStop()
 
 		if t.Session == nil {
-			t.settings.Logger().ErrorF("bug: down tunnel '%s': no session", t.String())
+			t.settings.Logger().ErrorContext(context.Background(), fmt.Sprintf("bug: down tunnel '%s': no session", t.String()))
 			return
 		}
 	})

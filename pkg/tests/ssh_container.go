@@ -15,6 +15,7 @@
 package tests
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -522,7 +523,7 @@ func (c *SSHContainer) startContainer(waitSSHDStarted bool) error {
 			return err
 		}
 		if err := conn.Close(); err != nil {
-			c.ContainerSettings().Logger.DebugF("Failed to close SSHD connection after restart container: %v", err)
+			c.ContainerSettings().Logger.DebugContext(context.Background(), fmt.Sprintf("Failed to close SSHD connection after restart container: %v", err))
 		}
 
 		return nil
@@ -629,7 +630,7 @@ func (c *SSHContainer) removeNetwork() error {
 
 func (c *SSHContainer) logDebug(format string, args ...any) {
 	format += fmt.Sprintf(" (%s)", c.settings.String())
-	c.settings.Logger.DebugF(format, args...)
+	c.settings.Logger.DebugContext(context.Background(), fmt.Sprintf(format, args...))
 }
 
 func (c *SSHContainer) runDockerNetworkConnect(isDisconnect bool) error {
@@ -729,13 +730,10 @@ func (c *SSHContainer) discoveryContainerIP() (string, error) {
 }
 
 func (c *SSHContainer) defaultRetryParams(name string) retry.Params {
-	logger := c.ContainerSettings().Test.Logger
-
 	return retry.NewEmptyParams(
 		retry.WithName("%s", name),
 		retry.WithAttempts(5),
 		retry.WithWait(3*time.Second),
-		retry.WithLogger(logger),
 	)
 }
 

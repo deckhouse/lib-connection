@@ -12,8 +12,9 @@ Library routines need some global settings for running routines.
 These are described as the Settings interface [here](./pkg/settings/settings.go). An implementation can be created
 with the `NewBaseProviders` constructor. Currently we have the following settings:
 
-- `LoggerProvider` - function that provides a logger. By default it uses a silent logger.
-If you need debug logs you need to provide a logger with debug logging enabled.
+- `Logger` - a `*slog.Logger` used for all library logging, passed directly (no wrapper interface).
+If not set, it defaults to `slog.Default()`. Pass your own `*slog.Logger` (e.g. with a debug-level handler)
+if you need debug logs.
 - `NodeTmpDir` - used for uploading bundles and some additional temporary files to a remote nodes.
 Default path is `/opt/deckhouse/tmp`
 - `NodeBinPath` - currently used only for kube-proxy to add this path to the `PATH` env, because
@@ -170,31 +171,42 @@ provide a prefix for env variables with the `WithEnvsPrefix` method. Flags are p
 ```go
 package my
 
-import "os"
+import (
+	"context"
+	"os"
 
-func do() error {
- // create and prepare parser
- parser := NewFlagsParser()
- parser.WithEnvsPrefix("DHCTL")
- // init flags or you can pass your flagset, parser skip unknown flags
- fset := flag.NewFlagSet("my-set", flag.ExitOnError)
- flags, err := parser.InitFlags(fset)
- if err != nil {
-  return err
- }
+	flag "github.com/spf13/pflag"
 
- // you can use ValidateOption for configure parse
- config, err := flags.ExtractConfig(os.Args[1:])
- if err != nil {
-  return err
-    }
- 
- // if you need to parse your flag set you should parse it by hand
- if err := fset.Parse(); err != nil {
-  return err
-    }
- 
- return nil
+	"github.com/deckhouse/lib-connection/pkg/settings"
+	sshconfig "github.com/deckhouse/lib-connection/pkg/ssh/config"
+)
+
+func do(ctx context.Context, sett settings.Settings) error {
+	// create and prepare parser
+	parser := sshconfig.NewFlagsParser(ctx, sett)
+	parser.WithEnvsPrefix("DHCTL")
+
+	// init flags, or you can pass your own flag set; the parser skips unknown flags
+	fset := flag.NewFlagSet("my-set", flag.ExitOnError)
+	flags, err := parser.InitFlags(fset)
+	if err != nil {
+		return err
+	}
+
+	// you can use ValidateOption to configure parsing, e.g. sshconfig.ParseWithRequiredSSHHost(true)
+	config, err := flags.ExtractConfig(os.Args[1:])
+	if err != nil {
+		return err
+	}
+
+	// if you need to parse your own flag set, you should parse it by hand
+	if err := fset.Parse(os.Args[1:]); err != nil {
+		return err
+	}
+
+	_ = config
+
+	return nil
 }
 ```
 
@@ -269,9 +281,7 @@ client are not added to avoid unsafe switching.
 - if you provide the `SSHClientWithForceGoSSH` option it returns go-ssh
 - if `ForceModern` is set in the configuration, returns go-ssh
 - if `ForceLegacy` is set in the configuration, returns cli-ssh
-- if the configuration does not contain private keys, returns go-ssh, because cli-ssh does not support
-password authentication
-- by default returns cli-ssh. Warning! This behavior may change in the future.
+- by default returns go-ssh
 
 By default, the provider does not start the client; if you need it to, you can pass the `SSHClientWithStartAfterCreate` option.
 
@@ -379,12 +389,158 @@ clients in your code. You can use the `Client` call to get the kube client after
 assert resources after the test.
 `KubernetesClient.InitContext` is safe to call with a fake client.
 
-## Flags parsing and other examples
+## Usage examples
 
-Because we are using the [pflag](https://github.com/spf13/pflag) library you can use it with the cobra library.
+A full runnable example (cobra commands for kube-only, ssh, and ssh with additional/standalone clients)
+is provided [here](./examples/cobra). Please see the code comments there for more details. The snippets
+below are condensed variants of the same patterns.
 
-A full example for initializing and simple usage of the library is provided [here](./examples).
-Please see the code comments for more information about usage of the library.
+### Minimal SSH client
+
+Build a `ConnectionConfig` directly (no flag parsing) and run a command on a remote host:
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+
+	"github.com/deckhouse/lib-connection/pkg/provider"
+	"github.com/deckhouse/lib-connection/pkg/settings"
+	sshconfig "github.com/deckhouse/lib-connection/pkg/ssh/config"
+)
+
+func main() {
+	ctx := context.Background()
+	sett := settings.NewBaseProviders(settings.ProviderParams{})
+
+	config := &sshconfig.ConnectionConfig{
+		Hosts: []sshconfig.Host{{Host: "10.0.0.1"}},
+		Config: &sshconfig.Config{
+			User: "user",
+			PrivateKeys: []sshconfig.AgentPrivateKey{
+				{Key: "/home/user/.ssh/id_rsa", IsPath: true},
+			},
+		},
+	}
+
+	sshProvider := provider.NewDefaultSSHProvider(sett, config, provider.SSHClientWithStartAfterCreate(true))
+	defer func() {
+		if err := sshProvider.Cleanup(ctx); err != nil {
+			sett.Logger().Error(fmt.Sprintf("cleanup ssh provider: %v", err))
+		}
+	}()
+
+	client, err := sshProvider.Client(ctx)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	stdout, _, err := client.Command("uname", "-a").Output(ctx)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Println(string(stdout))
+}
+```
+
+### Minimal Kubernetes client (not over SSH)
+
+If your process never needs to reach Kubernetes over an SSH tunnel, pass `ErrorSSHProviderInitializer`
+so any accidental attempt to use SSH fails fast instead of silently trying to connect:
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/deckhouse/lib-connection/pkg/kube"
+	"github.com/deckhouse/lib-connection/pkg/provider"
+	"github.com/deckhouse/lib-connection/pkg/settings"
+)
+
+func main() {
+	ctx := context.Background()
+	sett := settings.NewBaseProviders(settings.ProviderParams{})
+
+	config := &kube.Config{KubeConfig: "/home/user/.kube/config"}
+
+	initializer := provider.NewErrorSSHProviderInitializer(fmt.Errorf("kube client is not used over ssh"))
+	runner, err := provider.GetRunnerInterface(ctx, config, sett, initializer)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	kubeProvider := provider.NewDefaultKubeProvider(sett, config, runner)
+	defer func() {
+		if err := kubeProvider.Cleanup(ctx); err != nil {
+			sett.Logger().Error(fmt.Sprintf("cleanup kube provider: %v", err))
+		}
+	}()
+
+	client, err := kubeProvider.Client(ctx)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	nodes, err := client.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Printf("got %d nodes\n", len(nodes.Items))
+}
+```
+
+### Combining SSH and Kubernetes providers
+
+When a `KubeProvider` should be able to reach the API over SSH (`kube.Config.OverSSH()` is true), give
+`GetRunnerInterface` a real `SSHProviderInitializer` instead of the error one, so it can start kube-proxy
+over the SSH client:
+
+```go
+sshConfig, err := sshFlags.ExtractConfig(os.Args[1:])
+if err != nil {
+	return err
+}
+
+sshProvider := provider.NewDefaultSSHProvider(sett, sshConfig, provider.SSHClientWithStartAfterCreate(true))
+sshInitializer := provider.NewSimpleSSHProviderInitializer(sshProvider)
+
+kubeConfig, err := kubeFlags.ExtractConfig(os.Args[1:]...)
+if err != nil {
+	return err
+}
+
+runner, err := provider.GetRunnerInterface(ctx, kubeConfig, sett, sshInitializer)
+if err != nil {
+	return err
+}
+
+kubeProvider := provider.NewDefaultKubeProvider(sett, kubeConfig, runner)
+// Client() calls the kube API over the SSH client's kube-proxy and reconnects
+// automatically if the SSH provider's client is switched.
+```
+
+This is the pattern used in production by [dhctl](https://github.com/deckhouse/deckhouse), which wraps
+both providers behind a single `GetProviders(ctx, params, opts...)` call so callers get an
+`SSHProviderInitializer` and a `KubeProvider` from one entry point, with an options pattern
+(`WithConnectionConfig`, `WithKubeConfig`, `WithRequiredKubeProvider`, ...) to control how each is
+constructed for a given command.
+
+### Flags parsing and cobra integration
+
+Because we are using the [pflag](https://github.com/spf13/pflag) library, `kube.FlagsParser` and
+`sshconfig.FlagsParser` compose with `cobra.Command.PersistentFlags()`. See [ParseFlags](#parseflags)
+above and the full [cobra example](./examples/cobra) for `kube`, `ssh`, and `ssh-additional` subcommands.
 
 ## Testing
 

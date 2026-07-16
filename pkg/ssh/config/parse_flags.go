@@ -15,12 +15,13 @@
 package config
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"sort"
 	"strings"
 
-	"github.com/deckhouse/lib-dhctl/pkg/log"
 	"github.com/hashicorp/go-multierror"
 	"github.com/name212/govalue"
 	flag "github.com/spf13/pflag"
@@ -247,7 +248,7 @@ func (f *Flags) userExtractor() func() (string, error) {
 
 type (
 	AskPasswordFunc         func(promt string) ([]byte, error)
-	PrivateKeyExtractorFunc func(path string, logger log.Logger) (password string, err error)
+	PrivateKeyExtractorFunc func(path string, logger *slog.Logger) (password string, err error)
 )
 
 type FlagsParser struct {
@@ -265,13 +266,13 @@ type FlagsParser struct {
 // init FlagsParser
 // prefix will trim right all _ ang - symbols and spaces left and right from settings.Settings EnvsPrefix
 // By default parser add _ after prefix for all env vars
-func NewFlagsParser(sett settings.Settings) *FlagsParser {
+func NewFlagsParser(ctx context.Context, sett settings.Settings) *FlagsParser {
 	askFromTerminal := func(prompt string) ([]byte, error) {
-		return terminal.AskPassword(sett.Logger(), prompt)
+		return terminal.AskPassword(ctx, sett.Logger(), prompt)
 	}
 
-	terminalPrivateKeyPasswordExtractorWithoutDefault := func(path string, logger log.Logger) (string, error) {
-		return terminalPrivateKeyPasswordExtractor(path, make([]byte, 0), logger)
+	terminalPrivateKeyPasswordExtractorWithoutDefault := func(path string, logger *slog.Logger) (string, error) {
+		return terminalPrivateKeyPasswordExtractor(ctx, path, make([]byte, 0), logger)
 	}
 
 	parser := &FlagsParser{
@@ -284,7 +285,7 @@ func NewFlagsParser(sett settings.Settings) *FlagsParser {
 
 func (p *FlagsParser) WithAsk(ask AskPasswordFunc) *FlagsParser {
 	if govalue.Nil(ask) {
-		p.Settings().Logger().WarnF("Ask function is nil. Skip set ask function.")
+		p.Settings().Logger().WarnContext(context.Background(), "Ask function is nil. Skip set ask function.")
 		return p
 	}
 
@@ -294,7 +295,7 @@ func (p *FlagsParser) WithAsk(ask AskPasswordFunc) *FlagsParser {
 
 func (p *FlagsParser) WithPrivateKeyPasswordExtractor(extractor PrivateKeyExtractorFunc) *FlagsParser {
 	if govalue.Nil(extractor) {
-		p.Settings().Logger().WarnF("Private key password extractor function is nil. Skip set extractor function.")
+		p.Settings().Logger().WarnContext(context.Background(), "Private key password extractor function is nil. Skip set extractor function.")
 		return p
 	}
 
@@ -364,7 +365,7 @@ func (p *FlagsParser) ExtractConfigAfterParse(flags *Flags, opts ...ValidateOpti
 
 		defer func() {
 			if err := configReader.Close(); err != nil {
-				logger.DebugF("Error closing config file: %v", err)
+				logger.DebugContext(context.Background(), fmt.Sprintf("Error closing config file: %v", err))
 			}
 		}()
 
@@ -642,7 +643,7 @@ func (p *FlagsParser) fillFlagsToSet(set *flag.FlagSet, flags *Flags, envsExtrac
 	)
 }
 
-func (p *FlagsParser) readPrivateKeysFromFlags(flags *Flags, logger log.Logger) ([]AgentPrivateKey, error) {
+func (p *FlagsParser) readPrivateKeysFromFlags(flags *Flags, logger *slog.Logger) ([]AgentPrivateKey, error) {
 	res := make([]AgentPrivateKey, 0, len(flags.PrivateKeysPaths))
 
 	if len(flags.PrivateKeysPaths) == 0 {
@@ -653,7 +654,7 @@ func (p *FlagsParser) readPrivateKeysFromFlags(flags *Flags, logger log.Logger) 
 	var parseErr *multierror.Error
 	for _, path := range flags.PrivateKeysPaths {
 		if _, ok := pathsParsed[path]; ok {
-			logger.DebugF("Multiple private keys found for %s", path)
+			logger.DebugContext(context.Background(), fmt.Sprintf("Multiple private keys found for %s", path))
 			continue
 		}
 
@@ -707,8 +708,8 @@ func (p *FlagsParser) getPasswordsFromUser(flags *Flags) (*passwordsFromUser, er
 	return res, nil
 }
 
-func terminalPrivateKeyPasswordExtractor(path string, defaultPassword []byte, logger log.Logger) (string, error) {
-	_, password, err := utils.ParseSSHPrivateKeyFile(path, string(defaultPassword), logger)
+func terminalPrivateKeyPasswordExtractor(ctx context.Context, path string, defaultPassword []byte, logger *slog.Logger) (string, error) {
+	_, password, err := utils.ParseSSHPrivateKeyFile(ctx, path, string(defaultPassword), logger)
 
 	return password, err
 }

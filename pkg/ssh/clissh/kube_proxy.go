@@ -72,7 +72,7 @@ func (r *kubeProxyRunner) UpTunnel(localPort int, kubeProxyPort string) (connect
 		address = fmt.Sprintf("%d:127.0.0.1:%s", localPort, kubeProxyPort)
 	}
 
-	r.client.settings.Logger().DebugF("Try up tunnel for kube proxy on %s", address)
+	r.client.settings.Logger().DebugContext(context.Background(), fmt.Sprintf("Try up tunnel for kube proxy on %s", address))
 
 	tun := r.client.Tunnel(address)
 

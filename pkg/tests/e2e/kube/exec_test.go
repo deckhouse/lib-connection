@@ -191,7 +191,7 @@ func getKubeProviderForExec(t *testing.T, test *tests.Test, cluster *kind.KINDCl
 	})
 }
 
-func createPodForExecTest(t *testing.T, test *tests.Test, pythonImage string, kubeProvider *provider.DefaultKubeProvider) connection.PodExecParams {
+func createPodForExecTest(t *testing.T, _ *tests.Test, pythonImage string, kubeProvider *provider.DefaultKubeProvider) connection.PodExecParams {
 	ctx := t.Context()
 	cl, err := kubeProvider.Client(ctx)
 	require.NoError(t, err, "client should get")
@@ -229,7 +229,6 @@ func createPodForExecTest(t *testing.T, test *tests.Test, pythonImage string, ku
 		retry.WithName("Create pod %s for test", name),
 		retry.WithAttempts(30),
 		retry.WithWait(time.Second),
-		retry.WithLogger(test.GetLogger()),
 	)
 
 	err = retry.NewLoopWithParams(createLoop).RunContext(ctx, func() error {
@@ -242,7 +241,6 @@ func createPodForExecTest(t *testing.T, test *tests.Test, pythonImage string, ku
 		retry.WithName("Wait pod %s running for test", name),
 		retry.WithAttempts(300),
 		retry.WithWait(time.Second),
-		retry.WithLogger(test.GetLogger()),
 	)
 
 	err = retry.NewLoopWithParams(waitLoop).RunContext(ctx, func() error {

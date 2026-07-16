@@ -256,7 +256,7 @@ func TestFileUploadBytes(t *testing.T) {
 		err = f.UploadBytes(context.Background(), []byte(content), "/tmp/testfile.txt")
 		require.NoError(t, err)
 
-		err = goSSHClient2.Start()
+		err = goSSHClient2.Start(context.Background())
 		require.NoError(t, err)
 		registerStopClient(t, goSSHClient2)
 
@@ -428,7 +428,7 @@ func TestFileDownload(t *testing.T) {
 		downloadedContent, err = os.ReadFile(dstPath)
 		require.NoError(t, err)
 
-		err = goSSHClient2.Start()
+		err = goSSHClient2.Start(context.Background())
 		require.NoError(t, err)
 		registerStopClient(t, goSSHClient2)
 
@@ -459,10 +459,10 @@ func TestFileDownload(t *testing.T) {
 
 		cmd = exec.Command("ls", downloadWholeDirDir)
 		lsResult, err = cmd.CombinedOutput()
-		test.Logger.InfoF(string(lsResult))
+		test.Logger.InfoContext(context.Background(), string(lsResult))
 		require.NoError(t, err)
 
-		err = goSSHClient2.Start()
+		err = goSSHClient2.Start(context.Background())
 		require.NoError(t, err)
 		registerStopClient(t, goSSHClient2)
 

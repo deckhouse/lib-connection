@@ -15,34 +15,35 @@
 package tests
 
 import (
+	"context"
 	"strconv"
 
-	"github.com/deckhouse/lib-dhctl/pkg/log"
+	dhlog "github.com/deckhouse/lib-dhctl/pkg/logger"
 
 	"github.com/deckhouse/lib-connection/pkg/settings"
 	"github.com/deckhouse/lib-connection/pkg/ssh/session"
 )
 
-func TestLogger(opts ...TestOpt) *log.InMemoryLogger {
-	options := applyTestOpts(opts...)
+// func TestLogger(opts ...TestOpt) *log.InMemoryLogger {
+// 	options := applyTestOpts(opts...)
 
-	loggerOptions := log.LoggerOptions{IsDebug: options.isDebug}
-	if options.logBuffer != nil {
-		loggerOptions.OutStream = options.logBuffer
-	}
+// 	loggerOptions := log.LoggerOptions{IsDebug: options.isDebug}
+// 	if options.logBuffer != nil {
+// 		loggerOptions.OutStream = options.logBuffer
+// 	}
 
-	res := log.NewInMemoryLoggerWithParent(log.NewPrettyLogger(loggerOptions))
-	if options.noLogDebug {
-		res.WithNoDebug(true)
-	}
+// 	res := log.NewInMemoryLoggerWithParent(log.NewPrettyLogger(loggerOptions))
+// 	if options.noLogDebug {
+// 		res.WithNoDebug(true)
+// 	}
 
-	return res
-}
+// 	return res
+// }
 
-func getDefaultParams(test *Test) settings.ProviderParams {
+func getDefaultParams(_ *Test) settings.ProviderParams {
 	return settings.ProviderParams{
-		LoggerProvider: log.SimpleLoggerProvider(test.Logger),
-		IsDebug:        true,
+		Logger:  dhlog.FromContext(context.Background()),
+		IsDebug: true,
 	}
 }
 
@@ -50,10 +51,10 @@ func CreateDefaultTestSettings(test *Test) settings.Settings {
 	return settings.NewBaseProviders(getDefaultParams(test))
 }
 
-func getParamsNoDebug(test *Test) settings.ProviderParams {
+func getParamsNoDebug(_ *Test) settings.ProviderParams {
 	return settings.ProviderParams{
-		LoggerProvider: log.SimpleLoggerProvider(test.Logger),
-		IsDebug:        false,
+		Logger:  dhlog.FromContext(context.Background()),
+		IsDebug: false,
 	}
 }
 

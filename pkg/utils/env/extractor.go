@@ -241,7 +241,7 @@ func (e *Extractor) ExtractAllVars(vars ...*Var) error {
 
 		v := reflect.ValueOf(valAny)
 
-		if v.Kind() != reflect.Ptr {
+		if v.Kind() != reflect.Pointer {
 			appendError(name, "value should be pointer")
 			continue
 		}

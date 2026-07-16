@@ -87,7 +87,7 @@ func (t *ReverseTunnel) startListener(ctx context.Context) error {
 	}
 
 	if t.tun != nil {
-		logger.DebugF("[%d] Reverse tunnel already up\n", t.tun.id)
+		logger.DebugContext(ctx, fmt.Sprintf("[%d] Reverse tunnel already up\n", t.tun.id))
 		return fmt.Errorf("already up")
 	}
 
@@ -100,8 +100,8 @@ func (t *ReverseTunnel) startListener(ctx context.Context) error {
 
 	id := rand.Int()
 
-	logger.DebugF("[%d] Remote bind: %s remote port: %s local bind: %s local port: %s\n", id, remoteBind, remotePort, localBind, localPort)
-	logger.DebugF("[%d] Start reverse tunnel\n", id)
+	logger.DebugContext(ctx, fmt.Sprintf("[%d] Remote bind: %s remote port: %s local bind: %s local port: %s\n", id, remoteBind, remotePort, localBind, localPort))
+	logger.DebugContext(ctx, fmt.Sprintf("[%d] Start reverse tunnel\n", id))
 
 	remoteAddress := net.JoinHostPort(remoteBind, remotePort)
 	localAddress := net.JoinHostPort(localBind, localPort)
@@ -117,7 +117,7 @@ func (t *ReverseTunnel) startListener(ctx context.Context) error {
 		return errors.Wrap(err, fmt.Sprintf("failed to listen remote on %s", remoteAddress))
 	}
 
-	logger.DebugF("[%d] Listen remote %s successful\n", id, remoteAddress)
+	logger.DebugContext(ctx, fmt.Sprintf("[%d] Listen remote %s successful\n", id, remoteAddress))
 
 	tun := &tunnelListener{
 		id:       id,
@@ -136,20 +136,21 @@ func (t *ReverseTunnel) startListener(ctx context.Context) error {
 // Closing it also frees the port on the server side.
 func (t *ReverseTunnel) stopListener() {
 	logger := t.sshClient.settings.Logger()
+	ctx := context.Background()
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
 	if t.tun == nil {
-		logger.DebugF("Reverse tunnel already stopped\n")
+		logger.DebugContext(ctx, "Reverse tunnel already stopped\n")
 		return
 	}
 
-	logger.DebugF("[%d] Stop reverse tunnel\n", t.tun.id)
+	logger.DebugContext(ctx, fmt.Sprintf("[%d] Stop reverse tunnel\n", t.tun.id))
 
 	err := t.tun.listener.Close()
 	if err != nil && !errors.Is(err, io.EOF) {
-		logger.InfoF("[%d] Cannot close remote listener: %s\n", t.tun.id, err.Error())
+		logger.InfoContext(ctx, fmt.Sprintf("[%d] Cannot close remote listener: %s\n", t.tun.id, err.Error()))
 	}
 
 	t.tun = nil
@@ -159,6 +160,7 @@ func (t *ReverseTunnel) stopListener() {
 // which it reports on tun.done (single buffered send — never blocks).
 func (t *ReverseTunnel) acceptTunnelConnection(tun *tunnelListener, localAddress string) {
 	logger := t.sshClient.settings.Logger()
+	ctx := context.Background()
 	for {
 		client, err := tun.listener.Accept()
 		if err != nil {
@@ -166,7 +168,7 @@ func (t *ReverseTunnel) acceptTunnelConnection(tun *tunnelListener, localAddress
 			return
 		}
 
-		logger.DebugF("[%d] connection accepted. Try to connect to local %s\n", tun.id, localAddress)
+		logger.DebugContext(ctx, fmt.Sprintf("[%d] connection accepted. Try to connect to local %s\n", tun.id, localAddress))
 
 		local, err := net.Dial("tcp", localAddress)
 		if err != nil {
@@ -174,7 +176,7 @@ func (t *ReverseTunnel) acceptTunnelConnection(tun *tunnelListener, localAddress
 			return
 		}
 
-		logger.DebugF("[%d] Connected to local %s\n", tun.id, localAddress)
+		logger.DebugContext(ctx, fmt.Sprintf("[%d] Connected to local %s\n", tun.id, localAddress))
 
 		// handle the connection in another goroutine, so we can support multiple concurrent
 		// connections on the same port
@@ -184,11 +186,12 @@ func (t *ReverseTunnel) acceptTunnelConnection(tun *tunnelListener, localAddress
 
 func (t *ReverseTunnel) handleClient(id int, client net.Conn, remote net.Conn) {
 	logger := t.sshClient.settings.Logger()
+	ctx := context.Background()
 
 	defer func() {
 		err := client.Close()
 		if err != nil {
-			logger.DebugF("[%d] Cannot close connection: %s\n", id, err)
+			logger.DebugContext(ctx, fmt.Sprintf("[%d] Cannot close connection: %s\n", id, err))
 		}
 	}()
 
@@ -198,7 +201,7 @@ func (t *ReverseTunnel) handleClient(id int, client net.Conn, remote net.Conn) {
 	go func() {
 		_, err := io.Copy(client, remote)
 		if err != nil {
-			logger.WarnF(fmt.Sprintf("[%d] Error while copy remote->local: %s\n", id, err))
+			logger.WarnContext(ctx, fmt.Sprintf("[%d] Error while copy remote->local: %s\n", id, err))
 		}
 		chDone <- struct{}{}
 	}()
@@ -207,7 +210,7 @@ func (t *ReverseTunnel) handleClient(id int, client net.Conn, remote net.Conn) {
 	go func() {
 		_, err := io.Copy(remote, client)
 		if err != nil {
-			logger.WarnF(fmt.Sprintf("[%d] Error while copy local->remote: %s\n", id, err))
+			logger.WarnContext(ctx, fmt.Sprintf("[%d] Error while copy local->remote: %s\n", id, err))
 		}
 		chDone <- struct{}{}
 	}()
@@ -243,7 +246,7 @@ func (b *tunnelBackend) TunnelDone() <-chan error {
 func (b *tunnelBackend) CheckTunnel(ctx context.Context) bool {
 	logger := b.tunnel.sshClient.settings.Logger()
 
-	logger.DebugF("Start Check reverse tunnel\n")
+	logger.DebugContext(ctx, "Start Check reverse tunnel\n")
 
 	checkLoopParams := b.tunnel.sshClient.loopsParams.CheckReverseTunnel
 	checkLoopParams = retry.SafeCloneOrNewParams(checkLoopParams, defaultReverseTunnelParamsOps...).
@@ -255,7 +258,7 @@ func (b *tunnelBackend) CheckTunnel(ctx context.Context) bool {
 	err := retry.NewSilentLoopWithParams(checkLoopParams).RunContext(ctx, func() error {
 		out, err := b.checker.CheckTunnel(ctx)
 		if err != nil {
-			logger.DebugF("Cannot check ssh tunnel: '%v': stderr: '%s'\n", err, out)
+			logger.DebugContext(ctx, fmt.Sprintf("Cannot check ssh tunnel: '%v': stderr: '%s'\n", err, out))
 			return err
 		}
 
@@ -263,11 +266,11 @@ func (b *tunnelBackend) CheckTunnel(ctx context.Context) bool {
 	})
 
 	if err != nil {
-		logger.DebugF("Tunnel check timeout, last error: %v\n", err)
+		logger.DebugContext(ctx, fmt.Sprintf("Tunnel check timeout, last error: %v\n", err))
 		return false
 	}
 
-	logger.DebugF("Tunnel check successful!\n")
+	logger.DebugContext(ctx, "Tunnel check successful!\n")
 	return true
 }
 

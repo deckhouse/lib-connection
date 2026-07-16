@@ -90,12 +90,12 @@ func (t *ReverseTunnel) startProcess(ctx context.Context) error {
 	}
 
 	if t.proc != nil {
-		logger.DebugF("[%d] Reverse tunnel already up\n", t.proc.id)
+		logger.DebugContext(ctx, fmt.Sprintf("[%d] Reverse tunnel already up\n", t.proc.id))
 		return fmt.Errorf("already up")
 	}
 
 	id := rand.Int()
-	logger.DebugF("[%d] Start reverse tunnel\n", id)
+	logger.DebugContext(ctx, fmt.Sprintf("[%d] Start reverse tunnel\n", id))
 
 	sshCmd := cmd.NewSSH(t.settings, t.Session).
 		WithArgs(
@@ -117,9 +117,9 @@ func (t *ReverseTunnel) startProcess(ctx context.Context) error {
 	}
 
 	go func() {
-		logger.DebugF("[%d] Reverse tunnel started. Waiting for tunnel to stop...\n", p.id)
+		logger.DebugContext(ctx, fmt.Sprintf("[%d] Reverse tunnel started. Waiting for tunnel to stop...\n", p.id))
 		p.done <- p.cmd.Wait()
-		logger.DebugF("[%d] Reverse tunnel process exited\n", p.id)
+		logger.DebugContext(ctx, fmt.Sprintf("[%d] Reverse tunnel process exited\n", p.id))
 	}()
 
 	t.proc = p
@@ -130,20 +130,21 @@ func (t *ReverseTunnel) startProcess(ctx context.Context) error {
 // stopProcess kills the current ssh process, if any.
 func (t *ReverseTunnel) stopProcess() {
 	logger := t.settings.Logger()
+	ctx := context.Background()
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
 	if t.proc == nil {
-		logger.DebugF("Reverse tunnel already stopped\n")
+		logger.DebugContext(ctx, "Reverse tunnel already stopped\n")
 		return
 	}
 
-	logger.DebugF("[%d] Stop reverse tunnel\n", t.proc.id)
+	logger.DebugContext(ctx, fmt.Sprintf("[%d] Stop reverse tunnel\n", t.proc.id))
 
 	if t.proc.cmd.Process != nil {
 		if err := t.proc.cmd.Process.Kill(); err != nil {
-			logger.DebugF("[%d] Cannot kill process: %v\n", t.proc.id, err)
+			logger.DebugContext(ctx, fmt.Sprintf("[%d] Cannot kill process: %v\n", t.proc.id, err))
 		}
 	}
 
@@ -177,12 +178,12 @@ func (b *tunnelBackend) TunnelDone() <-chan error {
 func (b *tunnelBackend) CheckTunnel(ctx context.Context) bool {
 	logger := b.tunnel.settings.Logger()
 
-	logger.DebugF("Start Check reverse tunnel\n")
+	logger.DebugContext(ctx, "Start Check reverse tunnel\n")
 
 	err := retry.NewSilentLoop("Check reverse tunnel", 5, 1*time.Second).RunContext(ctx, func() error {
 		out, err := b.checker.CheckTunnel(ctx)
 		if err != nil {
-			logger.DebugF("Cannot check ssh tunnel: '%v': stderr: '%s'\n", err, out)
+			logger.DebugContext(ctx, fmt.Sprintf("Cannot check ssh tunnel: '%v': stderr: '%s'\n", err, out))
 			return err
 		}
 
@@ -190,11 +191,11 @@ func (b *tunnelBackend) CheckTunnel(ctx context.Context) bool {
 	})
 
 	if err != nil {
-		logger.DebugF("Tunnel check timeout, last error: %v\n", err)
+		logger.DebugContext(ctx, fmt.Sprintf("Tunnel check timeout, last error: %v\n", err))
 		return false
 	}
 
-	logger.DebugF("Tunnel check successful!\n")
+	logger.DebugContext(ctx, "Tunnel check successful!\n")
 	return true
 }
 
