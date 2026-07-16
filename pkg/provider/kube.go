@@ -213,6 +213,10 @@ func (p *DefaultKubeProvider) connectToKubernetesAPI(ctx context.Context, client
 	initClientLoopParams := retry.SafeCloneOrNewParams(p.loopsParams.InitClient, defaultInitClientParamsOpts...).Clone(
 		retry.WithName("Get Kubernetes API client"),
 		retry.WithLogger(logger),
+		// Permanent configuration errors (bad kubeconfig path/context, malformed rest
+		// config) fail identically on every attempt, so only retry the transient
+		// failures raised while starting the kube-proxy tunnel over SSH.
+		retry.WithWhitelist(kube.ErrKubeClientTransient),
 	)
 
 	err := retry.NewLoopWithParams(initClientLoopParams).RunContext(ctx, func() error {

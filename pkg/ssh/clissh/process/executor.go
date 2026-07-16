@@ -382,7 +382,7 @@ func (e *Executor) SetupStreamHandlers() error {
 				if errors.Is(err, io.EOF) || errors.Is(err, os.ErrClosed) {
 					break
 				}
-				logger.DebugF("Error reading from stderr: %s\n", err)
+				logger.DebugContext(context.Background(), fmt.Sprintf("Error reading from stderr: %s\n", err))
 				break
 			}
 		}
@@ -618,8 +618,8 @@ func (e *Executor) forceClosePipes() {
 
 	logger := e.settings.Logger()
 
-	logger.DebugF("Starting force close pipes")
-	defer logger.DebugF("Stop force close pipes")
+	logger.DebugContext(context.Background(), "Starting force close pipes")
+	defer logger.DebugContext(context.Background(), "Stop force close pipes")
 
 	e.closeStdoutReadPipe()
 	e.closeStderrReadPipe()
@@ -650,7 +650,7 @@ func (e *Executor) closePipeFile(pipe **os.File, name string) {
 	if *pipe != nil {
 		err := (*pipe).Close()
 		if err != nil {
-			e.settings.Logger().DebugF("Cannot close %s: %v", name, err)
+			e.settings.Logger().DebugContext(context.Background(), fmt.Sprintf("Cannot close %s: %v", name, err))
 		}
 		*pipe = nil
 	}
@@ -664,7 +664,7 @@ func (e *Executor) Stop() {
 		return
 	}
 	if !e.started.Load() {
-		logger.DebugF("Stop '%s': not started yet", e.cmd.String())
+		logger.DebugContext(context.Background(), fmt.Sprintf("Stop '%s': not started yet", e.cmd.String()))
 		return
 	}
 

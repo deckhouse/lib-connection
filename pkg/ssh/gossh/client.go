@@ -43,6 +43,11 @@ var (
 var (
 	errSSHClientNeverStarted = errors.New("ssh client has not been started")
 	errSSHClientStopped      = errors.New("ssh client has been stopped")
+
+	// ErrDialTransient marks dial failures that may succeed on retry (network-level
+	// connect/handshake errors), as opposed to permanent local socket errors (wrong
+	// conn type, failed to set socket options) that fail identically on every attempt.
+	ErrDialTransient = errors.New("dial: transient error, may succeed on retry")
 )
 
 var keepAliveStopWait = 10 * time.Second
@@ -532,7 +537,13 @@ func (s *Client) directConnectToTarget(ctx context.Context) (*gossh.Client, erro
 	}
 
 	hostLoopParams := retry.SafeCloneOrNewParams(s.loopsParams.ConnectToHostDirectly, defaultClientDirectlyLoopParamsOps...).
-		Clone(retry.WithName("Get SSH client"))
+		Clone(
+			retry.WithName("Get SSH client"),
+			// Permanent local socket errors (wrong conn type, failed to set socket
+			// options) fail identically on every attempt, so only retry dial/handshake
+			// failures that may clear up on their own.
+			retry.WithWhitelist(ErrDialTransient),
+		)
 
 	if err := s.runInLoop(ctx, hostLoopParams, connectToHost); err != nil {
 		lastHost := fmt.Sprintf("'%s:%s' with user '%s'", s.sessionClient.Host(), s.sessionClient.Port, s.sessionClient.User)
@@ -575,7 +586,13 @@ func (s *Client) connectToBastion(ctx context.Context) (*gossh.Client, error) {
 	}
 
 	bastionLoopParams := retry.SafeCloneOrNewParams(s.loopsParams.ConnectToBastion, defaultClientViaBastionLoopParamsOps...).
-		Clone(retry.WithName("Get bastion SSH client"))
+		Clone(
+			retry.WithName("Get bastion SSH client"),
+			// Permanent local socket errors (wrong conn type, failed to set socket
+			// options) fail identically on every attempt, so only retry dial/handshake
+			// failures that may clear up on their own.
+			retry.WithWhitelist(ErrDialTransient),
+		)
 
 	if err := s.runInLoop(ctx, bastionLoopParams, connectToBastion); err != nil {
 		return nil, fmt.Errorf("Could not connect to %s: %w", fullHost, err)
@@ -703,8 +720,11 @@ func (s *Client) createSSHConnection(c net.Conn, addr string, config *gossh.Clie
 }
 
 func (s *Client) dialContext(ctx context.Context, network, addr string, config *gossh.ClientConfig) (*gossh.Client, error) {
-	closeConnectionAndReturnErr := func(msg string, err error, conn net.Conn) (*gossh.Client, error) {
+	closeConnectionAndReturnErr := func(msg string, err error, conn net.Conn, retryable bool) (*gossh.Client, error) {
 		err = fmt.Errorf("Cannot Dial to '%s' %s: %w", addr, msg, err)
+		if retryable {
+			err = fmt.Errorf("%w: %w", err, ErrDialTransient)
+		}
 
 		if closeErr := utils.SafeClose(conn); closeErr != nil {
 			err = fmt.Errorf("%w and cannot close connection %w", err, closeErr)
@@ -715,17 +735,17 @@ func (s *Client) dialContext(ctx context.Context, network, addr string, config *
 	d := net.Dialer{Timeout: config.Timeout}
 	conn, err := d.DialContext(ctx, network, addr)
 	if err != nil {
-		return closeConnectionAndReturnErr("connect", err, conn)
+		return closeConnectionAndReturnErr("connect", err, conn, true)
 	}
 
 	tcpConn, ok := conn.(*net.TCPConn)
 	if !ok {
-		return closeConnectionAndReturnErr("is not tcp", err, conn)
+		return closeConnectionAndReturnErr("is not tcp", err, conn, false)
 	}
 
 	err = tcpConn.SetKeepAlive(true)
 	if err != nil {
-		return closeConnectionAndReturnErr("cannot set keepalive", err, tcpConn)
+		return closeConnectionAndReturnErr("cannot set keepalive", err, tcpConn, false)
 	}
 
 	timeFactor := time.Duration(3)
@@ -736,17 +756,18 @@ func (s *Client) dialContext(ctx context.Context, network, addr string, config *
 			fmt.Sprintf("cannot set deadline %s", deadline.String()),
 			err,
 			tcpConn,
+			false,
 		)
 	}
 
 	sshConn, err := s.createSSHConnection(tcpConn, addr, config)
 	if err != nil {
-		return closeConnectionAndReturnErr("cannot create ssh connection", err, tcpConn)
+		return closeConnectionAndReturnErr("cannot create ssh connection", err, tcpConn, true)
 	}
 
 	err = tcpConn.SetDeadline(time.Time{})
 	if err != nil {
-		return closeConnectionAndReturnErr("cannot reset deadline", err, tcpConn)
+		return closeConnectionAndReturnErr("cannot reset deadline", err, tcpConn, false)
 	}
 
 	return sshConn.createGoClient(), nil

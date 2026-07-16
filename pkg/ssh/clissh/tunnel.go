@@ -218,7 +218,7 @@ func (t *Tunnel) killProcess() {
 
 	err := t.sshCmd.Process.Kill()
 	if err != nil {
-		t.settings.Logger().DebugF("Cannot kill tunnel process %d: %v", t.sshCmd.Process.Pid, err)
+		t.settings.Logger().DebugContext(context.Background(), fmt.Sprintf("Cannot kill tunnel process %d: %v", t.sshCmd.Process.Pid, err))
 	}
 }
 
@@ -252,7 +252,7 @@ func (t *Tunnel) closePipeFile(pipe *os.File, name string) {
 
 	err := pipe.Close()
 	if err != nil {
-		t.settings.Logger().DebugF("Cannot close tunnel %s: %v", name, err)
+		t.settings.Logger().DebugContext(context.Background(), fmt.Sprintf("Cannot close tunnel %s: %v", name, err))
 	}
 }
 

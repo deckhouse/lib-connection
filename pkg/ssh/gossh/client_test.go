@@ -538,7 +538,7 @@ func TestClientStopWithoutKubeProxyDoesNotRunRemoteKubeProxyCleanup(t *testing.T
 	})
 
 	sshClient := NewClient(t.Context(), test.Settings(), sess, nil)
-	require.NoError(t, sshClient.Start())
+	require.NoError(t, sshClient.Start(sshClient.ctx))
 
 	sshClient.Stop()
 
@@ -564,7 +564,7 @@ func TestClientStartFailureAfterBastionConnectClosesBastionClient(t *testing.T) 
 		ConnectToHostViaBastion: tests.GetTestLoopParamsForFailed(),
 	})
 
-	err := sshClient.Start()
+	err := sshClient.Start(sshClient.ctx)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "Failed to connect to target host through bastion host")
 
