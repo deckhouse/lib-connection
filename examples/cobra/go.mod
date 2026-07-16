@@ -4,7 +4,7 @@ go 1.25.8
 
 require (
 	github.com/deckhouse/lib-connection v0.0.0-00010101000000-000000000000
-	github.com/deckhouse/lib-dhctl v0.21.1-0.20260714100121-89ca3451ee2b
+	github.com/deckhouse/lib-dhctl v0.22.0
 	github.com/name212/govalue v1.1.0
 	github.com/spf13/cobra v1.10.2
 	k8s.io/apimachinery v0.33.12
