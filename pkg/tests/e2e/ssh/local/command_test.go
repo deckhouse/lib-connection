@@ -17,7 +17,10 @@ package local_test
 import (
 	"context"
 	"fmt"
+	"os"
+	"runtime"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -88,6 +91,38 @@ func TestCommandRun(t *testing.T) {
 
 	require.Equal(t, "Stderr", stderr, "stderr from handler")
 	require.Equal(t, "Stderr", string(cmd.StderrBytes()), "stderr from cmd")
+}
+
+func TestCommandRetryOnTextFileBusy(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("ETXTBSY is not enforced on this OS")
+	}
+
+	tst := tests.ShouldNewIntegrationTest(
+		t,
+		"LocalTextFileBusy",
+		tests.TestWithParallelRun(true),
+	)
+
+	path := tst.MustCreateTmpFile(t, "#!/bin/bash\necho -n OK", true, "busy-script.sh")
+
+	// Hold the script open for writing so exec fails with ETXTBSY, the same
+	// way a concurrently forked child holds the fd between its fork and exec
+	// (golang/go#22315). Release it while the command retries.
+	busyFd, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
+	require.NoError(t, err, "should reopen script for writing")
+
+	go func() {
+		time.Sleep(30 * time.Millisecond)
+		_ = busyFd.Close()
+	}()
+
+	cmd := local.NewCommand(tst.Settings(), path)
+
+	err = cmd.Run(context.Background())
+
+	require.NoError(t, err, "run should succeed after ETXTBSY retries")
+	require.Equal(t, "OK", string(cmd.StdoutBytes()), "should capture script output")
 }
 
 func TestCommandPipe(t *testing.T) {

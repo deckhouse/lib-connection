@@ -102,7 +102,9 @@ func (t *Tunnel) upNewTunnel(ctx context.Context, oldId int) (int, error) {
 
 	t.debugWithID(id, "Listen remote on %s successful. Starting monitors...", localAddress)
 
-	go t.monitorContext(ctx, id)
+	if ctx.Done() != nil {
+		go t.monitorContext(ctx, id)
+	}
 	go t.acceptTunnelConnection(ctx, id, remoteAddress)
 
 	t.started = true
@@ -114,7 +116,12 @@ func (t *Tunnel) dialRemote(ctx context.Context, remoteAddress string) (net.Conn
 	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	remoteConn, err := t.sshClient.GetClient().DialContext(cctx, "tcp", remoteAddress)
+	sshClient, err := t.sshClient.snapshotSSHClient()
+	if err != nil {
+		return nil, err
+	}
+
+	remoteConn, err := sshClient.DialContext(cctx, "tcp", remoteAddress)
 	if err != nil {
 		return nil, err
 	}
@@ -142,9 +149,14 @@ func (t *Tunnel) remoteConn(ctx context.Context, remoteAddress string) (net.Conn
 }
 
 func (t *Tunnel) monitorContext(ctx context.Context, id int) {
-	<-ctx.Done()
+	done := ctx.Done()
+	if done == nil {
+		return
+	}
+
+	<-done
 	t.stop(id)
-	t.errorCh <- ctx.Err()
+	t.sendError(ctx.Err())
 }
 
 var emptyListenerErr = errors.New("empty listener")
@@ -193,7 +205,7 @@ func (t *Tunnel) acceptTunnelConnection(ctx context.Context, id int, remoteAddre
 				return
 			}
 
-			t.errorCh <- err
+			t.sendError(err)
 
 			if isContextError(err) {
 				t.debug("acceptTunnelConnection: got context error return from accept loop: %v", err)
@@ -210,15 +222,26 @@ func (t *Tunnel) acceptTunnelConnection(ctx context.Context, id int, remoteAddre
 			go func() {
 				_, err := io.Copy(remoteConn, localConn)
 				if err != nil {
-					t.errorCh <- err
+					t.sendError(err)
 				}
 			}()
 
 			_, err := io.Copy(localConn, remoteConn)
 			if err != nil {
-				t.errorCh <- err
+				t.sendError(err)
 			}
 		}()
+	}
+}
+
+func (t *Tunnel) sendError(err error) {
+	if err == nil || t.errorCh == nil {
+		return
+	}
+
+	select {
+	case t.errorCh <- err:
+	default:
 	}
 }
 

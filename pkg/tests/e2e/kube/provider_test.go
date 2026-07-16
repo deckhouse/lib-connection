@@ -31,6 +31,7 @@ import (
 	"github.com/deckhouse/lib-connection/pkg/kube"
 	"github.com/deckhouse/lib-connection/pkg/provider"
 	"github.com/deckhouse/lib-connection/pkg/ssh"
+	"github.com/deckhouse/lib-connection/pkg/ssh/base/kubeproxy"
 	"github.com/deckhouse/lib-connection/pkg/ssh/clissh"
 	sshconfig "github.com/deckhouse/lib-connection/pkg/ssh/config"
 	"github.com/deckhouse/lib-connection/pkg/ssh/gossh"
@@ -74,6 +75,12 @@ func TestDefaultKubeProvider(t *testing.T) {
 	kindCluster := createKINDCluster(t, baseTest, firstContainer, secondContainer)
 
 	t.Run("OverSSH", func(t *testing.T) {
+		// kube providers over ssh start their kube proxies on the fixed
+		// DefaultLocalAPIPort; serialize with the kube-proxy tests of other
+		// packages (go test -p N runs test binaries concurrently)
+		tests.AcquireGlobalTestLock(t, "kube-proxy")
+		tests.WaitPortFree(t, kubeproxy.DefaultLocalAPIPort)
+
 		t.Run("Client", func(t *testing.T) {
 			t.Run("SimpleGet", func(t *testing.T) {
 				for _, rt := range runTests {

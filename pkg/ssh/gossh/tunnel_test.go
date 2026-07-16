@@ -16,6 +16,7 @@ package gossh
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -26,6 +27,44 @@ import (
 
 	"github.com/deckhouse/lib-connection/pkg/tests"
 )
+
+func TestTunnelMonitorContextReturnsWhenContextCannotBeCancelled(t *testing.T) {
+	tun := &Tunnel{}
+	done := make(chan struct{})
+
+	go func() {
+		tun.monitorContext(context.Background(), 1)
+		close(done)
+	}()
+
+	require.Eventually(t, func() bool {
+		select {
+		case <-done:
+			return true
+		default:
+			return false
+		}
+	}, time.Second, 10*time.Millisecond, "monitorContext must not wait forever on a nil Done channel")
+}
+
+func TestTunnelSendErrorDoesNotBlockWithoutHealthMonitor(t *testing.T) {
+	tun := &Tunnel{errorCh: make(chan error)}
+	done := make(chan struct{})
+
+	go func() {
+		tun.sendError(errors.New("test error"))
+		close(done)
+	}()
+
+	require.Eventually(t, func() bool {
+		select {
+		case <-done:
+			return true
+		default:
+			return false
+		}
+	}, time.Second, 10*time.Millisecond, "tunnel error reporting must not block when HealthMonitor is not reading")
+}
 
 func TestTunnel(t *testing.T) {
 	test := tests.ShouldNewIntegrationTest(

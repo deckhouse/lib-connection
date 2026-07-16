@@ -17,9 +17,13 @@ package gossh
 import (
 	"context"
 	"fmt"
+	"io"
+	"net"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	gossh "github.com/deckhouse/lib-gossh"
 	"github.com/stretchr/testify/require"
 
 	"github.com/deckhouse/lib-connection/pkg/ssh/session"
@@ -415,4 +419,294 @@ func TestDialContextVerySmall(t *testing.T) {
 	err = sshClient.Start(sshClient.ctx)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "deadline exceeded")
+}
+
+func TestClientStaleKeepAliveRestartDoesNotCloseCurrentConnection(t *testing.T) {
+	test := tests.ShouldNewTest(t, "TestClientStaleKeepAliveRestartDoesNotCloseCurrentConnection", tests.TestIsIntegration(false))
+	sess := session.NewSession(session.Input{
+		AvailableHosts: []session.Host{{Host: "127.0.0.1", Name: "localhost"}},
+		User:           "user",
+		Port:           "22",
+	})
+
+	sshClient := NewClient(t.Context(), test.Settings(), sess, nil)
+	currentStopCh := make(chan struct{})
+	staleStopCh := make(chan struct{})
+
+	sshClient.clientMu.Lock()
+	sshClient.live = true
+	sshClient.started = true
+	sshClient.stopChan = currentStopCh
+	sshClient.keepAliveDone = make(chan struct{})
+	sshClient.clientMu.Unlock()
+
+	sshClient.restart(staleStopCh)
+
+	require.True(t, sshClient.Live(), "stale keepalive restart must not close current connection")
+}
+
+func TestClientResetForStartClosesAgentConnection(t *testing.T) {
+	test := tests.ShouldNewTest(t, "TestClientResetForStartClosesAgentConnection", tests.TestIsIntegration(false))
+	sess := session.NewSession(session.Input{
+		AvailableHosts: []session.Host{{Host: "127.0.0.1", Name: "localhost"}},
+		User:           "user",
+		Port:           "22",
+	})
+	clientConn, serverConn := net.Pipe()
+	t.Cleanup(func() {
+		_ = clientConn.Close()
+		_ = serverConn.Close()
+	})
+
+	sshClient := NewClient(t.Context(), test.Settings(), sess, nil)
+	sshClient.clientMu.Lock()
+	sshClient.live = true
+	sshClient.agentConnection = clientConn
+	sshClient.clientMu.Unlock()
+
+	require.NoError(t, clientConn.SetReadDeadline(time.Now()))
+	sshClient.resetForStart()
+
+	_, err := clientConn.Read(make([]byte, 1))
+	require.ErrorIs(t, err, io.ErrClosedPipe, "reset before repeated Start must close previous SSH agent connection")
+}
+
+func TestClientStopWithoutSSHClientClearsAgentConnection(t *testing.T) {
+	test := tests.ShouldNewTest(t, "TestClientStopWithoutSSHClientClearsAgentConnection", tests.TestIsIntegration(false))
+	sess := session.NewSession(session.Input{
+		AvailableHosts: []session.Host{{Host: "127.0.0.1", Name: "localhost"}},
+		User:           "user",
+		Port:           "22",
+	})
+	clientConn, serverConn := net.Pipe()
+	t.Cleanup(func() {
+		_ = clientConn.Close()
+		_ = serverConn.Close()
+	})
+
+	sshClient := NewClient(t.Context(), test.Settings(), sess, nil)
+	sshClient.clientMu.Lock()
+	sshClient.agentConnection = clientConn
+	sshClient.clientMu.Unlock()
+
+	sshClient.Stop()
+
+	sshClient.clientMu.RLock()
+	defer sshClient.clientMu.RUnlock()
+	require.Nil(t, sshClient.agentConnection, "Stop must clear agent connection even if SSH client was not published")
+}
+
+func TestClientStopWithoutSSHClientCleansPartialState(t *testing.T) {
+	test := tests.ShouldNewTest(t, "TestClientStopWithoutSSHClientCleansPartialState", tests.TestIsIntegration(false))
+	sess := session.NewSession(session.Input{
+		AvailableHosts: []session.Host{{Host: "127.0.0.1", Name: "localhost"}},
+		User:           "user",
+		Port:           "22",
+	})
+
+	sshClient := NewClient(t.Context(), test.Settings(), sess, nil)
+	stopCh := make(chan struct{})
+	doneCh := make(chan struct{})
+
+	sshClient.clientMu.Lock()
+	sshClient.started = true
+	sshClient.stopChan = stopCh
+	sshClient.keepAliveDone = doneCh
+	sshClient.clientMu.Unlock()
+
+	go func() {
+		<-stopCh
+		close(doneCh)
+	}()
+
+	sshClient.Stop()
+
+	sshClient.clientMu.RLock()
+	require.Nil(t, sshClient.stopChan, "Stop must clear stale keepalive stop channel")
+	require.Nil(t, sshClient.keepAliveDone, "Stop must clear stale keepalive done channel")
+	sshClient.clientMu.RUnlock()
+}
+
+func TestClientStopWithoutKubeProxyDoesNotRunRemoteKubeProxyCleanup(t *testing.T) {
+	test := tests.ShouldNewTest(t, "TestClientStopWithoutKubeProxyDoesNotRunRemoteKubeProxyCleanup", tests.TestIsIntegration(false))
+	port, execCount := startInProcessSSHServerWithExecCounter(t)
+	sess := session.NewSession(session.Input{
+		AvailableHosts: []session.Host{{Host: "127.0.0.1", Name: "localhost"}},
+		User:           "user",
+		Port:           port,
+		BecomePass:     "password",
+	})
+
+	sshClient := NewClient(t.Context(), test.Settings(), sess, nil)
+	require.NoError(t, sshClient.Start(sshClient.ctx))
+
+	sshClient.Stop()
+
+	require.Zero(t, execCount.Load(), "Stop without local KubeProxy ownership must not run remote kube-proxy cleanup")
+}
+
+func TestClientStartFailureAfterBastionConnectClosesBastionClient(t *testing.T) {
+	test := tests.ShouldNewTest(t, "TestClientStartFailureAfterBastionConnectClosesBastionClient", tests.TestIsIntegration(false))
+	port, closedConnections := startInProcessSSHServerRejectingDirectTCPIP(t)
+	sess := session.NewSession(session.Input{
+		AvailableHosts:  []session.Host{{Host: "127.0.0.1", Name: "target"}},
+		User:            "user",
+		Port:            "22",
+		BastionHost:     "127.0.0.1",
+		BastionPort:     port,
+		BastionUser:     "user",
+		BecomePass:      "password",
+		BastionPassword: "password",
+	})
+
+	sshClient := NewClient(t.Context(), test.Settings(), sess, nil).WithLoopsParams(ClientLoopsParams{
+		ConnectToBastion:        tests.GetTestLoopParamsForFailed(),
+		ConnectToHostViaBastion: tests.GetTestLoopParamsForFailed(),
+	})
+
+	err := sshClient.Start(sshClient.ctx)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Failed to connect to target host through bastion host")
+
+	sshClient.clientMu.RLock()
+	require.Nil(t, sshClient.bastionClient, "failed target connection through bastion must clear the bastion SSH client")
+	sshClient.clientMu.RUnlock()
+	require.Eventually(t, func() bool {
+		return closedConnections.Load() > 0
+	}, 5*time.Second, 10*time.Millisecond, "failed target connection through bastion must close the bastion SSH client")
+}
+
+func startInProcessSSHServerWithExecCounter(t *testing.T) (string, *atomic.Int64) {
+	t.Helper()
+
+	privateKey := tests.GeneratePrivateKey(t, "")
+	signer, err := gossh.ParsePrivateKey([]byte(privateKey))
+	require.NoError(t, err)
+
+	config := &gossh.ServerConfig{
+		PasswordCallback: func(_ gossh.ConnMetadata, _ []byte) (*gossh.Permissions, error) {
+			return nil, nil
+		},
+	}
+	config.AddHostKey(signer)
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		_ = listener.Close()
+	})
+
+	execCount := &atomic.Int64{}
+
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+
+			go serveTestSSHConnectionWithExecCounter(conn, config, execCount)
+		}
+	}()
+
+	_, port, err := net.SplitHostPort(listener.Addr().String())
+	require.NoError(t, err)
+
+	return port, execCount
+}
+
+func startInProcessSSHServerRejectingDirectTCPIP(t *testing.T) (string, *atomic.Int64) {
+	t.Helper()
+
+	privateKey := tests.GeneratePrivateKey(t, "")
+	signer, err := gossh.ParsePrivateKey([]byte(privateKey))
+	require.NoError(t, err)
+
+	config := &gossh.ServerConfig{
+		PasswordCallback: func(_ gossh.ConnMetadata, _ []byte) (*gossh.Permissions, error) {
+			return nil, nil
+		},
+	}
+	config.AddHostKey(signer)
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		_ = listener.Close()
+	})
+
+	closedConnections := &atomic.Int64{}
+
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+
+			go serveTestSSHConnectionRejectingDirectTCPIP(conn, config, closedConnections)
+		}
+	}()
+
+	_, port, err := net.SplitHostPort(listener.Addr().String())
+	require.NoError(t, err)
+
+	return port, closedConnections
+}
+
+func serveTestSSHConnectionWithExecCounter(conn net.Conn, config *gossh.ServerConfig, execCount *atomic.Int64) {
+	_, chans, reqs, err := gossh.NewServerConn(conn, config)
+	if err != nil {
+		_ = conn.Close()
+		return
+	}
+
+	go gossh.DiscardRequests(reqs)
+
+	for newChannel := range chans {
+		if newChannel.ChannelType() != "session" {
+			_ = newChannel.Reject(gossh.UnknownChannelType, "unsupported channel type")
+			continue
+		}
+
+		channel, requests, err := newChannel.Accept()
+		if err != nil {
+			continue
+		}
+
+		go func() {
+			defer channel.Close()
+
+			for req := range requests {
+				if req.Type == "exec" {
+					execCount.Add(1)
+				}
+				if req.WantReply {
+					_ = req.Reply(true, nil)
+				}
+
+				if req.Type == "exec" {
+					_, _ = io.WriteString(channel, "ok")
+					return
+				}
+			}
+		}()
+	}
+}
+
+func serveTestSSHConnectionRejectingDirectTCPIP(conn net.Conn, config *gossh.ServerConfig, closedConnections *atomic.Int64) {
+	_, chans, reqs, err := gossh.NewServerConn(conn, config)
+	if err != nil {
+		_ = conn.Close()
+		return
+	}
+	defer closedConnections.Add(1)
+
+	go gossh.DiscardRequests(reqs)
+
+	for newChannel := range chans {
+		_ = newChannel.Reject(gossh.Prohibited, "direct tcpip disabled")
+	}
 }

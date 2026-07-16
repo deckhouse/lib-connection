@@ -31,6 +31,8 @@ import (
 	"github.com/deckhouse/lib-connection/pkg/ssh/session"
 )
 
+var kubeProxyPortReadyTimeout = 20 * time.Second
+
 type StartCommandParams struct {
 	OnStart       func()
 	StdoutHandler func(string)
@@ -449,17 +451,19 @@ Status: %w`
 	}
 
 	// Wait for proxy startup
-	t := time.NewTicker(20 * time.Second)
+	t := time.NewTicker(kubeProxyPortReadyTimeout)
 	defer t.Stop()
 	select {
 	case e := <-waitCh:
 		return nil, "", returnWaitErr(e)
 	case <-t.C:
 		k.debugWithID(startID, "Starting proxy command timeout")
+		proxy.Stop()
 		return nil, "", fmt.Errorf("timeout waiting for api proxy port")
 	case <-portReady:
 		if port == "" {
 			k.debugWithID(startID, "Starting proxy command: empty port")
+			proxy.Stop()
 			return nil, "", fmt.Errorf("got empty port from kubectl proxy")
 		}
 	}

@@ -223,14 +223,20 @@ func AssertLogBufferWithErrorBundle(t *testing.T, buf *bytes.Buffer) {
 	// retry message may land between stdout lines); assert presence only.
 	// The captured step output is logged at error level, which the compact
 	// renderer prints as plain lines (no │ gutter, unlike info-level lines).
+	//
+	// Xtrace lines are asserted without their `+ `/`++ ` PS4 prefix: bash
+	// writes the prefix as a separate write(2), and on the cli-ssh sudo path
+	// (ssh -tt merges the streams into one pty, stderr is relayed through the
+	// entrypoint's async `tee`) a stdout line can land between the prefix and
+	// the command text, splitting the xtrace line right after the prefix.
 	expects := map[string]string{
 		"step output":   `second step`,
 		"step failure":  `oops! failure!`,
 		"retry message": `Failed to execute step /var/lib/bashible/bundle_steps/02-step.sh ... retry in 2 seconds.`,
 
-		"first debug content": `+ export TERM=xterm-256color`,
+		"first debug content": `export TERM=xterm-256color`,
 
-		"echo debug content": `++ echo 'second step'`,
+		"echo debug content": `echo 'second step'`,
 	}
 
 	for name, content := range expects {

@@ -21,6 +21,8 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"sync"
+	"sync/atomic"
 
 	connection "github.com/deckhouse/lib-connection/pkg"
 	"github.com/deckhouse/lib-connection/pkg/settings"
@@ -40,8 +42,23 @@ type Tunnel struct {
 	Address string
 	sshCmd  *exec.Cmd
 
-	stopCh  chan struct{}
-	errorCh chan error
+	pipesMutex      sync.Mutex
+	stdoutReadPipe  *os.File
+	stdoutWritePipe *os.File
+	stdinReadPipe   *os.File
+	stdinWritePipe  *os.File
+
+	stopOnce sync.Once
+	stopped  atomic.Bool
+	stopCh   chan struct{}
+	errorCh  chan error
+}
+
+type tunnelPipes struct {
+	stdoutReadPipe  *os.File
+	stdoutWritePipe *os.File
+	stdinReadPipe   *os.File
+	stdinWritePipe  *os.File
 }
 
 func NewTunnel(sett settings.Settings, sess *session.Session, ttype, address string) *Tunnel {
@@ -50,6 +67,7 @@ func NewTunnel(sett settings.Settings, sess *session.Session, ttype, address str
 		Session:  sess,
 		Type:     ttype,
 		Address:  address,
+		stopCh:   make(chan struct{}, 1),
 		errorCh:  make(chan error, 1),
 	}
 }
@@ -58,6 +76,10 @@ func (t *Tunnel) Up(ctx context.Context) error {
 	if t.Session == nil {
 		return fmt.Errorf("up tunnel '%s': SSH client is undefined", t.String())
 	}
+	t.stopOnce = sync.Once{}
+	t.stopped.Store(false)
+	t.stopCh = make(chan struct{}, 1)
+	t.errorCh = make(chan error, 1)
 
 	t.sshCmd = cmd.NewSSH(t.settings, t.Session).
 		WithArgs(
@@ -75,16 +97,26 @@ func (t *Tunnel) Up(ctx context.Context) error {
 		return fmt.Errorf("unable to create os pipe for stdout: %w", err)
 	}
 	t.sshCmd.Stdout = stdoutWritePipe
+	t.pipesMutex.Lock()
+	t.stdoutReadPipe = stdoutReadPipe
+	t.stdoutWritePipe = stdoutWritePipe
+	t.pipesMutex.Unlock()
 
 	// Create separate stdin pipe to prevent reading from main process Stdin
-	stdinReadPipe, _, err := os.Pipe()
+	stdinReadPipe, stdinWritePipe, err := os.Pipe()
 	if err != nil {
+		t.closePipes()
 		return fmt.Errorf("unable to create os pipe for stdin: %w", err)
 	}
 	t.sshCmd.Stdin = stdinReadPipe
+	t.pipesMutex.Lock()
+	t.stdinReadPipe = stdinReadPipe
+	t.stdinWritePipe = stdinWritePipe
+	t.pipesMutex.Unlock()
 
 	err = t.sshCmd.Start()
 	if err != nil {
+		t.closePipes()
 		return fmt.Errorf("tunnel up: %w", err)
 	}
 
@@ -99,17 +131,32 @@ func (t *Tunnel) Up(ctx context.Context) error {
 		t.settings.Logger().DebugContext(ctx, fmt.Sprintf("stop line consumer for '%s'", t.String()))
 	}()
 
-	go func() {
-		t.errorCh <- t.sshCmd.Wait()
-	}()
+	sshCmd := t.sshCmd
+	errorCh := t.errorCh
+	pipes := tunnelPipes{
+		stdoutReadPipe:  stdoutReadPipe,
+		stdoutWritePipe: stdoutWritePipe,
+		stdinReadPipe:   stdinReadPipe,
+		stdinWritePipe:  stdinWritePipe,
+	}
+	t.waitForSSH(sshCmd, errorCh, pipes)
 
 	select {
-	case err = <-t.errorCh:
+	case err = <-errorCh:
+		t.closePipes()
 		return fmt.Errorf("cannot open tunnel '%s': %w", t.String(), err)
 	case <-tunnelReadyCh:
 	}
 
 	return nil
+}
+
+func (t *Tunnel) waitForSSH(sshCmd *exec.Cmd, errorCh chan<- error, pipes tunnelPipes) {
+	go func() {
+		err := sshCmd.Wait()
+		t.closePipeSet(pipes)
+		errorCh <- err
+	}()
 }
 
 func (t *Tunnel) HealthMonitor(errorOutCh chan<- error) {
@@ -119,14 +166,18 @@ func (t *Tunnel) HealthMonitor(errorOutCh chan<- error) {
 	defer logger.DebugContext(ctx, "Tunnel health monitor stopped\n")
 	logger.DebugContext(ctx, "Tunnel health monitor started\n")
 
-	t.stopCh = make(chan struct{}, 1)
-
 	for {
 		select {
 		case err := <-t.errorCh:
-			errorOutCh <- err
+			if t.stopped.Load() {
+				return
+			}
+			select {
+			case errorOutCh <- err:
+			case <-t.stopCh:
+				return
+			}
 		case <-t.stopCh:
-			_ = t.sshCmd.Process.Kill()
 			return
 		}
 	}
@@ -136,13 +187,72 @@ func (t *Tunnel) Stop() {
 	if t == nil {
 		return
 	}
-	if t.Session == nil {
-		t.settings.Logger().ErrorContext(context.Background(), fmt.Sprintf("bug: down tunnel '%s': no session", t.String()))
+	t.stopOnce.Do(func() {
+		t.stopped.Store(true)
+		t.closePipes()
+		t.killProcess()
+		t.signalStop()
+
+		if t.Session == nil {
+			t.settings.Logger().ErrorContext(context.Background(), fmt.Sprintf("bug: down tunnel '%s': no session", t.String()))
+			return
+		}
+	})
+}
+
+func (t *Tunnel) signalStop() {
+	if t.stopCh == nil {
 		return
 	}
 
-	if t.sshCmd != nil && t.stopCh != nil {
-		t.stopCh <- struct{}{}
+	select {
+	case t.stopCh <- struct{}{}:
+	default:
+	}
+}
+
+func (t *Tunnel) killProcess() {
+	if t.sshCmd == nil || t.sshCmd.Process == nil {
+		return
+	}
+
+	err := t.sshCmd.Process.Kill()
+	if err != nil {
+		t.settings.Logger().DebugContext(context.Background(), fmt.Sprintf("Cannot kill tunnel process %d: %v", t.sshCmd.Process.Pid, err))
+	}
+}
+
+func (t *Tunnel) closePipes() {
+	t.pipesMutex.Lock()
+	defer t.pipesMutex.Unlock()
+
+	t.closePipeSet(tunnelPipes{
+		stdoutReadPipe:  t.stdoutReadPipe,
+		stdoutWritePipe: t.stdoutWritePipe,
+		stdinReadPipe:   t.stdinReadPipe,
+		stdinWritePipe:  t.stdinWritePipe,
+	})
+	t.stdoutReadPipe = nil
+	t.stdoutWritePipe = nil
+	t.stdinReadPipe = nil
+	t.stdinWritePipe = nil
+}
+
+func (t *Tunnel) closePipeSet(pipes tunnelPipes) {
+	t.closePipeFile(pipes.stdoutReadPipe, "stdout read pipe")
+	t.closePipeFile(pipes.stdoutWritePipe, "stdout write pipe")
+	t.closePipeFile(pipes.stdinReadPipe, "stdin read pipe")
+	t.closePipeFile(pipes.stdinWritePipe, "stdin write pipe")
+}
+
+func (t *Tunnel) closePipeFile(pipe *os.File, name string) {
+	if pipe == nil {
+		return
+	}
+
+	err := pipe.Close()
+	if err != nil {
+		t.settings.Logger().DebugContext(context.Background(), fmt.Sprintf("Cannot close tunnel %s: %v", name, err))
 	}
 }
 

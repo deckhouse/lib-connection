@@ -107,7 +107,12 @@ func (t *ReverseTunnel) startListener(ctx context.Context) error {
 	localAddress := net.JoinHostPort(localBind, localPort)
 
 	// reverse listen on remote server port
-	listener, err := t.sshClient.GetClient().Listen("tcp", remoteAddress)
+	sshClient, err := t.sshClient.snapshotSSHClient()
+	if err != nil {
+		return err
+	}
+
+	listener, err := sshClient.Listen("tcp", remoteAddress)
 	if err != nil {
 		return errors.Wrap(err, fmt.Sprintf("failed to listen remote on %s", remoteAddress))
 	}

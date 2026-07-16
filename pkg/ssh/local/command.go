@@ -18,6 +18,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -26,6 +27,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	connection "github.com/deckhouse/lib-connection/pkg"
@@ -66,11 +68,36 @@ func NewCommand(sett settings.Settings, program string, args ...string) *Command
 	}
 }
 
+// retryOnTextFileBusy retries fn while it fails with ETXTBSY: a concurrently
+// forked child of this process may hold a just-written script open between its
+// fork and exec (golang/go#22315), which makes exec of that script fail until
+// the child releases the fd.
+func retryOnTextFileBusy(fn func() error) error {
+	const (
+		attempts = 10
+		wait     = 10 * time.Millisecond
+	)
+
+	var err error
+	for range attempts {
+		err = fn()
+		if !errors.Is(err, syscall.ETXTBSY) {
+			return err
+		}
+		time.Sleep(wait)
+	}
+	return err
+}
+
 func (c *Command) Run(ctx context.Context) error {
 	if !c.used.CompareAndSwap(false, true) {
 		return fmt.Errorf("command instance reused")
 	}
 
+	return retryOnTextFileBusy(func() error { return c.run(ctx) })
+}
+
+func (c *Command) run(ctx context.Context) error {
 	cmd, cancel := c.prepareCmd(ctx)
 	defer cancel()
 
@@ -90,7 +117,7 @@ func (c *Command) Run(ctx context.Context) error {
 	go c.scanLines(stderr, stderrBuf, wg, c.stderrLineHandler)
 
 	if err = cmd.Start(); err != nil {
-		return fmt.Errorf("cmd start failed: %v", err)
+		return fmt.Errorf("cmd start failed: %w", err)
 	}
 
 	if c.onStart != nil {
@@ -121,7 +148,9 @@ func (c *Command) scanLines(
 			handler(line)
 		}
 	}
-	if err := scan.Err(); err != nil {
+	if err := scan.Err(); err != nil && !errors.Is(err, os.ErrClosed) {
+		// a failed cmd.Start (e.g. ETXTBSY retry) closes the pipes before
+		// the scanners get any data; that is not worth an error log
 		c.settings.Logger().ErrorContext(context.Background(), fmt.Sprintf("scan cmd output failed: %v\n", err))
 	}
 }
@@ -135,6 +164,16 @@ func (c *Command) Output(ctx context.Context) ([]byte, []byte, error) {
 		return nil, nil, fmt.Errorf("command instance reused")
 	}
 
+	var stdout, stderr []byte
+	err := retryOnTextFileBusy(func() error {
+		var err error
+		stdout, stderr, err = c.output(ctx)
+		return err
+	})
+	return stdout, stderr, err
+}
+
+func (c *Command) output(ctx context.Context) ([]byte, []byte, error) {
 	cmd, cancel := c.prepareCmd(ctx)
 	defer cancel()
 
@@ -159,6 +198,16 @@ func (c *Command) CombinedOutput(ctx context.Context) ([]byte, error) {
 		return nil, fmt.Errorf("command instance reused")
 	}
 
+	var output []byte
+	err := retryOnTextFileBusy(func() error {
+		var err error
+		output, err = c.combinedOutput(ctx)
+		return err
+	})
+	return output, err
+}
+
+func (c *Command) combinedOutput(ctx context.Context) ([]byte, error) {
 	cmd, cancel := c.prepareCmd(ctx)
 	defer cancel()
 
