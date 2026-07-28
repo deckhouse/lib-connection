@@ -402,6 +402,48 @@ func TestClientKeepalive(t *testing.T) {
 	})
 }
 
+func TestClientNotLiveAfterFailedReconnect(t *testing.T) {
+	testName := "TestClientNotLiveAfterFailedReconnect"
+	tests.CheckSkipSSHTest(t, testName)
+
+	test := tests.ShouldNewIntegrationTest(t, testName)
+
+	container := tests.NewTestContainerWrapper(t, test)
+	sess := tests.Session(container)
+	keys := container.AgentPrivateKeys()
+
+	sshSettings := tests.CreateDefaultTestSettings(test)
+	sshClient := NewClient(context.Background(), sshSettings, sess, keys).
+		WithLoopsParams(ClientLoopsParams{
+			ConnectToHostDirectly: tests.GetTestLoopParamsForFailed(),
+			NewSession:            tests.GetTestLoopParamsForFailed(),
+		})
+
+	err := sshClient.Start(sshClient.ctx)
+	require.NoError(t, err, "failed to start ssh client")
+
+	registerStopClient(t, sshClient)
+
+	require.True(t, sshClient.Live(), "started client should be live")
+	require.False(t, sshClient.IsStopped(), "started client should not be stopped")
+
+	err = container.Container.Stop()
+	require.NoError(t, err, "failed to stop container permanently")
+
+	// keepalive detects the dead server after 3 checks with 5s interval, then the shrunk reconnect loop fails
+	require.Eventually(t, func() bool {
+		return !sshClient.Live()
+	}, 90*time.Second, time.Second, "client should not be live when internal reconnect failed")
+
+	require.Never(t, sshClient.Live, 20*time.Second, 2*time.Second, "client should not become live again after failed reconnect")
+	require.False(t, sshClient.IsStopped(), "client dead after failed reconnect should not be stopped")
+
+	sshClient.Stop()
+
+	require.False(t, sshClient.Live(), "stopped client should not be live")
+	require.True(t, sshClient.IsStopped(), "stopped client should be stopped")
+}
+
 func TestDialContextVerySmall(t *testing.T) {
 	test := tests.ShouldNewIntegrationTest(t, "TestDialContextVerySmall", tests.TestWithParallelRun(true))
 
@@ -490,6 +532,8 @@ func TestClientStopWithoutSSHClientClearsAgentConnection(t *testing.T) {
 	sshClient.clientMu.Unlock()
 
 	sshClient.Stop()
+
+	require.False(t, sshClient.Live(), "Stop must leave the client not live")
 
 	sshClient.clientMu.RLock()
 	defer sshClient.clientMu.RUnlock()

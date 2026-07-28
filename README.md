@@ -137,6 +137,37 @@ will be removed from the provider. Use this method at the end of your logic.
 Currently we have three implementations of `SSHProvider`: `DefaultSSHProvider`, `SSHProvider` in the `testssh` package,
 and `ErrorSSHProvider`.
 
+#### StandaloneClientProvider
+
+`StandaloneClientProvider` is an optional capability of an `SSHProvider`, described [here](./pkg/ssh.go). It adds one
+method:
+
+- `StandaloneClientFor` - returns a started and `Live` client for the passed key. The cached client for the key is
+reused while it is alive; a dead client is stopped and replaced in place, so the provider keeps at most one client per
+key. Unlike `NewStandaloneClient`, the client is always started, regardless of the provider start option. If creation
+fails, nothing is cached and the next call retries. Keyed clients are stopped in `Cleanup` too. Note that the client is
+`Live` at return time only: a connection can die later, so command errors still must be handled.
+
+All implementations of `SSHProvider` from this library implement this interface. Example usage:
+
+```go
+package my
+
+func runOnNode(ctx context.Context, p connection.StandaloneClientProvider, node string, sess *session.Session) error {
+	// a dead connection is detected by keep-alive and replaced only after the reconnect budget
+	// of the client, so the retry budget of the loop should exceed it
+	return retry.NewLoop("run on node", 30, 10*time.Second).RunContext(ctx, func() error {
+		// returns the cached client or a new one if the previous connection died
+		client, err := p.StandaloneClientFor(ctx, node, sess, nil)
+		if err != nil {
+			return fmt.Errorf("get client for node %s: %w", node, err)
+		}
+
+		return client.Command("uname", "-a").Run(ctx)
+	})
+}
+```
+
 #### DefaultSSHProvider
 
 DefaultSSHProvider provides clients with the configuration passed as default configuration.

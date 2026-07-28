@@ -36,7 +36,9 @@ import (
 )
 
 var (
-	_ connection.SSHProvider   = &SSHProvider{}
+	_ connection.SSHProvider              = &SSHProvider{}
+	_ connection.StandaloneClientProvider = &SSHProvider{}
+
 	_ connection.SSHClient     = &Client{}
 	_ connection.Command       = &Command{}
 	_ connection.File          = &File{}
@@ -76,6 +78,10 @@ type SSHProvider struct {
 	commandProviders *providersMap[CommandProvider]
 	fileProviders    *providersMap[FileProvider]
 
+	// keyedClientsMu guards keyedClients only, other fields are not safe for concurrent use
+	keyedClientsMu sync.Mutex
+	keyedClients   map[string]*Client
+
 	switchHandler SwitchHandler
 	switches      []Switch
 }
@@ -89,6 +95,8 @@ func NewSSHProvider(initSession *session.Session, once bool) *SSHProvider {
 		scriptProviders:  newProvidersMap[UploadScriptProvider](),
 		commandProviders: newProvidersMap[CommandProvider](),
 		fileProviders:    newOneProviderMap[FileProvider](),
+
+		keyedClients: make(map[string]*Client),
 
 		switches: make([]Switch, 0),
 	}
@@ -123,14 +131,14 @@ func (p *SSHProvider) Switches() []Switch {
 	return p.switches
 }
 
-func (p *SSHProvider) Client(context.Context) (connection.SSHClient, error) {
+func (p *SSHProvider) Client(ctx context.Context) (connection.SSHClient, error) {
 	if p.initSession == nil {
 		return nil, fmt.Errorf("Init session is nil")
 	}
 
 	if p.once {
 		if p.client == nil {
-			client, err := p.newClient(p.initSession, p.initPrivateKeys)
+			client, err := p.newClient(ctx, p.initSession, p.initPrivateKeys)
 			if err != nil {
 				return nil, err
 			}
@@ -140,10 +148,15 @@ func (p *SSHProvider) Client(context.Context) (connection.SSHClient, error) {
 		return p.client, nil
 	}
 
-	return p.newClient(p.initSession, p.initPrivateKeys)
+	client, err := p.newClient(ctx, p.initSession, p.initPrivateKeys)
+	if err != nil {
+		return nil, err
+	}
+
+	return client, nil
 }
 
-func (p *SSHProvider) NewAdditionalClient(context.Context) (connection.SSHClient, error) {
+func (p *SSHProvider) NewAdditionalClient(ctx context.Context) (connection.SSHClient, error) {
 	sess, keys := p.initSession, p.initPrivateKeys
 
 	if len(p.switches) > 0 {
@@ -152,10 +165,53 @@ func (p *SSHProvider) NewAdditionalClient(context.Context) (connection.SSHClient
 		keys = lastSwitch.PrivateKeys
 	}
 
-	return p.newClient(sess, keys)
+	client, err := p.newClient(ctx, sess, keys)
+	if err != nil {
+		return nil, err
+	}
+
+	return client, nil
 }
 
 func (p *SSHProvider) NewStandaloneClient(ctx context.Context, sess *session.Session, privateKeys []session.AgentPrivateKey, opts ...connection.StandaloneClientOpt) (connection.SSHClient, error) {
+	client, err := p.standaloneClient(ctx, sess, privateKeys, opts...)
+	if err != nil {
+		return nil, err
+	}
+
+	return client, nil
+}
+
+func (p *SSHProvider) StandaloneClientFor(ctx context.Context, key string, sess *session.Session, privateKeys []session.AgentPrivateKey, opts ...connection.StandaloneClientOpt) (connection.SSHClient, error) {
+	p.keyedClientsMu.Lock()
+	defer p.keyedClientsMu.Unlock()
+
+	cached, ok := p.keyedClients[key]
+	if ok {
+		if cached.Live() {
+			return cached, nil
+		}
+
+		cached.Stop()
+		delete(p.keyedClients, key)
+	}
+
+	// cached client outlives the call, do not bind it to the caller context
+	client, err := p.standaloneClient(context.WithoutCancel(ctx), sess, privateKeys, opts...)
+	if err != nil {
+		return nil, err
+	}
+
+	p.keyedClients[key] = client
+
+	return client, nil
+}
+
+func (p *SSHProvider) standaloneClient(ctx context.Context, sess *session.Session, privateKeys []session.AgentPrivateKey, opts ...connection.StandaloneClientOpt) (*Client, error) {
+	if sess == nil {
+		return nil, fmt.Errorf("Session is nil")
+	}
+
 	sessCopy := sess.Copy()
 	// copy reset current host
 	sessCopy.ChoiceNewHost()
@@ -164,15 +220,10 @@ func (p *SSHProvider) NewStandaloneClient(ctx context.Context, sess *session.Ses
 		return nil, err
 	}
 
-	client, err := p.newClient(sess, privateKeys)
-	if err != nil {
-		return nil, err
-	}
-
-	return client, nil
+	return p.newClient(ctx, sessCopy, privateKeys)
 }
 
-func (p *SSHProvider) SwitchClient(_ context.Context, sess *session.Session, privateKeys []session.AgentPrivateKey) (connection.SSHClient, error) {
+func (p *SSHProvider) SwitchClient(ctx context.Context, sess *session.Session, privateKeys []session.AgentPrivateKey) (connection.SSHClient, error) {
 	privateKeysCpy := make([]session.AgentPrivateKey, len(privateKeys))
 	copy(privateKeysCpy, privateKeys)
 
@@ -188,7 +239,7 @@ func (p *SSHProvider) SwitchClient(_ context.Context, sess *session.Session, pri
 		PrivateKeys: privateKeysCpy,
 	}
 
-	client, err := p.newClient(sess, privateKeys)
+	client, err := p.newClient(ctx, sessCopy, privateKeys)
 	if err != nil {
 		return nil, err
 	}
@@ -212,6 +263,15 @@ func (p *SSHProvider) SwitchToDefault(ctx context.Context) (connection.SSHClient
 }
 
 func (p *SSHProvider) Cleanup(context.Context) error {
+	p.keyedClientsMu.Lock()
+	defer p.keyedClientsMu.Unlock()
+
+	for _, client := range p.keyedClients {
+		client.Stop()
+	}
+
+	p.keyedClients = make(map[string]*Client)
+
 	return nil
 }
 
@@ -274,15 +334,18 @@ func (p *SSHProvider) fillDefaults(input *session.Session, opts ...connection.St
 	return nil
 }
 
-func (p *SSHProvider) newClient(session *session.Session, k []session.AgentPrivateKey) (*Client, error) {
+func (p *SSHProvider) newClient(ctx context.Context, session *session.Session, k []session.AgentPrivateKey) (*Client, error) {
 	c := NewClient(session, k)
 
-	p.scriptProviders.copyTo(p.scriptProviders)
+	p.scriptProviders.copyTo(c.scriptProviders)
 	p.commandProviders.copyTo(c.commandProviders)
 	p.fileProviders.copyTo(c.fileProviders)
 
-	err := c.Start(context.Background())
-	return c, err
+	if err := c.Start(ctx); err != nil {
+		return nil, err
+	}
+
+	return c, nil
 }
 
 func NewClient(session *session.Session, privKeys []session.AgentPrivateKey) *Client {
@@ -567,6 +630,13 @@ func (c *Client) IsStopped() bool {
 	defer c.mu.Unlock()
 
 	return c.stopped
+}
+
+func (c *Client) Live() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return !c.stopped
 }
 
 type kubeProxy struct{}

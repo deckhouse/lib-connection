@@ -17,6 +17,7 @@ package clissh
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 
 	"github.com/name212/govalue"
 
@@ -53,7 +54,7 @@ type Client struct {
 
 	kubeProxies []*KubeProxy
 
-	stopped bool
+	stopped atomic.Bool
 
 	id string
 }
@@ -131,7 +132,7 @@ func (s *Client) Stop() {
 	}
 	s.kubeProxies = nil
 
-	s.stopped = true
+	s.stopped.Store(true)
 }
 
 func (s *Client) Session() *session.Session {
@@ -173,7 +174,11 @@ func (s *Client) Loop(fn connection.SSHLoopHandler) error {
 }
 
 func (s *Client) IsStopped() bool {
-	return s.stopped
+	return s.stopped.Load()
+}
+
+func (s *Client) Live() bool {
+	return !s.stopped.Load()
 }
 
 func (s *Client) WithID(id string) *Client {

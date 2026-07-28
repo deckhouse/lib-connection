@@ -26,6 +26,7 @@ import (
 
 	"github.com/hashicorp/go-multierror"
 	"github.com/name212/govalue"
+	"golang.org/x/sync/singleflight"
 
 	connection "github.com/deckhouse/lib-connection/pkg"
 	"github.com/deckhouse/lib-connection/pkg/settings"
@@ -39,7 +40,16 @@ import (
 var (
 	_ connection.SSHProvider = &DefaultSSHProvider{}
 	_ connection.SSHProvider = &ErrorSSHProvider{}
+
+	_ connection.StandaloneClientProvider = &DefaultSSHProvider{}
+	_ connection.StandaloneClientProvider = &ErrorSSHProvider{}
 )
+
+// ErrProviderCleanedUp is returned when Cleanup ran while a keyed client was
+// being created. A caller which keeps using the provider after Cleanup can call
+// again, the new call starts a new creation. A caller which is shutting down
+// should stop retrying.
+var ErrProviderCleanedUp = errors.New("ssh provider cleaned up")
 
 type SSHClientOptions struct {
 	InitializeNewAgent bool
@@ -92,6 +102,10 @@ type DefaultSSHProvider struct {
 
 	additionalClients []connection.SSHClient
 
+	keyedClients map[string]connection.SSHClient
+	keyedFlights singleflight.Group
+	cleanupGen   int
+
 	privateKeysTmp              string
 	writtenPrivateKeys          []session.AgentPrivateKey
 	defaultPrivateKeysWithPaths []session.AgentPrivateKey
@@ -110,6 +124,7 @@ func NewDefaultSSHProvider(sett settings.Settings, config *sshconfig.ConnectionC
 		sett:               sett,
 		writtenPrivateKeys: make([]session.AgentPrivateKey, 0, 2),
 		goSSHStopWait:      10 * time.Second,
+		keyedClients:       make(map[string]connection.SSHClient),
 	}
 
 	return provider.WithOptions(opts...)
@@ -166,6 +181,98 @@ func (p *DefaultSSHProvider) NewStandaloneClient(ctx context.Context, sess *sess
 	return client, nil
 }
 
+func (p *DefaultSSHProvider) StandaloneClientFor(ctx context.Context, key string, sess *session.Session, privateKeys []session.AgentPrivateKey, opts ...connection.StandaloneClientOpt) (connection.SSHClient, error) {
+	if sess == nil {
+		return nil, fmt.Errorf("session is required for standalone client for key %s", key)
+	}
+
+	p.mu.Lock()
+	cached := p.keyedClients[key]
+	p.mu.Unlock()
+
+	if !govalue.Nil(cached) && cached.Live() {
+		return cached, nil
+	}
+
+	resCh := p.keyedFlights.DoChan(key, func() (any, error) {
+		// client keeps this context for internal reconnects and other waiters share
+		// the flight, so creation must not be bound to the context of one caller
+		flightCtx := context.WithoutCancel(ctx)
+		return p.createKeyedClient(flightCtx, key, sess, privateKeys, opts...)
+	})
+
+	select {
+	case <-ctx.Done():
+		return nil, fmt.Errorf("wait standalone client for key %s: %w", key, ctx.Err())
+	case res := <-resCh:
+		if res.Err != nil {
+			return nil, res.Err
+		}
+
+		client, ok := res.Val.(connection.SSHClient)
+		if !ok {
+			panic(fmt.Sprintf("Possible bug in ssh provider: got %T instead of client for key %s", res.Val, key))
+		}
+
+		if !client.Live() {
+			return nil, fmt.Errorf("standalone client for key %s is not live after creation", key)
+		}
+
+		return client, nil
+	}
+}
+
+func (p *DefaultSSHProvider) createKeyedClient(ctx context.Context, key string, sess *session.Session, privateKeys []session.AgentPrivateKey, opts ...connection.StandaloneClientOpt) (connection.SSHClient, error) {
+	// recheck the cache: another flight may have stored a live client
+	// after the fast path in StandaloneClientFor missed
+	p.mu.Lock()
+	cached := p.keyedClients[key]
+	if !govalue.Nil(cached) {
+		if cached.Live() {
+			p.mu.Unlock()
+			return cached, nil
+		}
+
+		delete(p.keyedClients, key)
+	}
+	p.mu.Unlock()
+
+	// stop outside the provider lock, stopping a reconnecting client can block
+	if !govalue.Nil(cached) {
+		p.debug("Stopping dead client for key %s", key)
+		cached.Stop()
+	}
+
+	// generation is snapshotted with build to detect cleanup which drops written
+	// private keys and makes buildClient write them again
+	p.mu.Lock()
+	gen := p.cleanupGen
+	client, err := p.buildClient(ctx, sess, privateKeys, withStandaloneClientOpts(opts...))
+	p.mu.Unlock()
+
+	if err != nil {
+		return nil, fmt.Errorf("create client for key %s: %w", key, err)
+	}
+
+	if err := client.Start(ctx); err != nil {
+		client.Stop()
+		return nil, fmt.Errorf("start client for key %s: %w", key, err)
+	}
+
+	p.mu.Lock()
+
+	if p.cleanupGen != gen {
+		p.mu.Unlock()
+		client.Stop()
+		return nil, fmt.Errorf("%w during client creation for key %s", ErrProviderCleanedUp, key)
+	}
+
+	p.keyedClients[key] = client
+	p.mu.Unlock()
+
+	return client, nil
+}
+
 func (p *DefaultSSHProvider) SwitchClient(ctx context.Context, sess *session.Session, privateKeys []session.AgentPrivateKey) (connection.SSHClient, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -207,40 +314,72 @@ func (p *DefaultSSHProvider) SwitchToDefault(ctx context.Context) (connection.SS
 }
 
 func (p *DefaultSSHProvider) Cleanup(context.Context) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+	// clients are stopped outside the lock, stopping a reconnecting client blocks
+	// until it exhausts the reconnect budget and parks all provider methods
+	cleaned := p.resetState()
 
 	var errs *multierror.Error
 
-	if !govalue.Nil(p.currentClient) {
-		p.currentClient.Stop()
-		p.currentClient = nil
+	if !govalue.Nil(cleaned.currentClient) {
+		cleaned.currentClient.Stop()
 	}
 
-	for _, client := range p.additionalClients {
+	for _, client := range cleaned.additionalClients {
 		if !govalue.Nil(client) {
 			client.Stop()
 		}
 	}
 
-	p.additionalClients = nil
+	for _, client := range cleaned.keyedClients {
+		client.Stop()
+	}
 
-	privateKeysTmp := p.privateKeysTmp
-
-	if privateKeysTmp != "" {
-		p.debug("Remove private keys dir %s", privateKeysTmp)
-		if err := os.RemoveAll(privateKeysTmp); err != nil {
+	if cleaned.privateKeysTmp != "" {
+		p.debug("Remove private keys dir %s", cleaned.privateKeysTmp)
+		if err := os.RemoveAll(cleaned.privateKeysTmp); err != nil {
 			errs = multierror.Append(
 				errs,
-				fmt.Errorf("Cannot remove private keys dir %s: %w", privateKeysTmp, err),
+				fmt.Errorf("Cannot remove private keys dir %s: %w", cleaned.privateKeysTmp, err),
 			)
 		}
 	}
 
+	return errs.ErrorOrNil()
+}
+
+type cleanedState struct {
+	currentClient     connection.SSHClient
+	additionalClients []connection.SSHClient
+	keyedClients      map[string]connection.SSHClient
+	privateKeysTmp    string
+}
+
+// resetState
+// drops all clients and prepared private keys from the provider
+// and returns them for stopping and removing outside the provider lock
+func (p *DefaultSSHProvider) resetState() cleanedState {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	cleaned := cleanedState{
+		currentClient:     p.currentClient,
+		additionalClients: p.additionalClients,
+		keyedClients:      p.keyedClients,
+		privateKeysTmp:    p.privateKeysTmp,
+	}
+
+	p.currentClient = nil
+	p.additionalClients = nil
+	p.keyedClients = make(map[string]connection.SSHClient)
+	p.cleanupGen++
+
+	// keys written to the removed tmp dir cannot be used by the next clients
 	p.privateKeysTmp = ""
 	p.privateKeysPrepared = false
+	p.writtenPrivateKeys = make([]session.AgentPrivateKey, 0, 2)
+	p.defaultPrivateKeysWithPaths = nil
 
-	return errs.ErrorOrNil()
+	return cleaned
 }
 
 // WithOptions
@@ -300,6 +439,22 @@ func (p *DefaultSSHProvider) doGetCurrentClient(ctx context.Context) (connection
 }
 
 func (p *DefaultSSHProvider) createClient(ctx context.Context, parent *session.Session, inputPrivateKeys []session.AgentPrivateKey, opts ...createClientOpt) (connection.SSHClient, error) {
+	client, err := p.buildClient(ctx, parent, inputPrivateKeys, opts...)
+	if err != nil {
+		return nil, err
+	}
+
+	if p.options.StartClient {
+		if err := client.Start(ctx); err != nil {
+			client.Stop()
+			return nil, fmt.Errorf("start client after create: %w", err)
+		}
+	}
+
+	return client, nil
+}
+
+func (p *DefaultSSHProvider) buildClient(ctx context.Context, parent *session.Session, inputPrivateKeys []session.AgentPrivateKey, opts ...createClientOpt) (connection.SSHClient, error) {
 	if !p.defaultConfig.Config.HaveAuthMethods() {
 		return nil, fmt.Errorf("Did not any auth methods provided")
 	}
@@ -321,12 +476,6 @@ func (p *DefaultSSHProvider) createClient(ctx context.Context, parent *session.S
 	client := p.constructClient(ctx, sess, privateKeys)
 	if govalue.Nil(client) {
 		return nil, fmt.Errorf("Cannot create client. Client contructor provide nil object")
-	}
-
-	if p.options.StartClient {
-		if err := client.Start(ctx); err != nil {
-			return nil, fmt.Errorf("Cannot start client after create: %v", err)
-		}
 	}
 
 	return client, nil
@@ -718,6 +867,10 @@ func (p *ErrorSSHProvider) NewAdditionalClient(context.Context) (connection.SSHC
 
 func (p *ErrorSSHProvider) NewStandaloneClient(context.Context, *session.Session, []session.AgentPrivateKey, ...connection.StandaloneClientOpt) (connection.SSHClient, error) {
 	return nil, p.returnError("NewStandaloneClient")
+}
+
+func (p *ErrorSSHProvider) StandaloneClientFor(context.Context, string, *session.Session, []session.AgentPrivateKey, ...connection.StandaloneClientOpt) (connection.SSHClient, error) {
+	return nil, p.returnError("StandaloneClientFor")
 }
 
 func (p *ErrorSSHProvider) SwitchClient(context.Context, *session.Session, []session.AgentPrivateKey) (connection.SSHClient, error) {

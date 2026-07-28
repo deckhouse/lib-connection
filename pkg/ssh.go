@@ -84,6 +84,38 @@ type SSHProvider interface {
 	Cleanup(ctx context.Context) error
 }
 
+// StandaloneClientProvider is an optional capability of SSH providers: a keyed
+// registry of standalone clients with replace-on-dead semantics.
+type StandaloneClientProvider interface {
+	// StandaloneClientFor returns a started, Live() client for key, reusing the
+	// cached one when it is still alive. A dead cached client is stopped and
+	// replaced in place, so the provider never tracks more than one client per
+	// key. The client is always started regardless of the provider's
+	// StartClient option. Creation failures are returned and nothing is cached,
+	// so the next call retries. key identifies a target for the caller; the
+	// cached client is never revalidated against later arguments, so passing a
+	// different session, private keys, or options under the same key is the
+	// caller's responsibility.
+	// The returned client was Live() at return time; commands may still fail if
+	// the connection dies afterwards - callers must keep handling command errors.
+	//
+	// ctx bounds only the wait for the result. Client creation runs detached from
+	// ctx, so a client created after the caller gave up is cached for the next
+	// call and the client keeps a usable context for its internal reconnects.
+	//
+	// Replacement relies on Live(). Backends without a persistent connection
+	// (cli-ssh) report a client alive until Stop, so replacement of a broken
+	// connection works with the go-ssh backend only.
+	//
+	// The call can block up to the reconnect budget of the replaced client when
+	// its reconnect is still in progress.
+	//
+	// Keyed clients are tracked separately from the clients returned by
+	// NewAdditionalClient and NewStandaloneClient. Cleanup stops keyed clients
+	// as well.
+	StandaloneClientFor(ctx context.Context, key string, sess *session.Session, privateKeys []session.AgentPrivateKey, opts ...StandaloneClientOpt) (SSHClient, error)
+}
+
 type Interface interface {
 	Command(name string, args ...string) Command
 	File() File
@@ -293,6 +325,13 @@ type SSHClient interface {
 	RefreshPrivateKeys(ctx context.Context) error
 
 	IsStopped() bool
+
+	// Live reports whether the client can run a new command right now.
+	// It is false after Stop for every implementation. For backends with a
+	// persistent connection (go-ssh) it is false before Start, while an internal
+	// reconnect is in progress and after a failed reconnect too. Backends without
+	// a persistent connection (cli-ssh, testssh) report a client alive until Stop.
+	Live() bool
 }
 
 type KubeProxyCommand interface {
