@@ -675,13 +675,21 @@ func (s *Client) restart(stopCh chan struct{}) {
 	s.detachKeepAlive(stopCh)
 	s.closeSessions()
 	s.closeConnections()
+
+	silentBeforeRestart := s.silent
 	s.silent = true
 	if s.IsStopped() {
 		return
 	}
 	if err := s.startWithContext(s.ctx); err != nil {
-		s.debug("Start failed during restart: %v", err)
+		s.settings.Logger().WarnContext(
+			context.Background(),
+			fmt.Sprintf("SSH client failed to reconnect and is not usable anymore: %v", err),
+		)
+		return
 	}
+
+	s.silent = silentBeforeRestart
 }
 
 type sshConnection struct {

@@ -293,6 +293,11 @@ type SSHClient interface {
 	RefreshPrivateKeys(ctx context.Context) error
 
 	IsStopped() bool
+
+	// Live reports whether the client can run a new command right now.
+	// It is false before Start, while an internal reconnect is in progress,
+	// after a failed reconnect, and after Stop.
+	Live() bool
 }
 
 type KubeProxyCommand interface {

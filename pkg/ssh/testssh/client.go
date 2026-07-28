@@ -569,6 +569,13 @@ func (c *Client) IsStopped() bool {
 	return c.stopped
 }
 
+func (c *Client) Live() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return !c.stopped
+}
+
 type kubeProxy struct{}
 
 func (k *kubeProxy) Start(useLocalPort int) (string, error) {

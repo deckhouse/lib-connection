@@ -176,6 +176,10 @@ func (s *Client) IsStopped() bool {
 	return s.stopped
 }
 
+func (s *Client) Live() bool {
+	return !s.stopped
+}
+
 func (s *Client) WithID(id string) *Client {
 	s.id = id
 	return s
