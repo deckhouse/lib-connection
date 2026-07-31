@@ -99,9 +99,10 @@ type StandaloneClientProvider interface {
 	// The returned client was Live() at return time; commands may still fail if
 	// the connection dies afterwards - callers must keep handling command errors.
 	//
-	// ctx bounds only the wait for the result. Client creation runs detached from
-	// ctx, so a client created after the caller gave up is cached for the next
-	// call and the client keeps a usable context for its internal reconnects.
+	// ctx bounds only the wait for the result. Client creation and the internal
+	// reconnects of the created client are bound to the provider lifetime, so a
+	// client created after the caller gave up is cached for the next call and
+	// Cleanup is the only thing which aborts a reconnect in progress.
 	//
 	// Replacement relies on Live(). Backends without a persistent connection
 	// (cli-ssh) report a client alive until Stop, so replacement of a broken

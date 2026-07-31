@@ -76,6 +76,8 @@ func (s *Client) Start(ctx context.Context) error {
 	s.Agent = a
 	s.SessionSettings.AgentSettings = s.Agent.agentSettings
 
+	s.stopped.Store(false)
+
 	return nil
 }
 
