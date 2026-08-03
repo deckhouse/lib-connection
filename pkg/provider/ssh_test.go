@@ -1790,6 +1790,31 @@ func TestSSHProviderStandaloneClientFor(t *testing.T) {
 		require.True(t, secondClient.IsStopped(), "should stop keyed client")
 	})
 
+	t.Run("stop keyed client drops it from registry", func(t *testing.T) {
+		test := newTest(t)
+		config := testCreateSSHConnectionConfigWithPrivateKeyPaths(t, connectionConfigParams{
+			test: test,
+		})
+
+		provider := newTestProvider(test.Settings(), config)
+
+		ctx := t.Context()
+
+		client, err := provider.buildClient(ctx, nil, nil)
+		require.NoError(t, err, "should build client")
+
+		provider.keyedClients = map[string]connection.SSHClient{
+			"node-1": client,
+		}
+
+		provider.StopStandaloneClientFor(ctx, "node-1")
+
+		require.Empty(t, provider.keyedClients, "should drop stopped client")
+		require.True(t, client.IsStopped(), "should stop client")
+
+		provider.StopStandaloneClientFor(ctx, "unknown-key")
+	})
+
 	t.Run("error provider returns error", func(t *testing.T) {
 		provider := NewErrorSSHProvider(fmt.Errorf("some error"))
 

@@ -207,6 +207,19 @@ func (p *SSHProvider) StandaloneClientFor(ctx context.Context, key string, sess 
 	return client, nil
 }
 
+func (p *SSHProvider) StopStandaloneClientFor(_ context.Context, key string) {
+	p.keyedClientsMu.Lock()
+	defer p.keyedClientsMu.Unlock()
+
+	client, ok := p.keyedClients[key]
+	if !ok {
+		return
+	}
+
+	client.Stop()
+	delete(p.keyedClients, key)
+}
+
 func (p *SSHProvider) standaloneClient(ctx context.Context, sess *session.Session, privateKeys []session.AgentPrivateKey, opts ...connection.StandaloneClientOpt) (*Client, error) {
 	if sess == nil {
 		return nil, fmt.Errorf("Session is nil")

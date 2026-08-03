@@ -52,13 +52,25 @@ var (
 
 var keepAliveStopWait = 10 * time.Second
 
+// NewClient
+// ctx is the lifetime of the client: it bounds the internal reconnects and new
+// sessions, so it must outlive every user of the client. The context passed to
+// Start bounds the initial connect only.
 func NewClient(ctx context.Context, sett settings.Settings, session *session.Session, privKeys []session.AgentPrivateKey) *Client {
+	if govalue.Nil(ctx) {
+		ctx = context.Background()
+	}
+
+	runCtx, runCancel := context.WithCancel(ctx)
+
 	return &Client{
 		sessionClient:   session,
 		privateKeys:     privKeys,
 		live:            false,
 		sshSessionsList: make([]*gossh.Session, 0, 10),
 		ctx:             ctx,
+		runCtx:          runCtx,
+		runCancel:       runCancel,
 		silent:          false,
 		settings:        sett,
 	}
@@ -94,6 +106,12 @@ var defaultReverseTunnelParamsOps = []retry.ParamsBuilderOpt{
 
 type Client struct {
 	ctx context.Context
+
+	// runCtx bounds the internal reconnects and new sessions. Stop cancels it, so
+	// a reconnect in progress gives up instead of blocking Stop until its retry
+	// budget is exhausted, and Start creates a new one. Guarded by clientMu
+	runCtx    context.Context
+	runCancel context.CancelFunc
 
 	settings    settings.Settings
 	loopsParams ClientLoopsParams
@@ -184,11 +202,15 @@ func (s *Client) Check() connection.Check {
 
 // Stop the client
 func (s *Client) Stop() {
-	s.lifecycleMu.Lock()
+	// mark stopped and cancel before the lifecycle lock: a reconnect in progress
+	// holds that lock and releases it only when its retry loops are canceled
 	s.clientMu.Lock()
 	s.stopped = true
+	s.runCancel()
 	s.clientMu.Unlock()
-	s.lifecycleMu.Unlock()
+
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
 
 	s.stopAllAndLogErrors("call Stop()")
 	s.debug("SSH client is stopped")
@@ -245,7 +267,7 @@ func (s *Client) newSSHSession(allowStopped bool) (*gossh.Session, error) {
 			retry.WithName("Establish new session"),
 			retry.WithLogger(s.settings.Logger()),
 		)
-	err := retry.NewSilentLoopWithParams(newSessionLoopParams).RunContext(s.ctx, func() error {
+	err := retry.NewSilentLoopWithParams(newSessionLoopParams).RunContext(s.runContext(), func() error {
 		sshClient, err := s.snapshotSSHClientWithOptions(allowStopped)
 		if err != nil {
 			return err
@@ -288,6 +310,8 @@ func (s *Client) Start(ctx context.Context) error {
 
 	s.clientMu.Lock()
 	s.stopped = false
+	s.runCancel()
+	s.runCtx, s.runCancel = context.WithCancel(s.ctx)
 	s.clientMu.Unlock()
 
 	s.resetForStart()
@@ -380,7 +404,7 @@ func (s *Client) connectToAgent(ctx context.Context) error {
 	dialer := net.Dialer{}
 	conn, err := dialer.DialContext(cctx, "unix", socket)
 	if err != nil {
-		return fmt.Errorf("Failed to open agent socket %s: %v", socket, err)
+		return fmt.Errorf("Failed to open agent socket %s: %w", socket, err)
 	}
 
 	s.clientMu.Lock()
@@ -661,6 +685,13 @@ func (s *Client) keepAlive(stopCh chan struct{}, doneCh chan<- struct{}) {
 }
 
 func (s *Client) restart(stopCh chan struct{}) {
+	// check before the lifecycle lock: Stop holds it while it waits for this
+	// goroutine to exit, so waiting for the lock here would deadlock them until
+	// the keepalive stop timeout
+	if s.IsStopped() {
+		return
+	}
+
 	s.lifecycleMu.Lock()
 	defer s.lifecycleMu.Unlock()
 
@@ -685,13 +716,38 @@ func (s *Client) restart(stopCh chan struct{}) {
 	if s.IsStopped() {
 		return
 	}
-	if err := s.startWithContext(s.ctx); err != nil {
-		s.settings.Logger().WarnContext(
+
+	err := s.startWithContext(s.runContext())
+	if err == nil {
+		return
+	}
+
+	if s.IsStopped() {
+		s.debug("SSH client reconnect canceled by stop: %v", err)
+		return
+	}
+
+	// the owner of the client context is gone, the client is not usable anymore
+	// but nothing is wrong with the client itself
+	if errors.Is(err, context.Canceled) {
+		s.settings.Logger().InfoContext(
 			context.Background(),
-			fmt.Sprintf("SSH client failed to reconnect and is not usable anymore: %v", err),
+			fmt.Sprintf("SSH client reconnect canceled: %v", err),
 		)
 		return
 	}
+
+	s.settings.Logger().WarnContext(
+		context.Background(),
+		fmt.Sprintf("SSH client failed to reconnect and is not usable anymore: %v", err),
+	)
+}
+
+func (s *Client) runContext() context.Context {
+	s.clientMu.RLock()
+	defer s.clientMu.RUnlock()
+
+	return s.runCtx
 }
 
 type sshConnection struct {

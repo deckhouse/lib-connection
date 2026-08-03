@@ -115,6 +115,17 @@ type StandaloneClientProvider interface {
 	// NewAdditionalClient and NewStandaloneClient. Cleanup stops keyed clients
 	// as well.
 	StandaloneClientFor(ctx context.Context, key string, sess *session.Session, privateKeys []session.AgentPrivateKey, opts ...StandaloneClientOpt) (SSHClient, error)
+
+	// StopStandaloneClientFor stops the client cached for key and drops it from
+	// the registry, so the next StandaloneClientFor with the same key creates a
+	// new one. Nothing cached for the key is not an error.
+	// Call it as soon as the target of the key is gone, for example a node
+	// removed by a converge: nothing else stops a keyed client before Cleanup, so
+	// until then it keeps its keepalive and reconnects to a target which will
+	// never answer.
+	// A creation for the same key running in parallel does not undo the stop: it
+	// stops the client it created and returns an error to its own caller.
+	StopStandaloneClientFor(ctx context.Context, key string)
 }
 
 type Interface interface {

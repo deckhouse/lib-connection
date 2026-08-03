@@ -105,6 +105,9 @@ type DefaultSSHProvider struct {
 	keyedClients map[string]connection.SSHClient
 	keyedFlights singleflight.Group
 	cleanupGen   int
+	// bumped by StopStandaloneClientFor to detect a stop which ran while a client
+	// for the same key was being created
+	keyedStopGens map[string]int
 
 	// keyed clients keep this context for their internal reconnects, so it is
 	// bound to the provider lifetime and not to the context of a single caller.
@@ -133,6 +136,7 @@ func NewDefaultSSHProvider(sett settings.Settings, config *sshconfig.ConnectionC
 		writtenPrivateKeys: make([]session.AgentPrivateKey, 0, 2),
 		goSSHStopWait:      10 * time.Second,
 		keyedClients:       make(map[string]connection.SSHClient),
+		keyedStopGens:      make(map[string]int),
 		keyedClientsCtx:    keyedClientsCtx,
 		keyedClientsCancel: keyedClientsCancel,
 	}
@@ -246,10 +250,12 @@ func (p *DefaultSSHProvider) createKeyedClient(key string, sess *session.Session
 		cached.Stop()
 	}
 
-	// generation and context are snapshotted with build to detect cleanup which
-	// drops written private keys and makes buildClient write them again
+	// generations and context are snapshotted with build to detect cleanup which
+	// drops written private keys and makes buildClient write them again, and a
+	// stop of this key which must not be undone by this creation
 	p.mu.Lock()
 	gen := p.cleanupGen
+	stopGen := p.keyedStopGens[key]
 	ctx := p.keyedClientsCtx
 	client, err := p.buildClient(ctx, sess, privateKeys, withStandaloneClientOpts(opts...))
 	p.mu.Unlock()
@@ -287,10 +293,32 @@ func (p *DefaultSSHProvider) createKeyedClient(key string, sess *session.Session
 		return nil, cleanedUpDuringCreation(key)
 	}
 
+	if p.keyedStopGens[key] != stopGen {
+		p.mu.Unlock()
+		client.Stop()
+		return nil, fmt.Errorf("client for key %s was stopped during creation", key)
+	}
+
 	p.keyedClients[key] = client
 	p.mu.Unlock()
 
 	return client, nil
+}
+
+func (p *DefaultSSHProvider) StopStandaloneClientFor(_ context.Context, key string) {
+	p.mu.Lock()
+	client := p.keyedClients[key]
+	delete(p.keyedClients, key)
+	p.keyedStopGens[key]++
+	p.mu.Unlock()
+
+	if govalue.Nil(client) {
+		return
+	}
+
+	// stop outside the provider lock, stopping a reconnecting client can block
+	p.debug("Stopping client for key %s", key)
+	client.Stop()
 }
 
 func (p *DefaultSSHProvider) cleanedUpSince(gen int) bool {
@@ -402,6 +430,7 @@ func (p *DefaultSSHProvider) resetState() cleanedState {
 	p.currentClient = nil
 	p.additionalClients = nil
 	p.keyedClients = make(map[string]connection.SSHClient)
+	p.keyedStopGens = make(map[string]int)
 	p.cleanupGen++
 
 	// cancel before the clients are stopped: a reconnecting client holds its
@@ -908,6 +937,8 @@ func (p *ErrorSSHProvider) NewStandaloneClient(context.Context, *session.Session
 func (p *ErrorSSHProvider) StandaloneClientFor(context.Context, string, *session.Session, []session.AgentPrivateKey, ...connection.StandaloneClientOpt) (connection.SSHClient, error) {
 	return nil, p.returnError("StandaloneClientFor")
 }
+
+func (p *ErrorSSHProvider) StopStandaloneClientFor(context.Context, string) {}
 
 func (p *ErrorSSHProvider) SwitchClient(context.Context, *session.Session, []session.AgentPrivateKey) (connection.SSHClient, error) {
 	return nil, p.returnError("SwitchClient")
