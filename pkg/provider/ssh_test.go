@@ -1782,10 +1782,13 @@ func TestSSHProviderStandaloneClientFor(t *testing.T) {
 			"node-2": secondClient,
 		}
 
+		keyedClientsCtx := provider.keyedClientsCtx
+
 		require.NoError(t, provider.Cleanup(ctx), "should cleanup")
 
 		require.Empty(t, provider.keyedClients, "should drop all keyed clients")
-		require.Equal(t, 1, provider.cleanupGen, "should bump cleanup generation")
+		require.Error(t, keyedClientsCtx.Err(), "should cancel the context of the stopped clients")
+		require.NoError(t, provider.keyedClientsCtx.Err(), "should provide a live context for the next clients")
 		require.True(t, firstClient.IsStopped(), "should stop keyed client")
 		require.True(t, secondClient.IsStopped(), "should stop keyed client")
 	})
@@ -1813,6 +1816,43 @@ func TestSSHProviderStandaloneClientFor(t *testing.T) {
 		require.True(t, client.IsStopped(), "should stop client")
 
 		provider.StopStandaloneClientFor(ctx, "unknown-key")
+	})
+
+	t.Run("stop aborts creation in flight", func(t *testing.T) {
+		// budget of the creation is way longer than the assertions below, so an
+		// abort is the only way the call can return in time
+		slowParams := retry.NewEmptyParams(
+			retry.WithAttempts(30),
+			retry.WithWait(300*time.Millisecond),
+		)
+
+		provider := unreachableProvider(t, slowParams)
+		sess := defaultSession("127.0.0.1", unreachablePort)
+
+		errCh := make(chan error, 1)
+		go func() {
+			_, err := provider.StandaloneClientFor(context.Background(), "node-1", sess, nil)
+			errCh <- err
+		}()
+
+		require.Eventually(t, func() bool {
+			provider.mu.Lock()
+			defer provider.mu.Unlock()
+
+			return provider.keyedCreations["node-1"] != nil
+		}, 5*time.Second, 10*time.Millisecond, "creation should be registered")
+
+		provider.StopStandaloneClientFor(t.Context(), "node-1")
+
+		select {
+		case err := <-errCh:
+			require.Error(t, err, "aborted creation should return error")
+		case <-time.After(3 * time.Second):
+			t.Fatal("stop should abort the creation instead of waiting for its budget")
+		}
+
+		require.Empty(t, provider.keyedClients, "should not cache client")
+		require.Empty(t, provider.keyedCreations, "should drop the finished creation")
 	})
 
 	t.Run("error provider returns error", func(t *testing.T) {

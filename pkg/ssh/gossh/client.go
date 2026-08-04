@@ -209,8 +209,14 @@ func (s *Client) Stop() {
 	s.runCancel()
 	s.clientMu.Unlock()
 
+	// wait for a start or a reconnect in progress to give up, then mark stopped
+	// again: a start which won the lock resets the flag and the run context
 	s.lifecycleMu.Lock()
-	defer s.lifecycleMu.Unlock()
+	s.clientMu.Lock()
+	s.stopped = true
+	s.runCancel()
+	s.clientMu.Unlock()
+	s.lifecycleMu.Unlock()
 
 	s.stopAllAndLogErrors("call Stop()")
 	s.debug("SSH client is stopped")
@@ -267,7 +273,14 @@ func (s *Client) newSSHSession(allowStopped bool) (*gossh.Session, error) {
 			retry.WithName("Establish new session"),
 			retry.WithLogger(s.settings.Logger()),
 		)
-	err := retry.NewSilentLoopWithParams(newSessionLoopParams).RunContext(s.runContext(), func() error {
+	sessionCtx := s.runContext()
+	if allowStopped {
+		// the only sessions allowed on a stopping client are the ones which kill the
+		// remote processes, they must outlive the canceled run context
+		sessionCtx = context.WithoutCancel(sessionCtx)
+	}
+
+	err := retry.NewSilentLoopWithParams(newSessionLoopParams).RunContext(sessionCtx, func() error {
 		sshClient, err := s.snapshotSSHClientWithOptions(allowStopped)
 		if err != nil {
 			return err
@@ -1130,9 +1143,11 @@ func (s *Client) registerSession(sess *gossh.Session) {
 }
 
 func (s *Client) stopRemoteKubeProxies() error {
-	ctx := s.ctx
-	if govalue.Nil(ctx) {
-		ctx = context.Background()
+	// the client is stopping, its context is canceled by then in most cases, but
+	// the processes on the remote still have to be killed
+	ctx := context.Background()
+	if !govalue.Nil(s.ctx) {
+		ctx = context.WithoutCancel(s.ctx)
 	}
 
 	err := errors.Join(

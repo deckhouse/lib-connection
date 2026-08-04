@@ -123,8 +123,9 @@ type StandaloneClientProvider interface {
 	// removed by a converge: nothing else stops a keyed client before Cleanup, so
 	// until then it keeps its keepalive and reconnects to a target which will
 	// never answer.
-	// A creation for the same key running in parallel does not undo the stop: it
-	// stops the client it created and returns an error to its own caller.
+	// A creation for the same key running in parallel is aborted rather than left
+	// to connect to a target which is already gone: it stops whatever it built,
+	// caches nothing and returns an error to its own caller.
 	StopStandaloneClientFor(ctx context.Context, key string)
 }
 

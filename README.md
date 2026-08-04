@@ -148,9 +148,9 @@ key. Unlike `NewStandaloneClient`, the client is always started, regardless of t
 fails, nothing is cached and the next call retries. Keyed clients are stopped in `Cleanup` too. Note that the client is
 `Live` at return time only: a connection can die later, so command errors still must be handled.
 - `StopStandaloneClientFor` - stops the client cached for the key and drops it from the registry, so the next
-`StandaloneClientFor` with the same key creates a new one. Call it as soon as the target of the key is gone, for example
-a node removed by a converge: nothing else stops a keyed client before `Cleanup`, so until then it keeps its keep-alive
-and reconnects to a target which will never answer.
+`StandaloneClientFor` with the same key creates a new one. A creation for the same key still in flight is aborted as
+well. Call it as soon as the target of the key is gone, for example a node removed by a converge: nothing else stops a
+keyed client before `Cleanup`, so until then it keeps its keep-alive and reconnects to a target which will never answer.
 
 The key only identifies a target for the caller, the connection target comes from the session, so build a session per
 target instead of passing one session under different keys.

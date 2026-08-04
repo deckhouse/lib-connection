@@ -104,10 +104,8 @@ type DefaultSSHProvider struct {
 
 	keyedClients map[string]connection.SSHClient
 	keyedFlights singleflight.Group
-	cleanupGen   int
-	// bumped by StopStandaloneClientFor to detect a stop which ran while a client
-	// for the same key was being created
-	keyedStopGens map[string]int
+	// creations in flight, kept while they run to let a stop of the key abort them
+	keyedCreations map[string]*keyedCreation
 
 	// keyed clients keep this context for their internal reconnects, so it is
 	// bound to the provider lifetime and not to the context of a single caller.
@@ -136,7 +134,7 @@ func NewDefaultSSHProvider(sett settings.Settings, config *sshconfig.ConnectionC
 		writtenPrivateKeys: make([]session.AgentPrivateKey, 0, 2),
 		goSSHStopWait:      10 * time.Second,
 		keyedClients:       make(map[string]connection.SSHClient),
-		keyedStopGens:      make(map[string]int),
+		keyedCreations:     make(map[string]*keyedCreation),
 		keyedClientsCtx:    keyedClientsCtx,
 		keyedClientsCancel: keyedClientsCancel,
 	}
@@ -250,31 +248,33 @@ func (p *DefaultSSHProvider) createKeyedClient(key string, sess *session.Session
 		cached.Stop()
 	}
 
-	// generations and context are snapshotted with build to detect cleanup which
-	// drops written private keys and makes buildClient write them again, and a
-	// stop of this key which must not be undone by this creation
+	// the client keeps the provider context for its own reconnects, the creation
+	// context bounds this creation only and is canceled by a stop of the key or by
+	// Cleanup: an aborted creation must not connect to a target which is gone and
+	// must not cache the client it built
 	p.mu.Lock()
-	gen := p.cleanupGen
-	stopGen := p.keyedStopGens[key]
-	ctx := p.keyedClientsCtx
-	client, err := p.buildClient(ctx, sess, privateKeys, withStandaloneClientOpts(opts...))
+	providerCtx := p.keyedClientsCtx
+	creation := p.startKeyedCreation(key, providerCtx)
+	client, err := p.buildClient(providerCtx, sess, privateKeys, withStandaloneClientOpts(opts...))
 	p.mu.Unlock()
+
+	defer p.finishKeyedCreation(key, creation)
 
 	if err != nil {
 		// cleanup removes the dir with written private keys, so build fails with an
 		// unrelated error instead of telling the caller that the provider is gone
-		if p.cleanedUpSince(gen) {
-			return nil, cleanedUpDuringCreation(key)
+		if creation.ctx.Err() != nil {
+			return nil, abortedDuringCreation(key, providerCtx)
 		}
 
 		return nil, fmt.Errorf("create client for key %s: %w", key, err)
 	}
 
-	if err := client.Start(ctx); err != nil {
+	if err := client.Start(creation.ctx); err != nil {
 		client.Stop()
 
-		if p.cleanedUpSince(gen) {
-			return nil, cleanedUpDuringCreation(key)
+		if creation.ctx.Err() != nil {
+			return nil, abortedDuringCreation(key, providerCtx)
 		}
 
 		return nil, fmt.Errorf("start client for key %s: %w", key, err)
@@ -287,16 +287,10 @@ func (p *DefaultSSHProvider) createKeyedClient(key string, sess *session.Session
 
 	p.mu.Lock()
 
-	if p.cleanupGen != gen {
+	if creation.ctx.Err() != nil {
 		p.mu.Unlock()
 		client.Stop()
-		return nil, cleanedUpDuringCreation(key)
-	}
-
-	if p.keyedStopGens[key] != stopGen {
-		p.mu.Unlock()
-		client.Stop()
-		return nil, fmt.Errorf("client for key %s was stopped during creation", key)
+		return nil, abortedDuringCreation(key, providerCtx)
 	}
 
 	p.keyedClients[key] = client
@@ -309,8 +303,16 @@ func (p *DefaultSSHProvider) StopStandaloneClientFor(_ context.Context, key stri
 	p.mu.Lock()
 	client := p.keyedClients[key]
 	delete(p.keyedClients, key)
-	p.keyedStopGens[key]++
+	creation := p.keyedCreations[key]
 	p.mu.Unlock()
+
+	if creation != nil {
+		// the creation connects to a target which is gone, abort it and let the next
+		// caller for the key start its own instead of joining this one
+		p.debug("Aborting client creation for key %s", key)
+		creation.cancel()
+		p.keyedFlights.Forget(key)
+	}
 
 	if govalue.Nil(client) {
 		return
@@ -321,15 +323,41 @@ func (p *DefaultSSHProvider) StopStandaloneClientFor(_ context.Context, key stri
 	client.Stop()
 }
 
-func (p *DefaultSSHProvider) cleanedUpSince(gen int) bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	return p.cleanupGen != gen
+// keyedCreation is the creation of a keyed client in flight, kept to abort it
+type keyedCreation struct {
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
-func cleanedUpDuringCreation(key string) error {
-	return fmt.Errorf("%w during client creation for key %s", ErrProviderCleanedUp, key)
+// startKeyedCreation must be called with p.mu held
+func (p *DefaultSSHProvider) startKeyedCreation(key string, providerCtx context.Context) *keyedCreation {
+	ctx, cancel := context.WithCancel(providerCtx)
+	creation := &keyedCreation{ctx: ctx, cancel: cancel}
+	p.keyedCreations[key] = creation
+
+	return creation
+}
+
+func (p *DefaultSSHProvider) finishKeyedCreation(key string, creation *keyedCreation) {
+	p.mu.Lock()
+	// a stop of the key forgets the flight, so the registered creation can already
+	// belong to another caller
+	if p.keyedCreations[key] == creation {
+		delete(p.keyedCreations, key)
+	}
+	p.mu.Unlock()
+
+	creation.cancel()
+}
+
+// abortedDuringCreation tells the caller what threw its client away: the whole
+// provider was cleaned up or only this key was stopped
+func abortedDuringCreation(key string, providerCtx context.Context) error {
+	if providerCtx.Err() != nil {
+		return fmt.Errorf("%w during client creation for key %s", ErrProviderCleanedUp, key)
+	}
+
+	return fmt.Errorf("client for key %s was stopped during creation", key)
 }
 
 func (p *DefaultSSHProvider) SwitchClient(ctx context.Context, sess *session.Session, privateKeys []session.AgentPrivateKey) (connection.SSHClient, error) {
@@ -430,11 +458,11 @@ func (p *DefaultSSHProvider) resetState() cleanedState {
 	p.currentClient = nil
 	p.additionalClients = nil
 	p.keyedClients = make(map[string]connection.SSHClient)
-	p.keyedStopGens = make(map[string]int)
-	p.cleanupGen++
 
 	// cancel before the clients are stopped: a reconnecting client holds its
-	// lifecycle lock until the reconnect budget is exhausted and Stop waits for it
+	// lifecycle lock until the reconnect budget is exhausted and Stop waits for it.
+	// creations in flight are children of this context, so they are aborted too and
+	// drop their own entries in keyedCreations
 	p.keyedClientsCancel()
 	p.keyedClientsCtx, p.keyedClientsCancel = context.WithCancel(context.Background())
 
