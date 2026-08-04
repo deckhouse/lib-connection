@@ -131,14 +131,14 @@ func (p *SSHProvider) Switches() []Switch {
 	return p.switches
 }
 
-func (p *SSHProvider) Client(ctx context.Context) (connection.SSHClient, error) {
+func (p *SSHProvider) Client(context.Context) (connection.SSHClient, error) {
 	if p.initSession == nil {
 		return nil, fmt.Errorf("Init session is nil")
 	}
 
 	if p.once {
 		if p.client == nil {
-			client, err := p.newClient(ctx, p.initSession, p.initPrivateKeys)
+			client, err := p.newClient(p.initSession, p.initPrivateKeys)
 			if err != nil {
 				return nil, err
 			}
@@ -148,15 +148,10 @@ func (p *SSHProvider) Client(ctx context.Context) (connection.SSHClient, error) 
 		return p.client, nil
 	}
 
-	client, err := p.newClient(ctx, p.initSession, p.initPrivateKeys)
-	if err != nil {
-		return nil, err
-	}
-
-	return client, nil
+	return p.newClient(p.initSession, p.initPrivateKeys)
 }
 
-func (p *SSHProvider) NewAdditionalClient(ctx context.Context) (connection.SSHClient, error) {
+func (p *SSHProvider) NewAdditionalClient(context.Context) (connection.SSHClient, error) {
 	sess, keys := p.initSession, p.initPrivateKeys
 
 	if len(p.switches) > 0 {
@@ -165,16 +160,19 @@ func (p *SSHProvider) NewAdditionalClient(ctx context.Context) (connection.SSHCl
 		keys = lastSwitch.PrivateKeys
 	}
 
-	client, err := p.newClient(ctx, sess, keys)
-	if err != nil {
-		return nil, err
-	}
-
-	return client, nil
+	return p.newClient(sess, keys)
 }
 
 func (p *SSHProvider) NewStandaloneClient(ctx context.Context, sess *session.Session, privateKeys []session.AgentPrivateKey, opts ...connection.StandaloneClientOpt) (connection.SSHClient, error) {
-	client, err := p.standaloneClient(ctx, sess, privateKeys, opts...)
+	sessCopy := sess.Copy()
+	// copy reset current host
+	sessCopy.ChoiceNewHost()
+
+	if err := p.fillDefaults(sessCopy, opts...); err != nil {
+		return nil, err
+	}
+
+	client, err := p.newClient(sess, privateKeys)
 	if err != nil {
 		return nil, err
 	}
@@ -196,8 +194,7 @@ func (p *SSHProvider) StandaloneClientFor(ctx context.Context, key string, sess 
 		delete(p.keyedClients, key)
 	}
 
-	// cached client outlives the call, do not bind it to the caller context
-	client, err := p.standaloneClient(context.WithoutCancel(ctx), sess, privateKeys, opts...)
+	client, err := p.keyedClient(sess, privateKeys, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -220,7 +217,7 @@ func (p *SSHProvider) StopStandaloneClientFor(_ context.Context, key string) {
 	delete(p.keyedClients, key)
 }
 
-func (p *SSHProvider) standaloneClient(ctx context.Context, sess *session.Session, privateKeys []session.AgentPrivateKey, opts ...connection.StandaloneClientOpt) (*Client, error) {
+func (p *SSHProvider) keyedClient(sess *session.Session, privateKeys []session.AgentPrivateKey, opts ...connection.StandaloneClientOpt) (*Client, error) {
 	if sess == nil {
 		return nil, fmt.Errorf("Session is nil")
 	}
@@ -233,10 +230,10 @@ func (p *SSHProvider) standaloneClient(ctx context.Context, sess *session.Sessio
 		return nil, err
 	}
 
-	return p.newClient(ctx, sessCopy, privateKeys)
+	return p.newClient(sessCopy, privateKeys)
 }
 
-func (p *SSHProvider) SwitchClient(ctx context.Context, sess *session.Session, privateKeys []session.AgentPrivateKey) (connection.SSHClient, error) {
+func (p *SSHProvider) SwitchClient(_ context.Context, sess *session.Session, privateKeys []session.AgentPrivateKey) (connection.SSHClient, error) {
 	privateKeysCpy := make([]session.AgentPrivateKey, len(privateKeys))
 	copy(privateKeysCpy, privateKeys)
 
@@ -252,7 +249,7 @@ func (p *SSHProvider) SwitchClient(ctx context.Context, sess *session.Session, p
 		PrivateKeys: privateKeysCpy,
 	}
 
-	client, err := p.newClient(ctx, sessCopy, privateKeys)
+	client, err := p.newClient(sess, privateKeys)
 	if err != nil {
 		return nil, err
 	}
@@ -347,18 +344,15 @@ func (p *SSHProvider) fillDefaults(input *session.Session, opts ...connection.St
 	return nil
 }
 
-func (p *SSHProvider) newClient(ctx context.Context, session *session.Session, k []session.AgentPrivateKey) (*Client, error) {
+func (p *SSHProvider) newClient(session *session.Session, k []session.AgentPrivateKey) (*Client, error) {
 	c := NewClient(session, k)
 
-	p.scriptProviders.copyTo(c.scriptProviders)
+	p.scriptProviders.copyTo(p.scriptProviders)
 	p.commandProviders.copyTo(c.commandProviders)
 	p.fileProviders.copyTo(c.fileProviders)
 
-	if err := c.Start(ctx); err != nil {
-		return nil, err
-	}
-
-	return c, nil
+	err := c.Start(context.Background())
+	return c, err
 }
 
 func NewClient(session *session.Session, privKeys []session.AgentPrivateKey) *Client {

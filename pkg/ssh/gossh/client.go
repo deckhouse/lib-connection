@@ -417,7 +417,7 @@ func (s *Client) connectToAgent(ctx context.Context) error {
 	dialer := net.Dialer{}
 	conn, err := dialer.DialContext(cctx, "unix", socket)
 	if err != nil {
-		return fmt.Errorf("Failed to open agent socket %s: %w", socket, err)
+		return fmt.Errorf("Failed to open agent socket %s: %v", socket, err)
 	}
 
 	s.clientMu.Lock()
@@ -698,13 +698,6 @@ func (s *Client) keepAlive(stopCh chan struct{}, doneCh chan<- struct{}) {
 }
 
 func (s *Client) restart(stopCh chan struct{}) {
-	// check before the lifecycle lock: Stop holds it while it waits for this
-	// goroutine to exit, so waiting for the lock here would deadlock them until
-	// the keepalive stop timeout
-	if s.IsStopped() {
-		return
-	}
-
 	s.lifecycleMu.Lock()
 	defer s.lifecycleMu.Unlock()
 
@@ -730,30 +723,9 @@ func (s *Client) restart(stopCh chan struct{}) {
 		return
 	}
 
-	err := s.startWithContext(s.runContext())
-	if err == nil {
-		return
+	if err := s.startWithContext(s.runContext()); err != nil {
+		s.debug("Start failed during restart: %v", err)
 	}
-
-	if s.IsStopped() {
-		s.debug("SSH client reconnect canceled by stop: %v", err)
-		return
-	}
-
-	// the owner of the client context is gone, the client is not usable anymore
-	// but nothing is wrong with the client itself
-	if errors.Is(err, context.Canceled) {
-		s.settings.Logger().InfoContext(
-			context.Background(),
-			fmt.Sprintf("SSH client reconnect canceled: %v", err),
-		)
-		return
-	}
-
-	s.settings.Logger().WarnContext(
-		context.Background(),
-		fmt.Sprintf("SSH client failed to reconnect and is not usable anymore: %v", err),
-	)
 }
 
 func (s *Client) runContext() context.Context {
