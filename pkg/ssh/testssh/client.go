@@ -36,7 +36,9 @@ import (
 )
 
 var (
-	_ connection.SSHProvider   = &SSHProvider{}
+	_ connection.SSHProvider              = &SSHProvider{}
+	_ connection.StandaloneClientProvider = &SSHProvider{}
+
 	_ connection.SSHClient     = &Client{}
 	_ connection.Command       = &Command{}
 	_ connection.File          = &File{}
@@ -76,6 +78,10 @@ type SSHProvider struct {
 	commandProviders *providersMap[CommandProvider]
 	fileProviders    *providersMap[FileProvider]
 
+	// keyedClientsMu guards keyedClients only, other fields are not safe for concurrent use
+	keyedClientsMu sync.Mutex
+	keyedClients   map[string]*Client
+
 	switchHandler SwitchHandler
 	switches      []Switch
 }
@@ -89,6 +95,8 @@ func NewSSHProvider(initSession *session.Session, once bool) *SSHProvider {
 		scriptProviders:  newProvidersMap[UploadScriptProvider](),
 		commandProviders: newProvidersMap[CommandProvider](),
 		fileProviders:    newOneProviderMap[FileProvider](),
+
+		keyedClients: make(map[string]*Client),
 
 		switches: make([]Switch, 0),
 	}
@@ -172,6 +180,59 @@ func (p *SSHProvider) NewStandaloneClient(ctx context.Context, sess *session.Ses
 	return client, nil
 }
 
+func (p *SSHProvider) StandaloneClientFor(ctx context.Context, key string, sess *session.Session, privateKeys []session.AgentPrivateKey, opts ...connection.StandaloneClientOpt) (connection.SSHClient, error) {
+	p.keyedClientsMu.Lock()
+	defer p.keyedClientsMu.Unlock()
+
+	cached, ok := p.keyedClients[key]
+	if ok {
+		if cached.Live() {
+			return cached, nil
+		}
+
+		cached.Stop()
+		delete(p.keyedClients, key)
+	}
+
+	client, err := p.keyedClient(sess, privateKeys, opts...)
+	if err != nil {
+		return nil, err
+	}
+
+	p.keyedClients[key] = client
+
+	return client, nil
+}
+
+func (p *SSHProvider) StopStandaloneClientFor(_ context.Context, key string) {
+	p.keyedClientsMu.Lock()
+	defer p.keyedClientsMu.Unlock()
+
+	client, ok := p.keyedClients[key]
+	if !ok {
+		return
+	}
+
+	client.Stop()
+	delete(p.keyedClients, key)
+}
+
+func (p *SSHProvider) keyedClient(sess *session.Session, privateKeys []session.AgentPrivateKey, opts ...connection.StandaloneClientOpt) (*Client, error) {
+	if sess == nil {
+		return nil, fmt.Errorf("Session is nil")
+	}
+
+	sessCopy := sess.Copy()
+	// copy reset current host
+	sessCopy.ChoiceNewHost()
+
+	if err := p.fillDefaults(sessCopy, opts...); err != nil {
+		return nil, err
+	}
+
+	return p.newClient(sessCopy, privateKeys)
+}
+
 func (p *SSHProvider) SwitchClient(_ context.Context, sess *session.Session, privateKeys []session.AgentPrivateKey) (connection.SSHClient, error) {
 	privateKeysCpy := make([]session.AgentPrivateKey, len(privateKeys))
 	copy(privateKeysCpy, privateKeys)
@@ -212,6 +273,15 @@ func (p *SSHProvider) SwitchToDefault(ctx context.Context) (connection.SSHClient
 }
 
 func (p *SSHProvider) Cleanup(context.Context) error {
+	p.keyedClientsMu.Lock()
+	defer p.keyedClientsMu.Unlock()
+
+	for _, client := range p.keyedClients {
+		client.Stop()
+	}
+
+	p.keyedClients = make(map[string]*Client)
+
 	return nil
 }
 
@@ -567,6 +637,13 @@ func (c *Client) IsStopped() bool {
 	defer c.mu.Unlock()
 
 	return c.stopped
+}
+
+func (c *Client) Live() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return !c.stopped
 }
 
 type kubeProxy struct{}

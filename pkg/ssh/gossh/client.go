@@ -52,13 +52,25 @@ var (
 
 var keepAliveStopWait = 10 * time.Second
 
+// NewClient
+// ctx is the lifetime of the client: it bounds the internal reconnects and new
+// sessions, so it must outlive every user of the client. The context passed to
+// Start bounds the initial connect only.
 func NewClient(ctx context.Context, sett settings.Settings, session *session.Session, privKeys []session.AgentPrivateKey) *Client {
+	if govalue.Nil(ctx) {
+		ctx = context.Background()
+	}
+
+	runCtx, runCancel := context.WithCancel(ctx)
+
 	return &Client{
 		sessionClient:   session,
 		privateKeys:     privKeys,
 		live:            false,
 		sshSessionsList: make([]*gossh.Session, 0, 10),
 		ctx:             ctx,
+		runCtx:          runCtx,
+		runCancel:       runCancel,
 		silent:          false,
 		settings:        sett,
 	}
@@ -94,6 +106,12 @@ var defaultReverseTunnelParamsOps = []retry.ParamsBuilderOpt{
 
 type Client struct {
 	ctx context.Context
+
+	// runCtx bounds the internal reconnects and new sessions. Stop cancels it, so
+	// a reconnect in progress gives up instead of blocking Stop until its retry
+	// budget is exhausted, and Start creates a new one. Guarded by clientMu
+	runCtx    context.Context
+	runCancel context.CancelFunc
 
 	settings    settings.Settings
 	loopsParams ClientLoopsParams
@@ -184,9 +202,19 @@ func (s *Client) Check() connection.Check {
 
 // Stop the client
 func (s *Client) Stop() {
+	// mark stopped and cancel before the lifecycle lock: a reconnect in progress
+	// holds that lock and releases it only when its retry loops are canceled
+	s.clientMu.Lock()
+	s.stopped = true
+	s.runCancel()
+	s.clientMu.Unlock()
+
+	// wait for a start or a reconnect in progress to give up, then mark stopped
+	// again: a start which won the lock resets the flag and the run context
 	s.lifecycleMu.Lock()
 	s.clientMu.Lock()
 	s.stopped = true
+	s.runCancel()
 	s.clientMu.Unlock()
 	s.lifecycleMu.Unlock()
 
@@ -245,7 +273,14 @@ func (s *Client) newSSHSession(allowStopped bool) (*gossh.Session, error) {
 			retry.WithName("Establish new session"),
 			retry.WithLogger(s.settings.Logger()),
 		)
-	err := retry.NewSilentLoopWithParams(newSessionLoopParams).RunContext(s.ctx, func() error {
+	sessionCtx := s.runContext()
+	if allowStopped {
+		// the only sessions allowed on a stopping client are the ones which kill the
+		// remote processes, they must outlive the canceled run context
+		sessionCtx = context.WithoutCancel(sessionCtx)
+	}
+
+	err := retry.NewSilentLoopWithParams(newSessionLoopParams).RunContext(sessionCtx, func() error {
 		sshClient, err := s.snapshotSSHClientWithOptions(allowStopped)
 		if err != nil {
 			return err
@@ -288,6 +323,8 @@ func (s *Client) Start(ctx context.Context) error {
 
 	s.clientMu.Lock()
 	s.stopped = false
+	s.runCancel()
+	s.runCtx, s.runCancel = context.WithCancel(s.ctx)
 	s.clientMu.Unlock()
 
 	s.resetForStart()
@@ -675,13 +712,27 @@ func (s *Client) restart(stopCh chan struct{}) {
 	s.detachKeepAlive(stopCh)
 	s.closeSessions()
 	s.closeConnections()
+
+	// silence the retry loops during reconnect attempts only
 	s.silent = true
+	defer func() {
+		s.silent = false
+	}()
+
 	if s.IsStopped() {
 		return
 	}
-	if err := s.startWithContext(s.ctx); err != nil {
+
+	if err := s.startWithContext(s.runContext()); err != nil {
 		s.debug("Start failed during restart: %v", err)
 	}
+}
+
+func (s *Client) runContext() context.Context {
+	s.clientMu.RLock()
+	defer s.clientMu.RUnlock()
+
+	return s.runCtx
 }
 
 type sshConnection struct {
@@ -1064,9 +1115,11 @@ func (s *Client) registerSession(sess *gossh.Session) {
 }
 
 func (s *Client) stopRemoteKubeProxies() error {
-	ctx := s.ctx
-	if govalue.Nil(ctx) {
-		ctx = context.Background()
+	// the client is stopping, its context is canceled by then in most cases, but
+	// the processes on the remote still have to be killed
+	ctx := context.Background()
+	if !govalue.Nil(s.ctx) {
+		ctx = context.WithoutCancel(s.ctx)
 	}
 
 	err := errors.Join(

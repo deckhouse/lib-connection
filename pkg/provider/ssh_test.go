@@ -21,9 +21,11 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/deckhouse/lib-dhctl/pkg/retry"
 	"github.com/name212/govalue"
 	"github.com/stretchr/testify/require"
 
@@ -1578,7 +1580,7 @@ func TestSSHProviderClient(t *testing.T) {
 				rootPresent: true,
 			})
 
-			_, err = provider.Client(ctx)
+			clientAfterCleanup, err := provider.Client(ctx)
 			require.NoError(t, err, "should get client")
 
 			assertWritePrivateKeys(t, assertParams{
@@ -1588,6 +1590,17 @@ func TestSSHProviderClient(t *testing.T) {
 			})
 
 			require.NotEqual(t, privateKeyPathBeforeCleanup, provider.privateKeysTmp, "should create new tmp dir")
+
+			keysAfterCleanup := clientAfterCleanup.PrivateKeys()
+			require.Len(t, keysAfterCleanup, len(config.Config.PrivateKeys), "should not duplicate private keys after cleanup")
+
+			for _, key := range keysAfterCleanup {
+				require.True(
+					t,
+					strings.HasPrefix(key.Key, provider.privateKeysTmp),
+					"private key %s should be written to new tmp dir %s", key.Key, provider.privateKeysTmp,
+				)
+			}
 		})
 	})
 
@@ -1638,6 +1651,217 @@ func TestSSHProviderClient(t *testing.T) {
 
 		_, err = provider.SwitchToDefault(ctx)
 		require.Error(t, err, "should fail")
+	})
+}
+
+func TestSSHProviderStandaloneClientFor(t *testing.T) {
+	// client always started in StandaloneClientFor, use closed port for fast fail
+	const unreachablePort = 1
+
+	failFastParams := retry.NewEmptyParams(
+		retry.WithAttempts(1),
+		retry.WithWait(time.Millisecond),
+	)
+
+	unreachableProvider := func(t *testing.T, loopParams retry.Params) *DefaultSSHProvider {
+		test := newTest(t)
+		config := testCreateSSHConnectionConfigWithPrivateKeyPaths(t, connectionConfigParams{
+			test: test,
+			port: tests.Ptr(unreachablePort),
+		})
+
+		config.Config.BastionHost = ""
+		config.Config.BastionUser = ""
+		config.Config.BastionPassword = ""
+		config.Hosts = []sshconfig.Host{
+			{
+				Host: "127.0.0.1",
+			},
+		}
+
+		return newTestProvider(
+			test.Settings(),
+			config,
+			SSHClientWithForceGoSSH(),
+			SSHClientWithLoopsParams(gossh.ClientLoopsParams{
+				ConnectToHostDirectly: loopParams.Clone(),
+				NewSession:            loopParams.Clone(),
+			}),
+		)
+	}
+
+	t.Run("nil session returns error", func(t *testing.T) {
+		provider := unreachableProvider(t, failFastParams)
+
+		client, err := provider.StandaloneClientFor(t.Context(), "node-1", nil, nil)
+		require.Error(t, err, "should reject nil session")
+		require.True(t, govalue.Nil(client), "client should not be provided")
+	})
+
+	t.Run("do not cache client if start failed", func(t *testing.T) {
+		provider := unreachableProvider(t, failFastParams)
+		ctx := t.Context()
+		sess := defaultSession("127.0.0.1", unreachablePort)
+
+		client, err := provider.StandaloneClientFor(ctx, "node-1", sess, nil)
+		require.Error(t, err, "should not create client for unreachable host")
+		require.True(t, govalue.Nil(client), "client should not be provided")
+		require.Len(t, provider.keyedClients, 0, "should not cache client")
+
+		retriedClient, err := provider.StandaloneClientFor(ctx, "node-1", sess, nil)
+		require.Error(t, err, "should retry creation and fail again")
+		require.True(t, govalue.Nil(retriedClient), "client should not be provided")
+		require.Len(t, provider.keyedClients, 0, "should not cache client")
+	})
+
+	t.Run("caller cancel does not affect another caller", func(t *testing.T) {
+		// creation should outlive canceled caller, do not fail fast here
+		slowParams := retry.NewEmptyParams(
+			retry.WithAttempts(3),
+			retry.WithWait(300*time.Millisecond),
+		)
+
+		provider := unreachableProvider(t, slowParams)
+		sess := defaultSession("127.0.0.1", unreachablePort)
+
+		canceledCtx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		var canceledCallerErr, aliveCallerErr error
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+
+		go func() {
+			defer wg.Done()
+
+			_, canceledCallerErr = provider.StandaloneClientFor(canceledCtx, "node-1", sess, nil)
+		}()
+
+		// canceled caller should start creation, second caller waits for the same result
+		time.Sleep(50 * time.Millisecond)
+
+		go func() {
+			defer wg.Done()
+
+			_, aliveCallerErr = provider.StandaloneClientFor(context.Background(), "node-1", sess, nil)
+		}()
+
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+
+		wg.Wait()
+
+		require.Error(t, canceledCallerErr, "canceled caller should get error")
+		require.ErrorIs(t, canceledCallerErr, context.Canceled, "canceled caller should get own context error")
+
+		require.Error(t, aliveCallerErr, "caller with alive context should get connect error")
+		require.NotErrorIs(t, aliveCallerErr, context.Canceled, "caller with alive context should not get cancellation error")
+
+		require.Len(t, provider.keyedClients, 0, "should not cache client")
+	})
+
+	t.Run("cleanup stops keyed clients", func(t *testing.T) {
+		test := newTest(t)
+		config := testCreateSSHConnectionConfigWithPrivateKeyPaths(t, connectionConfigParams{
+			test: test,
+		})
+
+		provider := newTestProvider(test.Settings(), config)
+
+		ctx := t.Context()
+
+		firstClient, err := provider.buildClient(ctx, nil, nil)
+		require.NoError(t, err, "should build client")
+
+		secondClient, err := provider.buildClient(ctx, nil, nil)
+		require.NoError(t, err, "should build client")
+
+		provider.keyedClients = map[string]connection.SSHClient{
+			"node-1": firstClient,
+			"node-2": secondClient,
+		}
+
+		keyedClientsCtx := provider.keyedClientsCtx
+
+		require.NoError(t, provider.Cleanup(ctx), "should cleanup")
+
+		require.Empty(t, provider.keyedClients, "should drop all keyed clients")
+		require.Error(t, keyedClientsCtx.Err(), "should cancel the context of the stopped clients")
+		require.NoError(t, provider.keyedClientsCtx.Err(), "should provide a live context for the next clients")
+		require.True(t, firstClient.IsStopped(), "should stop keyed client")
+		require.True(t, secondClient.IsStopped(), "should stop keyed client")
+	})
+
+	t.Run("stop keyed client drops it from registry", func(t *testing.T) {
+		test := newTest(t)
+		config := testCreateSSHConnectionConfigWithPrivateKeyPaths(t, connectionConfigParams{
+			test: test,
+		})
+
+		provider := newTestProvider(test.Settings(), config)
+
+		ctx := t.Context()
+
+		client, err := provider.buildClient(ctx, nil, nil)
+		require.NoError(t, err, "should build client")
+
+		provider.keyedClients = map[string]connection.SSHClient{
+			"node-1": client,
+		}
+
+		provider.StopStandaloneClientFor(ctx, "node-1")
+
+		require.Empty(t, provider.keyedClients, "should drop stopped client")
+		require.True(t, client.IsStopped(), "should stop client")
+
+		provider.StopStandaloneClientFor(ctx, "unknown-key")
+	})
+
+	t.Run("stop aborts creation in flight", func(t *testing.T) {
+		// budget of the creation is way longer than the assertions below, so an
+		// abort is the only way the call can return in time
+		slowParams := retry.NewEmptyParams(
+			retry.WithAttempts(30),
+			retry.WithWait(300*time.Millisecond),
+		)
+
+		provider := unreachableProvider(t, slowParams)
+		sess := defaultSession("127.0.0.1", unreachablePort)
+
+		errCh := make(chan error, 1)
+		go func() {
+			_, err := provider.StandaloneClientFor(context.Background(), "node-1", sess, nil)
+			errCh <- err
+		}()
+
+		require.Eventually(t, func() bool {
+			provider.mu.Lock()
+			defer provider.mu.Unlock()
+
+			return provider.keyedCreations["node-1"] != nil
+		}, 5*time.Second, 10*time.Millisecond, "creation should be registered")
+
+		provider.StopStandaloneClientFor(t.Context(), "node-1")
+
+		select {
+		case err := <-errCh:
+			require.Error(t, err, "aborted creation should return error")
+		case <-time.After(3 * time.Second):
+			t.Fatal("stop should abort the creation instead of waiting for its budget")
+		}
+
+		require.Empty(t, provider.keyedClients, "should not cache client")
+		require.Empty(t, provider.keyedCreations, "should drop the finished creation")
+	})
+
+	t.Run("error provider returns error", func(t *testing.T) {
+		provider := NewErrorSSHProvider(fmt.Errorf("some error"))
+
+		client, err := provider.StandaloneClientFor(t.Context(), "node-1", defaultSession("192.168.0.1", 22), nil)
+		require.Error(t, err, "should return error")
+		require.ErrorIs(t, err, ErrSSHClientCannotProvided, "should return provider error")
+		require.True(t, govalue.Nil(client), "client should not be provided")
 	})
 }
 

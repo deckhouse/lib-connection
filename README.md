@@ -137,6 +137,56 @@ will be removed from the provider. Use this method at the end of your logic.
 Currently we have three implementations of `SSHProvider`: `DefaultSSHProvider`, `SSHProvider` in the `testssh` package,
 and `ErrorSSHProvider`.
 
+#### StandaloneClientProvider
+
+`StandaloneClientProvider` is an optional capability of an `SSHProvider`, described [here](./pkg/ssh.go). It adds two
+methods:
+
+- `StandaloneClientFor` - returns a started and `Live` client for the passed key. The cached client for the key is
+reused while it is alive; a dead client is stopped and replaced in place, so the provider keeps at most one client per
+key. Unlike `NewStandaloneClient`, the client is always started, regardless of the provider start option. If creation
+fails, nothing is cached and the next call retries. Keyed clients are stopped in `Cleanup` too. Note that the client is
+`Live` at return time only: a connection can die later, so command errors still must be handled.
+- `StopStandaloneClientFor` - stops the client cached for the key and drops it from the registry, so the next
+`StandaloneClientFor` with the same key creates a new one. A creation for the same key still in flight is aborted as
+well. Call it as soon as the target of the key is gone, for example a node removed by a converge: nothing else stops a
+keyed client before `Cleanup`, so until then it keeps its keep-alive and reconnects to a target which will never answer.
+
+The key only identifies a target for the caller, the connection target comes from the session, so build a session per
+target instead of passing one session under different keys.
+
+All implementations of `SSHProvider` from this library implement this interface. Example usage:
+
+```go
+package my
+
+func runOnNode(ctx context.Context, p connection.StandaloneClientProvider, node session.Host, sess *session.Session) error {
+	nodeSession := sess.Copy()
+	nodeSession.SetAvailableHosts([]session.Host{node})
+
+	// the node outlives this function, so the client is stopped by the code which removes
+	// the node, not here
+	// a dead connection is detected by keep-alive and replaced only after the reconnect budget
+	// of the client, so the retry budget of the loop should exceed it
+	return retry.NewLoop("run on node", 30, 10*time.Second).RunContext(ctx, func() error {
+		// returns the cached client or a new one if the previous connection died
+		client, err := p.StandaloneClientFor(ctx, node.Name, nodeSession, nil)
+		if err != nil {
+			return fmt.Errorf("get client for node %s: %w", node.Name, err)
+		}
+
+		return client.Command("uname", "-a").Run(ctx)
+	})
+}
+
+func removeNode(ctx context.Context, p connection.StandaloneClientProvider, node session.Host) error {
+	// the client of a removed node has nothing to reconnect to
+	defer p.StopStandaloneClientFor(ctx, node.Name)
+
+	return deleteNodeSomehow(ctx, node)
+}
+```
+
 #### DefaultSSHProvider
 
 DefaultSSHProvider provides clients with the configuration passed as default configuration.

@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -185,6 +186,85 @@ func TestSSHProviderClientConnect(t *testing.T) {
 				for _, incorrectAssert := range incorrectRunAsserts {
 					assertRunScript(t, incorrectAssert)
 				}
+			})
+		}
+	})
+
+	t.Run("StandaloneClientFor", func(t *testing.T) {
+		for _, tst := range runTests {
+			t.Run(tst.name, func(t *testing.T) {
+				test := newTest(t, tst)
+
+				scripName := fmt.Sprintf("keyed-client-%s-ssh", strings.ToLower(tst.name))
+				container, expectedOut, remotePath := prepareContainer(t, test, scripName)
+				config := connectionConfigForContainer(container, tst.mode)
+
+				ctx := t.Context()
+
+				p := getProvider(test, config)
+
+				registerCleanup(t, test, p)
+
+				assertParams := func(c connection.SSHClient) assertRunScriptParams {
+					return assertRunScriptParams{
+						client:      c,
+						expectedOut: expectedOut,
+						executePath: remotePath,
+						test:        test,
+					}
+				}
+
+				sess, privateKeys := sessionForConnectionConfig(config)
+
+				client, err := p.StandaloneClientFor(ctx, "node-1", sess, privateKeys)
+				require.NoError(t, err, "should create keyed client")
+				require.True(t, client.Live(), "keyed client should be live")
+
+				assertRunScript(t, assertParams(client))
+
+				cachedClient, err := p.StandaloneClientFor(ctx, "node-1", sess, privateKeys)
+				require.NoError(t, err, "should provide keyed client")
+				require.True(t, client == cachedClient, "should reuse live client for the same key")
+
+				anotherClient, err := p.StandaloneClientFor(ctx, "node-2", sess, privateKeys)
+				require.NoError(t, err, "should create keyed client for another key")
+				require.False(t, client == anotherClient, "should create new client for another key")
+
+				assertRunScript(t, assertParams(anotherClient))
+
+				const concurrency = 10
+
+				concurrentClients := make([]connection.SSHClient, concurrency)
+				concurrentErrors := make([]error, concurrency)
+
+				var wg sync.WaitGroup
+				for i := range concurrency {
+					wg.Add(1)
+					go func(index int) {
+						defer wg.Done()
+
+						concurrentClients[index], concurrentErrors[index] = p.StandaloneClientFor(ctx, "node-concurrent", sess, privateKeys)
+					}(i)
+				}
+				wg.Wait()
+
+				for i := range concurrency {
+					require.NoError(t, concurrentErrors[i], "should provide keyed client in goroutine %d", i)
+					require.True(t, concurrentClients[0] == concurrentClients[i], "should provide the same client for the same key in goroutine %d", i)
+				}
+
+				assertRunScript(t, assertParams(concurrentClients[0]))
+
+				deadClient := concurrentClients[0]
+				deadClient.Stop()
+				require.False(t, deadClient.Live(), "stopped client should not be live")
+
+				replacedClient, err := p.StandaloneClientFor(ctx, "node-concurrent", sess, privateKeys)
+				require.NoError(t, err, "should replace dead client")
+				require.False(t, deadClient == replacedClient, "should create new client instead of dead")
+				require.True(t, replacedClient.Live(), "replaced client should be live")
+
+				assertRunScript(t, assertParams(replacedClient))
 			})
 		}
 	})
