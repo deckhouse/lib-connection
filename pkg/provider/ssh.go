@@ -190,6 +190,26 @@ func (p *DefaultSSHProvider) NewStandaloneClient(ctx context.Context, sess *sess
 	}
 
 	p.additionalClients = append(p.additionalClients, client)
+
+	activeClients := 0
+	for _, additionalClient := range p.additionalClients {
+		if !govalue.Nil(additionalClient) && !additionalClient.IsStopped() {
+			activeClients++
+		}
+	}
+
+	fmt.Printf(
+		"NewStandaloneClient: total=%d active=%d\n",
+		len(p.additionalClients),
+		activeClients,
+	)
+
+	p.debug(
+		"NewStandaloneClient: additionalClients=%d activeClients=%d",
+		len(p.additionalClients),
+		activeClients,
+	)
+
 	return client, nil
 }
 
