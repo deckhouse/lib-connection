@@ -21,6 +21,7 @@ GOLANGCI_VERSION = 2.7.2
 GOFUMPT_VERSION=0.9.2
 JQ_VERSION=1.8.1
 KIND_VERSION=0.31.0
+GOTESTSUM_VERSION=1.13.0
 
 export TESTS_OPENSSH_IMAGE = lscr.io/linuxserver/openssh-server:10.0_p1-r9-ls209
 export TESTS_PYTHON_IMAGE = registry.deckhouse.ru/base_images@sha256:b15f9150f3b51f2e11cd73db39c89eef8a075953659caf802363d4f544335fb5
@@ -58,7 +59,7 @@ else ifeq ($(PLATFORM_NAME), arm64)
 	KIND_ARCH = arm64
 endif
 
-.PHONY: bin/jq bin/gofumpt bin/golangci-lint clean validation/license/download curl-installed docker-installed go-installed clean/test clean/ssh clean/docker
+.PHONY: bin/jq bin/gofumpt bin/golangci-lint bin/gotestsum clean validation/license/download curl-installed docker-installed go-installed clean/test clean/ssh clean/docker
 
 bin:
 	@mkdir -p bin
@@ -101,7 +102,13 @@ bin/kind: curl-installed bin
 	  chmod +x "./bin/kind"; \
 	fi
 
-deps: bin bin/jq bin/golangci-lint bin/gofumpt bin/kind
+bin/gotestsum: go-installed bin
+	@if ! ./hack/check_binary.sh "gotestsum" "--version" "$(GOTESTSUM_VERSION)"; then \
+	  echo "Install gotestsum"; \
+	  GOBIN=$(abspath bin/) go install gotest.tools/gotestsum@v$(GOTESTSUM_VERSION); \
+	fi
+
+deps: bin bin/jq bin/golangci-lint bin/gofumpt bin/kind bin/gotestsum
 
 go-deps/update: go-installed
 	@if [ -z "$(DEP)" ] ; then \
@@ -136,7 +143,7 @@ test/pull-ssh-image: docker-installed
 test/pull-python-image: docker-installed
 	@docker pull $(TESTS_PYTHON_IMAGE)
 
-test: go-installed docker-installed bin/kind test/pull-ssh-image test/pull-python-image
+test: go-installed docker-installed bin/kind bin/gotestsum test/pull-ssh-image test/pull-python-image
 	./hack/run_tests.sh
 	$(MAKE) clean/test
 

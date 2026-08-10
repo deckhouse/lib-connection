@@ -96,8 +96,20 @@ function check_kind() {
   fi
 }
 
+function gotestsum_bin_path() {
+  echo -n "$(pwd)/bin/gotestsum"
+}
+
+function check_gotestsum() {
+  local bin_path="$(gotestsum_bin_path)"
+  if ! [ -x "$bin_path" ]; then
+    echo "gotestsum not installed! You should run 'make bin/gotestsum' before"
+    exit 1
+  fi
+}
+
 function check_all_deps() {
-    check_docker && check_kind
+    check_docker && check_kind && check_gotestsum
 }
 
 function pull_image() {

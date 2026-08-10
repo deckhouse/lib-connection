@@ -20,6 +20,9 @@ check_all_deps
 check_go
 pull_image
 
+# Absolute path: run_tests_in_dir cd's into module dirs (repo root and ./tests).
+gotestsum_bin="$(gotestsum_bin_path)"
+
 run_tests=""
 
 if [ -n "$RUN_TEST" ]; then
@@ -80,7 +83,7 @@ function run_tests_in_dir() {
   echo "Found packages: ${packages[@]} in ${run_dir} with module ${prefix}"
 
   echo "Run tests in ${run_dir} (-p ${package_parallelism} -parallel ${test_parallelism})"
-  if ! go test -timeout 35m -v -p "$package_parallelism" -parallel "$test_parallelism" $run_tests $packages; then
+  if ! "$gotestsum_bin" -- -timeout 35m -v -p "$package_parallelism" -parallel "$test_parallelism" $run_tests $packages; then
     all_failed_tests="$(echo -e "${all_failed_tests}\nTests in ${prefix} failed")"
   fi
 }
