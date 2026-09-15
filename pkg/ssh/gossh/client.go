@@ -48,6 +48,12 @@ var (
 	// connect/handshake errors), as opposed to permanent local socket errors (wrong
 	// conn type, failed to set socket options) that fail identically on every attempt.
 	ErrDialTransient = errors.New("dial: transient error, may succeed on retry")
+
+	// ErrAuthFailed marks a login the server refused now: it answered, ran the whole
+	// auth exchange and accepted none of the offered credentials. Usually permanent
+	// (wrong user, expired account), but also a host not provisioned yet, so whether
+	// it is worth retrying is the caller's call.
+	ErrAuthFailed = errors.New("dial: authentication failed")
 )
 
 var keepAliveStopWait = 10 * time.Second
@@ -492,7 +498,7 @@ func (s *Client) connectToTargetViaBastion(ctx context.Context, bastionClient *g
 		sshConn, err = s.createSSHConnection(targetConn, addr, config)
 		if err != nil {
 			_ = targetConn.Close()
-			return fmt.Errorf("Cannot create SSH connection to %s: %w", addr, err)
+			return fmt.Errorf("Cannot create SSH connection to %s: %w: %w", addr, err, classifyHandshakeError(err))
 		}
 
 		return nil
@@ -576,10 +582,10 @@ func (s *Client) directConnectToTarget(ctx context.Context) (*gossh.Client, erro
 	hostLoopParams := retry.SafeCloneOrNewParams(s.loopsParams.ConnectToHostDirectly, defaultClientDirectlyLoopParamsOps...).
 		Clone(
 			retry.WithName("Get SSH client"),
-			// Permanent local socket errors (wrong conn type, failed to set socket
-			// options) fail identically on every attempt, so only retry dial/handshake
-			// failures that may clear up on their own.
-			retry.WithWhitelist(ErrDialTransient),
+			// Permanent local socket errors fail identically on every attempt, so retry
+			// only the classified dial failures. Both classes share this budget; the class
+			// rides the returned error for the caller to inspect.
+			retry.WithWhitelist(ErrDialTransient, ErrAuthFailed),
 		)
 
 	if err := s.runInLoop(ctx, hostLoopParams, connectToHost); err != nil {
@@ -625,10 +631,10 @@ func (s *Client) connectToBastion(ctx context.Context) (*gossh.Client, error) {
 	bastionLoopParams := retry.SafeCloneOrNewParams(s.loopsParams.ConnectToBastion, defaultClientViaBastionLoopParamsOps...).
 		Clone(
 			retry.WithName("Get bastion SSH client"),
-			// Permanent local socket errors (wrong conn type, failed to set socket
-			// options) fail identically on every attempt, so only retry dial/handshake
-			// failures that may clear up on their own.
-			retry.WithWhitelist(ErrDialTransient),
+			// Permanent local socket errors fail identically on every attempt, so retry
+			// only the classified dial failures. Both classes share this budget; the class
+			// rides the returned error for the caller to inspect.
+			retry.WithWhitelist(ErrDialTransient, ErrAuthFailed),
 		)
 
 	if err := s.runInLoop(ctx, bastionLoopParams, connectToBastion); err != nil {
@@ -771,10 +777,10 @@ func (s *Client) createSSHConnection(c net.Conn, addr string, config *gossh.Clie
 }
 
 func (s *Client) dialContext(ctx context.Context, network, addr string, config *gossh.ClientConfig) (*gossh.Client, error) {
-	closeConnectionAndReturnErr := func(msg string, err error, conn net.Conn, retryable bool) (*gossh.Client, error) {
+	closeConnectionAndReturnErr := func(msg string, err error, conn net.Conn, class error) (*gossh.Client, error) {
 		err = fmt.Errorf("Cannot Dial to '%s' %s: %w", addr, msg, err)
-		if retryable {
-			err = fmt.Errorf("%w: %w", err, ErrDialTransient)
+		if class != nil {
+			err = fmt.Errorf("%w: %w", err, class)
 		}
 
 		if closeErr := utils.SafeClose(conn); closeErr != nil {
@@ -786,17 +792,17 @@ func (s *Client) dialContext(ctx context.Context, network, addr string, config *
 	d := net.Dialer{Timeout: config.Timeout}
 	conn, err := d.DialContext(ctx, network, addr)
 	if err != nil {
-		return closeConnectionAndReturnErr("connect", err, conn, true)
+		return closeConnectionAndReturnErr("connect", err, conn, ErrDialTransient)
 	}
 
 	tcpConn, ok := conn.(*net.TCPConn)
 	if !ok {
-		return closeConnectionAndReturnErr("is not tcp", err, conn, false)
+		return closeConnectionAndReturnErr("is not tcp", err, conn, nil)
 	}
 
 	err = tcpConn.SetKeepAlive(true)
 	if err != nil {
-		return closeConnectionAndReturnErr("cannot set keepalive", err, tcpConn, false)
+		return closeConnectionAndReturnErr("cannot set keepalive", err, tcpConn, nil)
 	}
 
 	timeFactor := time.Duration(3)
@@ -807,21 +813,41 @@ func (s *Client) dialContext(ctx context.Context, network, addr string, config *
 			fmt.Sprintf("cannot set deadline %s", deadline.String()),
 			err,
 			tcpConn,
-			false,
+			nil,
 		)
 	}
 
 	sshConn, err := s.createSSHConnection(tcpConn, addr, config)
 	if err != nil {
-		return closeConnectionAndReturnErr("cannot create ssh connection", err, tcpConn, true)
+		return closeConnectionAndReturnErr("cannot create ssh connection", err, tcpConn, classifyHandshakeError(err))
 	}
 
 	err = tcpConn.SetDeadline(time.Time{})
 	if err != nil {
-		return closeConnectionAndReturnErr("cannot reset deadline", err, tcpConn, false)
+		return closeConnectionAndReturnErr("cannot reset deadline", err, tcpConn, nil)
 	}
 
 	return sshConn.createGoClient(), nil
+}
+
+// authExhaustedMarker is the tail of the error the SSH client returns when the
+// server rejected every offered credential and left no method to try. See
+// github.com/deckhouse/lib-gossh, client_auth.go, clientAuthenticate.
+const authExhaustedMarker = "no supported methods remain"
+
+// classifyHandshakeError tells a rejected login from a handshake that merely broke.
+// Only an exhausted auth exchange proves the server said no; a drop on sshd restart
+// or MaxStartups never gets that far and stays transient.
+//
+// Ceiling: an sshd hitting MaxAuthTries disconnects instead of letting the method list
+// run out, so that rejection carries no marker and stays transient. Reachable, not rare:
+// authMethods offers every key the agent holds, which can exceed the default 6.
+func classifyHandshakeError(err error) error {
+	if strings.Contains(err.Error(), authExhaustedMarker) {
+		return ErrAuthFailed
+	}
+
+	return ErrDialTransient
 }
 
 func (s *Client) initSigners(ctx context.Context) error {

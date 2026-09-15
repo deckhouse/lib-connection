@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/deckhouse/lib-dhctl/pkg/retry"
 	gossh "github.com/deckhouse/lib-gossh"
 	"github.com/stretchr/testify/require"
 
@@ -753,4 +754,171 @@ func serveTestSSHConnectionRejectingDirectTCPIP(conn net.Conn, config *gossh.Ser
 	for newChannel := range chans {
 		_ = newChannel.Reject(gossh.Prohibited, "direct tcpip disabled")
 	}
+}
+
+func TestDialErrorClasses(t *testing.T) {
+	test := tests.ShouldNewTest(t, "TestDialErrorClasses", tests.TestIsIntegration(false))
+	sess := session.NewSession(session.Input{
+		AvailableHosts: []session.Host{{Host: "127.0.0.1", Name: "localhost"}},
+		User:           "user",
+		Port:           "22",
+		BecomePass:     "password",
+	})
+
+	keyPath, _, err := tests.GenerateKeys(test, "")
+	require.NoError(t, err, "failed to generate keys")
+
+	dialTo := func(t *testing.T, port string) error {
+		t.Helper()
+
+		sshClient := NewClient(t.Context(), test.Settings(), sess, []session.AgentPrivateKey{{Key: keyPath}})
+		require.NoError(t, sshClient.initSigners(t.Context()))
+
+		config, err := sshClient.createTargetClientConfig("dial error classes")
+		require.NoError(t, err)
+
+		_, err = sshClient.dialContext(t.Context(), "tcp", net.JoinHostPort("127.0.0.1", port), config)
+		require.Error(t, err, "dial to %s should fail", port)
+
+		return err
+	}
+
+	t.Run("unreachable host is transient", func(t *testing.T) {
+		err := dialTo(t, closedTCPPort(t))
+
+		require.ErrorIs(t, err, ErrDialTransient)
+		require.NotErrorIs(t, err, ErrAuthFailed)
+	})
+
+	t.Run("host refusing the handshake is transient", func(t *testing.T) {
+		err := dialTo(t, startTCPListenerClosingEveryConnection(t))
+
+		require.ErrorIs(t, err, ErrDialTransient)
+		require.NotErrorIs(t, err, ErrAuthFailed)
+	})
+
+	t.Run("rejected credentials are an auth failure", func(t *testing.T) {
+		port, _ := startInProcessSSHServerRejectingAuth(t)
+		err := dialTo(t, port)
+
+		require.ErrorIs(t, err, ErrAuthFailed)
+		require.NotErrorIs(t, err, ErrDialTransient)
+	})
+
+	// The class names the failure, it does not decide the budget: a host whose account has
+	// not been provisioned yet refuses the login and answers a minute later.
+	t.Run("a rejected login is still retried", func(t *testing.T) {
+		port, accepted := startInProcessSSHServerRejectingAuth(t)
+
+		const attempts = 3
+
+		sshClient := NewClient(t.Context(), test.Settings(), session.NewSession(session.Input{
+			AvailableHosts: []session.Host{{Host: "127.0.0.1", Name: "localhost"}},
+			User:           "user",
+			Port:           port,
+			BecomePass:     "password",
+		}), []session.AgentPrivateKey{{Key: keyPath}}).WithLoopsParams(ClientLoopsParams{
+			ConnectToHostDirectly: retry.NewEmptyParams(
+				retry.WithAttempts(attempts),
+				retry.WithWait(10*time.Millisecond),
+			),
+		})
+		registerStopClient(t, sshClient)
+
+		err := sshClient.Start(sshClient.ctx)
+		require.ErrorIs(t, err, ErrAuthFailed)
+		require.EqualValues(t, attempts, accepted.Load(), "ErrAuthFailed must stay whitelisted for retry")
+	})
+}
+
+func closedTCPPort(t *testing.T) string {
+	t.Helper()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	_, port, err := net.SplitHostPort(listener.Addr().String())
+	require.NoError(t, err)
+	require.NoError(t, listener.Close())
+
+	return port
+}
+
+// startTCPListenerClosingEveryConnection imitates an sshd that is up but refuses
+// to serve: a restart in progress or MaxStartups. The TCP connect succeeds and
+// the handshake dies on the spot.
+func startTCPListenerClosingEveryConnection(t *testing.T) string {
+	t.Helper()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		_ = listener.Close()
+	})
+
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			_ = conn.Close()
+		}
+	}()
+
+	_, port, err := net.SplitHostPort(listener.Addr().String())
+	require.NoError(t, err)
+
+	return port
+}
+
+func startInProcessSSHServerRejectingAuth(t *testing.T) (string, *atomic.Int64) {
+	t.Helper()
+
+	privateKey := tests.GeneratePrivateKey(t, "")
+	signer, err := gossh.ParsePrivateKey([]byte(privateKey))
+	require.NoError(t, err)
+
+	config := &gossh.ServerConfig{
+		PasswordCallback: func(_ gossh.ConnMetadata, _ []byte) (*gossh.Permissions, error) {
+			return nil, fmt.Errorf("password rejected")
+		},
+		PublicKeyCallback: func(_ gossh.ConnMetadata, _ gossh.PublicKey) (*gossh.Permissions, error) {
+			return nil, fmt.Errorf("public key rejected")
+		},
+	}
+	config.AddHostKey(signer)
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		_ = listener.Close()
+	})
+
+	accepted := &atomic.Int64{}
+
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+
+			accepted.Add(1)
+
+			go func() {
+				_, _, _, err := gossh.NewServerConn(conn, config)
+				if err != nil {
+					_ = conn.Close()
+				}
+			}()
+		}
+	}()
+
+	_, port, err := net.SplitHostPort(listener.Addr().String())
+	require.NoError(t, err)
+
+	return port, accepted
 }
