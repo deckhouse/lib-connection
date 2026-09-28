@@ -19,8 +19,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
@@ -132,6 +132,11 @@ type Client struct {
 
 	sshSessionsMu   sync.Mutex
 	sshSessionsList []*gossh.Session
+
+	// runningCommands are the commands started through this client whose remote
+	// processes have not exited yet, Stop kills them
+	commandsMu      sync.Mutex
+	runningCommands map[*SSHCommand]struct{}
 
 	privateKeys []session.AgentPrivateKey
 	signers     []gossh.Signer
@@ -266,13 +271,17 @@ func (s *Client) NewSSHSession() (*gossh.Session, error) {
 }
 
 func (s *Client) newSSHSession(allowStopped bool) (*gossh.Session, error) {
+	params := retry.SafeCloneOrNewParams(s.loopsParams.NewSession, defaultSessionLoopParamsOps...)
+	return s.newSSHSessionWithParams(allowStopped, params)
+}
+
+func (s *Client) newSSHSessionWithParams(allowStopped bool, params retry.Params) (*gossh.Session, error) {
 	var sess *gossh.Session
 
-	newSessionLoopParams := retry.SafeCloneOrNewParams(s.loopsParams.NewSession, defaultSessionLoopParamsOps...).
-		Clone(
-			retry.WithName("Establish new session"),
-			retry.WithLogger(s.settings.Logger()),
-		)
+	newSessionLoopParams := params.Clone(
+		retry.WithName("Establish new session"),
+		retry.WithLogger(s.settings.Logger()),
+	)
 	sessionCtx := s.runContext()
 	if allowStopped {
 		// the only sessions allowed on a stopping client are the ones which kill the
@@ -867,27 +876,18 @@ func (s *Client) stopAll(cause string) []error {
 		errors = append(errors, fmt.Errorf("%s: %w", prefix, e))
 	}
 
-	hasKubeProxies := s.hasKubeProxies()
-
 	s.debug("SSH client and its routines stopping...")
 
 	s.debug("Stopping kube proxies...")
 	s.stopLocalKubeProxies()
 
+	// the commands started with sudo cannot be killed by closing their sessions
+	// (see sudo_process.go), kill them while the connection is still alive
+	s.debug("Killing running commands...")
+	s.killRunningCommands(addError)
+
 	s.debug("Closing sessions...")
 	s.closeSessionsWithError(addError)
-
-	// Remote cleanup is host-wide, so run it only for clients that actually
-	// created kube-proxy objects. Uninitialized additional clients must not
-	// kill kube-proxy processes owned by another client on the same host.
-	if hasKubeProxies {
-		s.debug("Stopping kube proxies on remote...")
-		if err := s.stopRemoteKubeProxies(); err != nil {
-			addError(err, "Failed to stop kube proxy")
-		}
-	} else {
-		s.debug("No owned kube proxy found. Skip stopping remote kube proxies.")
-	}
 
 	s.debug("Stopping keep-alive goroutine...")
 	s.stopKeepAlive()
@@ -1114,73 +1114,49 @@ func (s *Client) registerSession(sess *gossh.Session) {
 	s.sshSessionsList = append(s.sshSessionsList, sess)
 }
 
-func (s *Client) stopRemoteKubeProxies() error {
-	// the client is stopping, its context is canceled by then in most cases, but
-	// the processes on the remote still have to be killed
-	ctx := context.Background()
-	if !govalue.Nil(s.ctx) {
-		ctx = context.WithoutCancel(s.ctx)
+func (s *Client) registerCommand(cmd *SSHCommand) {
+	s.commandsMu.Lock()
+	defer s.commandsMu.Unlock()
+
+	if s.runningCommands == nil {
+		s.runningCommands = make(map[*SSHCommand]struct{})
 	}
-
-	err := errors.Join(
-		s.stopRemoteKubectl(ctx),
-		s.stopRemoteD8KProxy(ctx),
-	)
-
-	if err != nil {
-		return err
-	}
-
-	s.debug("Kube proxies on remote were stopped")
-	return nil
+	s.runningCommands[cmd] = struct{}{}
 }
 
-func (s *Client) stopRemoteKubectl(ctx context.Context) error {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
+func (s *Client) unregisterCommand(cmd *SSHCommand) {
+	s.commandsMu.Lock()
+	defer s.commandsMu.Unlock()
 
-	cmd := newSSHCommand(s, "killall kubectl", true)
-	cmd.Sudo(ctx)
-	out, err := cmd.CombinedOutput(ctx)
-
-	if err != nil {
-		outStr := string(out)
-
-		if strings.Contains(outStr, "no process killed") ||
-			strings.Contains(outStr, "no process found") {
-			return nil
-		}
-		return err
-	}
-	return nil
+	delete(s.runningCommands, cmd)
 }
 
-func (s *Client) stopRemoteD8KProxy(ctx context.Context) error {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
+func (s *Client) runningCommandsSnapshot() []*SSHCommand {
+	s.commandsMu.Lock()
+	defer s.commandsMu.Unlock()
 
-	// SIGKILL is used because d8 did not exit
-	// after a single SIGINT/SIGTERM — it required two signals due to
-	// incorrect signal handling.
-	// Fixed in https://github.com/deckhouse/deckhouse-cli/releases/tag/v0.30.8
-	cmd := newSSHCommand(s, `echo START-PKILL && pkill -9 -f "d8 k proxy"`, true)
-	cmd.Sudo(ctx)
-	out, err := cmd.CombinedOutput(ctx)
-
-	if err != nil {
-		// Remove everything before START-PKILL marker
-		// Example: "SUDO-SUCCESS START-PKILL result" -> "result"
-		outStr := strings.TrimSpace(string(out))
-		if _, after, found := strings.Cut(outStr, "START-PKILL"); found {
-			outStr = strings.TrimSpace(after)
-		}
-
-		if outStr == "" {
-			return nil
-		}
-		return err
+	commands := make([]*SSHCommand, 0, len(s.runningCommands))
+	for cmd := range s.runningCommands {
+		commands = append(commands, cmd)
 	}
-	return nil
+	return commands
+}
+
+// killRunningCommands sends SIGKILL to every command started through the client
+// which has not exited yet. Every command is signalled the way it was started:
+// a sudo command by a remote "kill" of its process group, a plain one through
+// its session. It is best effort: the connection may be already dead.
+func (s *Client) killRunningCommands(addError func(error, string, ...any)) {
+	for _, cmd := range s.runningCommandsSnapshot() {
+		if cmd.exited.Load() {
+			continue
+		}
+
+		s.debug("Killing running command '%s'", cmd.Name)
+		if err := cmd.signal(gossh.SIGKILL); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			addError(err, "Failed to kill command '%s'", cmd.Name)
+		}
+	}
 }
 
 func (s *Client) debug(format string, v ...any) {
