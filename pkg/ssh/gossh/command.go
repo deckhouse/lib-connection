@@ -587,7 +587,7 @@ func (c *SSHCommand) SetupStreamHandlers() error {
 	ctx := context.Background()
 
 	// setup stdout stream handlers
-	if c.session != nil && c.out == nil && c.stdoutHandler == nil && len(c.Matchers) == 0 {
+	if c.session != nil && c.out == nil && c.stdoutHandler == nil && c.stderrHandler == nil && len(c.Matchers) == 0 {
 		c.session.Stdout = os.Stdout
 		c.session.Stdout = &c.OutBytes
 		c.session.Stderr = &c.ErrBytes
@@ -597,13 +597,23 @@ func (c *SSHCommand) SetupStreamHandlers() error {
 	var err error
 	var stdoutHandlerWritePipe *os.File
 	var stdoutHandlerReadPipe *os.File
+	var stderrHandlerWritePipe *os.File
+	var stderrHandlerReadPipe *os.File
+
+	// handler pipes are owned by this function until the goroutines below take them over
+	succeeded := false
+	defer func() {
+		if !succeeded {
+			closeFiles(stdoutHandlerReadPipe, stdoutHandlerWritePipe, stderrHandlerReadPipe, stderrHandlerWritePipe)
+		}
+	}()
+
 	if c.out != nil || c.stdoutHandler != nil || len(c.Matchers) > 0 {
 		if c.out == nil {
 			c.out = new(bytes.Buffer)
 		}
 
 		if c.stdoutPipeFile == nil {
-			var err error
 			c.stdoutPipeFile, err = c.session.StdoutPipe()
 			if err != nil {
 				return fmt.Errorf("open stdout pipe '%s': %w", c.Name, err)
@@ -619,19 +629,15 @@ func (c *SSHCommand) SetupStreamHandlers() error {
 		}
 	}
 
-	var stderrReadPipe io.Reader
-	var stderrHandlerWritePipe *os.File
-	var stderrHandlerReadPipe *os.File
 	if c.err != nil || c.stderrHandler != nil || len(c.Matchers) > 0 {
 		if c.err == nil {
 			c.err = new(bytes.Buffer)
 		}
 
 		if c.stderrPipeFile == nil {
-			var err error
 			c.stderrPipeFile, err = c.session.StderrPipe()
 			if err != nil {
-				return fmt.Errorf("open stdout pipe '%s': %w", c.Name, err)
+				return fmt.Errorf("open stderr pipe '%s': %w", c.Name, err)
 			}
 		}
 
@@ -658,12 +664,19 @@ func (c *SSHCommand) SetupStreamHandlers() error {
 	// - Copy to pipe if StdoutHandler is set
 	c.wg.Add(2)
 	go func() {
-		c.readFromStreams(c.stdoutPipeFile, stdoutHandlerWritePipe, false)
+		c.readFromStreams(c.stdoutPipeFile, stdoutHandlerWritePipe, stderrHandlerWritePipe, false)
 	}()
 
 	// sudo hack, because of password prompt is sent to STDERR, not STDOUT
 	go func() {
-		c.readFromStreams(c.stderrPipeFile, stdoutHandlerWritePipe, true)
+		c.readFromStreams(c.stderrPipeFile, stdoutHandlerWritePipe, stderrHandlerWritePipe, true)
+	}()
+
+	// both readers are done, nothing writes to the handler pipes anymore: close them
+	// so the line consumers get EOF and release the descriptors
+	go func() {
+		c.wg.Wait()
+		closeFiles(stdoutHandlerWritePipe, stderrHandlerWritePipe)
 	}()
 
 	go func() {
@@ -671,42 +684,9 @@ func (c *SSHCommand) SetupStreamHandlers() error {
 			c.logDebugF(ctx, "stdout read pipe not set. Consumer does not start")
 			return
 		}
+		defer closeFiles(stdoutHandlerReadPipe)
 		c.ConsumeLines(stdoutHandlerReadPipe, c.stdoutHandler)
 		c.logDebugF(ctx, "Stop lines consumer")
-	}()
-
-	// Start reading from stderr of a command.
-	// Copy to os.Stderr if live output is enabled
-	// Copy to buffer if capture is enabled
-	// Copy to pipe if StderrHandler is set
-	go func() {
-		if stderrReadPipe == nil {
-			c.logDebugF(ctx, "stdterr read pipe not set. Pipe reader does not start")
-			return
-		}
-
-		c.logDebugF(ctx, "Start reading from stderr pipe")
-		defer c.logDebugF(ctx, "Stop reading from stderr pipe")
-
-		buf := make([]byte, 16)
-		for {
-			n, err := stderrReadPipe.Read(buf)
-
-			// TODO logboek
-			if c.sshClient.settings.IsDebug() {
-				os.Stderr.Write(buf[:n])
-			}
-			if c.err != nil {
-				c.err.Write(buf[:n])
-			}
-			if c.stderrHandler != nil {
-				_, _ = stderrHandlerWritePipe.Write(buf[:n])
-			}
-
-			if err == io.EOF {
-				break
-			}
-		}
 	}()
 
 	go func() {
@@ -714,14 +694,17 @@ func (c *SSHCommand) SetupStreamHandlers() error {
 			c.logDebugF(ctx, "stdterr line consumer not set. Consumer does not start")
 			return
 		}
+		defer closeFiles(stderrHandlerReadPipe)
 		c.ConsumeLines(stderrHandlerReadPipe, c.stderrHandler)
 		c.logDebugF(ctx, "Stop stdterr line consumer")
 	}()
 
+	succeeded = true
+
 	return nil
 }
 
-func (c *SSHCommand) readFromStreams(stdoutReadPipe io.Reader, stdoutHandlerWritePipe io.Writer, isError bool) {
+func (c *SSHCommand) readFromStreams(stdoutReadPipe io.Reader, stdoutHandlerWritePipe, stderrHandlerWritePipe io.Writer, isError bool) {
 	ctx := context.Background()
 	defer c.logDebugF(ctx, "readFromStreams stopped")
 	defer c.wg.Done()
@@ -787,8 +770,18 @@ func (c *SSHCommand) readFromStreams(stdoutReadPipe io.Reader, stdoutHandlerWrit
 		if c.combined != nil {
 			_, _ = c.combined.Write(buf[:n])
 		}
-		if c.stdoutHandler != nil {
+		// stderr is also fed to the stdout handler (sudo hack) unless it has a handler of its own,
+		// otherwise every stderr line would be delivered twice
+		if c.stdoutHandler != nil && (!isError || c.stderrHandler == nil) {
 			_, _ = stdoutHandlerWritePipe.Write(buf[m:n])
+		}
+		if isError && c.stderrHandler != nil {
+			from := m
+			if len(c.Matchers) == 0 {
+				// nothing to wait for; m is n here only because matchersDone never becomes true
+				from = 0
+			}
+			_, _ = stderrHandlerWritePipe.Write(buf[from:n])
 		}
 
 		if err == io.EOF {
@@ -849,6 +842,14 @@ func (c *SSHCommand) setWaitError(err error) {
 	defer c.lockWaitError.Unlock()
 	c.lockWaitError.Lock()
 	c.waitError = err
+}
+
+func closeFiles(files ...*os.File) {
+	for _, f := range files {
+		if f != nil {
+			_ = f.Close()
+		}
+	}
 }
 
 func (c *SSHCommand) closeSession() {

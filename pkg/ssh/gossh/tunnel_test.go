@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"testing"
 	"time"
 
@@ -25,6 +26,7 @@ import (
 	ssh "github.com/deckhouse/lib-gossh"
 	"github.com/stretchr/testify/require"
 
+	"github.com/deckhouse/lib-connection/pkg/settings"
 	"github.com/deckhouse/lib-connection/pkg/tests"
 )
 
@@ -45,6 +47,65 @@ func TestTunnelMonitorContextReturnsWhenContextCannotBeCancelled(t *testing.T) {
 			return false
 		}
 	}, time.Second, 10*time.Millisecond, "monitorContext must not wait forever on a nil Done channel")
+}
+
+func TestTunnelHealthMonitorReturnsWhenStoppedRightAfterStart(t *testing.T) {
+	sshClient := &Client{settings: settings.NewBaseProviders(settings.ProviderParams{})}
+
+	// Stop may land at any point of the HealthMonitor start; the monitor must never be left
+	// waiting for a stop signal that was already spent
+	for i := range 300 {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		require.NoError(t, err)
+
+		tun := &Tunnel{sshClient: sshClient, errorCh: make(chan error, 10), started: true}
+		tun.setListener(listener)
+
+		done := make(chan struct{})
+		go func() {
+			tun.HealthMonitor(make(chan error, 1))
+			close(done)
+		}()
+
+		tun.Stop()
+
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			require.FailNow(t, "health monitor must return after the tunnel was stopped", "iteration %d", i)
+		}
+	}
+}
+
+func TestTunnelHealthMonitorReturnsOnStopWhenErrorReaderIsGone(t *testing.T) {
+	sshClient := &Client{settings: settings.NewBaseProviders(settings.ProviderParams{})}
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	tun := &Tunnel{sshClient: sshClient, errorCh: make(chan error, 10), started: true}
+	tun.setListener(listener)
+
+	// nobody reads errorOut, like a kube-proxy loop that is already stopped
+	errorOut := make(chan error)
+	done := make(chan struct{})
+	go func() {
+		tun.HealthMonitor(errorOut)
+		close(done)
+	}()
+
+	tun.sendError(errors.New("connection closed"))
+	require.Eventually(t, func() bool {
+		return len(tun.errorCh) == 0
+	}, 5*time.Second, 10*time.Millisecond, "monitor must take the error")
+
+	tun.Stop()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "health monitor must return on Stop while forwarding an error nobody reads")
+	}
 }
 
 func TestTunnelSendErrorDoesNotBlockWithoutHealthMonitor(t *testing.T) {

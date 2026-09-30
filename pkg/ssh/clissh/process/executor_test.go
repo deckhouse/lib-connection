@@ -207,3 +207,70 @@ func (r *eofChunkReader) Read(p []byte) (int, error) {
 	n := copy(p, r.chunk)
 	return n, io.EOF
 }
+
+func TestExecutor_SetupStreamHandlers_ReleasesPipesOnError(t *testing.T) {
+	cmd := exec.Command("true")
+	// StdinPipe fails when Stdin is already set, after all the pipes are created
+	cmd.Stdin = strings.NewReader("")
+
+	e := newTestExecutor(cmd)
+	e.CaptureStdout(nil)
+	e.CaptureStderr(nil)
+	e.WithStdoutHandler(func(_ string) {})
+	e.WithStderrHandler(func(_ string) {})
+	e.StdinPipe = true
+
+	before := openFDCount()
+
+	require.Error(t, e.SetupStreamHandlers())
+
+	e.pipesMutex.Lock()
+	assert.Nil(t, e.stdoutPipeFile)
+	assert.Nil(t, e.stderrPipeFile)
+	assert.Nil(t, e.stdoutReadPipe)
+	assert.Nil(t, e.stderrReadPipe)
+	assert.Nil(t, e.stdoutHandlerReadPipe)
+	assert.Nil(t, e.stderrHandlerReadPipe)
+	e.pipesMutex.Unlock()
+
+	assert.LessOrEqual(t, openFDCount(), before, "all descriptors created by the failed setup must be closed")
+}
+
+func TestExecutor_Start_ReleasesPipesWhenCommandFailsToStart(t *testing.T) {
+	e := newTestExecutor(exec.Command("/nonexistent/binary"))
+	e.CaptureStdout(nil)
+	e.CaptureStderr(nil)
+	e.WithStdoutHandler(func(_ string) {})
+	e.WithStderrHandler(func(_ string) {})
+
+	before := openFDCount()
+
+	require.Error(t, e.Start())
+
+	require.Eventually(t, func() bool {
+		return openFDCount() <= before &&
+			countGoroutinesWithStack("process.(*Executor).readFromStreams") == 0 &&
+			countGoroutinesWithStack("process.(*Executor).ConsumeLines") == 0
+	}, 5*time.Second, 10*time.Millisecond, "failed start must release pipes and stream goroutines")
+}
+
+// openFDCount counts descriptors of the test process by probing the low fd range,
+// which does not depend on /proc or /dev/fd being readable.
+func openFDCount() int {
+	// the first pipe of a process initializes the runtime poller, which holds a descriptor of
+	// its own: do that before counting so it cannot look like a leak
+	if r, w, err := os.Pipe(); err == nil {
+		_ = r.Close()
+		_ = w.Close()
+	}
+
+	count := 0
+	for fd := 0; fd < 1024; fd++ {
+		var st syscall.Stat_t
+		if syscall.Fstat(fd, &st) == nil {
+			count++
+		}
+	}
+
+	return count
+}

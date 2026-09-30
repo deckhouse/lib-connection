@@ -15,14 +15,20 @@
 package gossh
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"fmt"
+	"io"
+	"os"
+	"runtime/debug"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/deckhouse/lib-connection/pkg/settings"
 	"github.com/deckhouse/lib-connection/pkg/ssh/session"
 	"github.com/deckhouse/lib-connection/pkg/tests"
 )
@@ -54,6 +60,66 @@ func TestSSHCommandWatchCtxDoesNotBlockWhenResultIsNotRead(t *testing.T) {
 	}, time.Second, 10*time.Millisecond, "watchCtx must not block when command wait already returned")
 
 	require.ErrorIs(t, <-resultCh, context.Canceled)
+}
+
+func TestSSHCommandSetupStreamHandlersReleasesHandlerPipesAfterStreamsEnd(t *testing.T) {
+	// an unreferenced *os.File is closed by its finalizer on GC, which would hide a pipe
+	// nobody closes explicitly: keep GC off so the release has to be deterministic
+	gcPercent := debug.SetGCPercent(-1)
+	t.Cleanup(func() { debug.SetGCPercent(gcPercent) })
+
+	stdoutRead, stdoutWrite, err := os.Pipe()
+	require.NoError(t, err)
+	stderrRead, stderrWrite, err := os.Pipe()
+	require.NoError(t, err)
+
+	var mu sync.Mutex
+	var stderrLines []string
+
+	// preset stream pipes stand in for the ssh session, so no session calls are made
+	cmd := &SSHCommand{
+		sshClient:      &Client{settings: settings.NewBaseProviders(settings.ProviderParams{})},
+		stdoutPipeFile: stdoutRead,
+		stderrPipeFile: stderrRead,
+	}
+	cmd.WithStdoutHandler(func(string) {})
+	cmd.WithStderrHandler(func(l string) {
+		mu.Lock()
+		defer mu.Unlock()
+		stderrLines = append(stderrLines, l)
+	})
+
+	// a scanner calls the split func with no data left and atEOF exactly once, right before
+	// Scan returns false, and that only happens once its handler pipe is closed;
+	// both line consumers share this splitter
+	consumersAtEOF := make(chan struct{}, 2)
+	cmd.StdoutSplitter = func(data []byte, atEOF bool) (int, []byte, error) {
+		if atEOF && len(data) == 0 {
+			consumersAtEOF <- struct{}{}
+		}
+		return bufio.ScanLines(data, atEOF)
+	}
+
+	require.NoError(t, cmd.SetupStreamHandlers())
+
+	_, err = io.WriteString(stdoutWrite, "out line\n")
+	require.NoError(t, err)
+	_, err = io.WriteString(stderrWrite, "err line\n")
+	require.NoError(t, err)
+	require.NoError(t, stdoutWrite.Close())
+	require.NoError(t, stderrWrite.Close())
+
+	for range 2 {
+		select {
+		case <-consumersAtEOF:
+		case <-time.After(10 * time.Second):
+			require.FailNow(t, "line consumers must reach EOF once both streams end")
+		}
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Equal(t, []string{"err line"}, stderrLines)
 }
 
 func TestCommandOutput(t *testing.T) {
