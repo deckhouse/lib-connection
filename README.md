@@ -44,10 +44,11 @@ All implementations provide connection monitoring and reconnect automatically to
 fails.
 
 Commands run with `Sudo` (including kube-proxy and bundles) run as root on the remote, so `sshd` cannot deliver
-signals to them on behalf of the SSH user. The `go` client stops and signals such commands (`Stop`, context cancellation,
-`WithTimeout`, `Client.Stop`) by running `kill` as root in a separate session against the process group of the command,
-which the sudo wrapper reports at start ([see details here](./pkg/ssh/gossh/sudo_process.go)). This requires `bash` and
-`/proc` on the remote host; without them the signal is sent through the SSH session as before.
+signals to them on behalf of the SSH user. In the `go` client the sudo wrapper runs such a command in its own process
+group next to a root watchdog ([see details here](./pkg/ssh/gossh/sudo_process.go)). `Signal`, context cancellation and
+`WithTimeout` pass the signal to the watchdog through stdin of the session. When the session ends (`Stop`, `Client.Stop`,
+reconnect, or `sshd` closing a lost connection), the watchdog sends `SIGINT` to the command and `SIGKILL` 5 seconds later. The command gets
+`/dev/null` as stdin.
 
 `Script` implementations contain the method `ExecuteBundle` for running a script that runs a list of scripts
 named as `bundle` as output progress of running ([see implementation here](./pkg/ssh/utils/bundle.go)).

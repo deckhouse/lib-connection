@@ -15,299 +15,95 @@
 package gossh
 
 import (
-	"bytes"
 	"fmt"
-	"strconv"
+	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	gossh "github.com/deckhouse/lib-gossh"
 )
 
-// Signalling a command started with Sudo.
-//
-// sshd handles the "signal" channel request with killpg() on the process group
-// of the session, using the privileges of the SSH user. The process group of a
-// sudo command is "sudo -> command tree": sudo keeps the real uid of the user, so
-// it receives the signal, but the command runs as root and does not. For
-// signals sudo relays (TERM, INT, HUP, ...) the command may still get them from
-// sudo, but SIGKILL, SIGABRT and the rest just kill sudo and leave the command
-// running as an orphan.
-//
-// So a sudo command is signalled by running "kill" on the remote as root
-// through a separate session. The wrapper started by Sudo prints a marker line
-// with the process group id of the command tree and the start time of the group
-// leader (from /proc/<pgid>/stat), the line is stripped from the command output
-// by markerLineCapture. The start time is checked before killing, so a pgid
-// reused by another process (after a reboot of the host, for example) is never
-// signalled.
+// A sudo command runs as root, so sshd cannot signal it on behalf of the SSH user.
+// The sudo wrapper runs it in its own process group next to a root watchdog which
+// reads signal names from stdin and kills the group when stdin is closed.
 
-const (
-	// sudoPGIDMarker prefixes the line printed by the sudo wrapper:
-	// "SUDO-PGID=<pgid>:<starttime>"
-	sudoPGIDMarker = "SUDO-PGID="
-	// sudoPGIDMarkerMaxLine bounds the marker line, a longer line is not ours
-	sudoPGIDMarkerMaxLine = 64
+// sudoSuccessPattern is printed by the wrapper when sudo has started it
+const sudoSuccessPattern = "SUDO-SUCCESS"
 
-	remoteKillDoneMarker     = "SUDO-KILL-DONE"
-	remoteKillMismatchMarker = "SUDO-KILL-MISMATCH"
-	remoteKillNoProcMarker   = "SUDO-KILL-NOPROC"
+var (
+	// sudoStopGracePeriod is the time between SIGINT and SIGKILL after the session is closed
+	sudoStopGracePeriod = 5 * time.Second
+
+	sudoWatchdogTick = 100 * time.Millisecond
 )
 
-// sudoWrapperPGIDSnippet is run by the sudo wrapper before the command. It
-// prints the sudoPGIDMarker line: the process group of the command tree (sshd
-// starts every session in its own process group, sudo and the command inherit
-// it) and the start time of the group leader, field 22 of /proc/<pgid>/stat.
-//
-// The snippet is embedded into a single-quoted "bash -c" argument, so it must
-// not contain single quotes. "sudo -i" passes the command through the login
-// shell of the target user, which expands "$name", "$N" and "$$" before bash
-// sees them (sudo escapes every special character except "$"), so only the
-// "${name}" and "$(...)" forms may be used here.
-const sudoWrapperPGIDSnippet = `__st=$(</proc/self/stat); __st=${__st##*) }; set -- ${__st}; __pg=${3}; ` +
-	`__st=$(</proc/${__pg}/stat); __st=${__st##*) }; set -- ${__st}; ` +
-	`echo "` + sudoPGIDMarker + `${__pg}:${20}"; set --; unset __st __pg`
-
-// remoteProcessInfo identifies the process group of a sudo command on the remote
-type remoteProcessInfo struct {
-	PGID      int
-	StartTime string
+// sudoControlSignals are the signals the watchdog accepts from stdin
+var sudoControlSignals = []gossh.Signal{
+	gossh.SIGABRT,
+	gossh.SIGALRM,
+	gossh.SIGFPE,
+	gossh.SIGHUP,
+	gossh.SIGILL,
+	gossh.SIGINT,
+	gossh.SIGKILL,
+	gossh.SIGPIPE,
+	gossh.SIGQUIT,
+	gossh.SIGSEGV,
+	gossh.SIGTERM,
+	gossh.SIGUSR1,
+	gossh.SIGUSR2,
 }
 
-func (i remoteProcessInfo) String() string {
-	return fmt.Sprintf("pgid %d started at %s", i.PGID, i.StartTime)
+// sudoRelayedSignals are the signals sudo relays to the wrapper, the wrapper passes them to the command
+var sudoRelayedSignals = []gossh.Signal{
+	gossh.SIGHUP,
+	gossh.SIGINT,
+	gossh.SIGQUIT,
+	gossh.SIGTERM,
+	gossh.SIGUSR1,
+	gossh.SIGUSR2,
 }
 
-// remoteProcess holds the remoteProcessInfo of a sudo command once the wrapper
-// reported it, and lets the signal senders wait for it
-type remoteProcess struct {
-	mu   sync.Mutex
-	info remoteProcessInfo
-	ok   bool
+// sudoWrapperScript returns the "bash -c" script run by sudo for cmdLine. It goes
+// through the login shell of "sudo -i": no single quotes, and "$" only as "${name}" or "$(".
+func sudoWrapperScript(cmdLine string, grace time.Duration) string {
+	steps := max(int(grace/sudoWatchdogTick), 1)
 
-	readyOnce sync.Once
-	ready     chan struct{}
+	return "echo " + sudoSuccessPattern + "; set -m; " +
+		// the command gets its own process group and does not share stdin with the watchdog
+		"( " + cmdLine + " ) </dev/null & __pg=${!}; " +
+		"{ trap \"exit 0\" TERM; " +
+		"while read -r __s; do case ${__s} in " + joinSignals(sudoControlSignals, "|") +
+		") kill -s ${__s} -- -${__pg} 2>/dev/null;; esac; done; " +
+		// stdin is closed: the session is gone, stop the command and do not let the wrapper cancel it
+		"trap \"\" TERM; kill -s INT -- -${__pg} 2>/dev/null; " +
+		fmt.Sprintf("__i=0; while [ ${__i} -lt %d ] && kill -0 -- -${__pg} 2>/dev/null; do sleep %s; __i=$((__i+1)); done; ",
+			steps, formatSeconds(sudoWatchdogTick)) +
+		"kill -s KILL -- -${__pg} 2>/dev/null; } <&0 >/dev/null 2>&1 & __w=${!}; set +m; " +
+		"for __s in " + joinSignals(sudoRelayedSignals, " ") +
+		"; do trap \"kill -s ${__s} -- -${__pg} 2>/dev/null\" ${__s}; done; " +
+		"while :; do wait ${__pg} 2>/dev/null; __rc=${?}; kill -0 ${__pg} 2>/dev/null || break; done; " +
+		"kill ${__w} 2>/dev/null; exit ${__rc}"
 }
 
-func newRemoteProcess() *remoteProcess {
-	return &remoteProcess{
-		ready: make(chan struct{}),
-	}
-}
-
-// setFromMarkerLine parses "<pgid>:<starttime>" (the marker line without the
-// prefix) and publishes it. A line which cannot be parsed marks the process as
-// unavailable.
-func (p *remoteProcess) setFromMarkerLine(line []byte) error {
-	info, err := parseSudoPGIDLine(line)
-	if err != nil {
-		p.markUnavailable()
-		return err
-	}
-
-	p.mu.Lock()
-	p.info = info
-	p.ok = true
-	p.mu.Unlock()
-
-	p.readyOnce.Do(func() { close(p.ready) })
-	return nil
-}
-
-// markUnavailable unblocks the waiters without an info: the wrapper did not
-// report the process group (no /proc on the remote, stream closed, ...)
-func (p *remoteProcess) markUnavailable() {
-	p.readyOnce.Do(func() { close(p.ready) })
-}
-
-// get returns the info if it was published
-func (p *remoteProcess) get() (remoteProcessInfo, bool) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	return p.info, p.ok
-}
-
-// wait blocks until the info is published, the process is marked unavailable,
-// stop is closed or the timeout passes
-func (p *remoteProcess) wait(timeout time.Duration, stop <-chan struct{}) (remoteProcessInfo, bool) {
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-
-	select {
-	case <-p.ready:
-	case <-stop:
-	case <-timer.C:
+// sudoControlLine returns the stdin line which makes the watchdog send sig to the command
+func sudoControlLine(sig gossh.Signal) (string, error) {
+	if !slices.Contains(sudoControlSignals, sig) {
+		return "", fmt.Errorf("signal %q is not supported for sudo commands", sig)
 	}
 
-	return p.get()
+	return string(sig) + "\n", nil
 }
 
-func parseSudoPGIDLine(line []byte) (remoteProcessInfo, error) {
-	pgidStr, startTime, found := strings.Cut(strings.TrimSpace(string(line)), ":")
-	if !found {
-		return remoteProcessInfo{}, fmt.Errorf("no ':' in sudo pgid marker line %q", line)
-	}
-
-	pgid, err := strconv.Atoi(pgidStr)
-	if err != nil || pgid <= 1 {
-		return remoteProcessInfo{}, fmt.Errorf("invalid pgid in sudo pgid marker line %q", line)
-	}
-
-	if _, err := strconv.ParseUint(startTime, 10, 64); err != nil {
-		return remoteProcessInfo{}, fmt.Errorf("invalid start time in sudo pgid marker line %q", line)
-	}
-
-	return remoteProcessInfo{PGID: pgid, StartTime: startTime}, nil
-}
-
-// remoteKillScript returns the command run as root on the remote to deliver sigs
-// to the process group of proc. The group is signalled only if its leader is
-// still the process reported by the wrapper (same start time), otherwise the
-// pgid was reused and nothing is killed. The script reports the outcome with
-// the remoteKill*Marker lines.
-//
-// The script runs through the sudo wrapper: the same restrictions as for
-// sudoWrapperPGIDSnippet apply.
-func remoteKillScript(proc remoteProcessInfo, sigs []gossh.Signal) string {
-	kills := make([]string, 0, len(sigs))
+func joinSignals(sigs []gossh.Signal, sep string) string {
+	names := make([]string, 0, len(sigs))
 	for _, sig := range sigs {
-		kills = append(kills, fmt.Sprintf("kill -s %s -- -%d", sig, proc.PGID))
+		names = append(names, string(sig))
 	}
 
-	return fmt.Sprintf(
-		`if [ -r /proc/%[1]d/stat ]; then `+
-			`__st=$(</proc/%[1]d/stat); __st=${__st##*) }; set -- ${__st}; `+
-			`if [ "${20}" = "%[2]s" ]; then %[3]s; echo %[4]s; else echo %[5]s; fi; `+
-			`else echo %[6]s; fi`,
-		proc.PGID,
-		proc.StartTime,
-		strings.Join(kills, "; "),
-		remoteKillDoneMarker,
-		remoteKillMismatchMarker,
-		remoteKillNoProcMarker,
-	)
+	return strings.Join(names, sep)
 }
 
-// markerLineCapture removes one "<pattern><line>\n" from a byte stream fed in
-// arbitrary chunks and hands the line to onLine. Bytes of a partial pattern
-// match are withheld until the match succeeds or fails, so the consumers of
-// the stream never see a piece of the marker. If the stream ends or the line
-// grows over maxLine before its newline, everything withheld is given back to
-// the stream and onMissing is called.
-type markerLineCapture struct {
-	pattern []byte
-	maxLine int
-
-	onLine    func(line []byte)
-	onMissing func()
-
-	state     int // number of pattern bytes matched and withheld
-	capturing bool
-	line      []byte
-	done      bool
-}
-
-func newMarkerLineCapture(pattern string, maxLine int, onLine func(line []byte), onMissing func()) *markerLineCapture {
-	return &markerLineCapture{
-		pattern:   []byte(pattern),
-		maxLine:   maxLine,
-		onLine:    onLine,
-		onMissing: onMissing,
-	}
-}
-
-// Feed consumes the next chunk of the stream and returns the bytes which go on
-// to the consumers. The returned slice never aliases chunk while the capture
-// is in progress.
-func (m *markerLineCapture) Feed(chunk []byte) []byte {
-	if m.done {
-		return chunk
-	}
-
-	out := make([]byte, 0, len(chunk))
-	for _, b := range chunk {
-		out = m.feedByte(out, b)
-	}
-
-	return out
-}
-
-func (m *markerLineCapture) feedByte(out []byte, b byte) []byte {
-	if m.done {
-		return append(out, b)
-	}
-
-	if m.capturing {
-		if b == '\n' {
-			line := bytes.TrimRight(m.line, "\r")
-			m.finish()
-			if m.onLine != nil {
-				m.onLine(line)
-			}
-			return out
-		}
-
-		m.line = append(m.line, b)
-		if len(m.line) > m.maxLine {
-			// too long for the marker line: not ours, give it back
-			out = append(out, m.pattern...)
-			out = append(out, m.line...)
-			m.giveUp()
-		}
-		return out
-	}
-
-	if b == m.pattern[m.state] {
-		m.state++
-		if m.state == len(m.pattern) {
-			m.state = 0
-			m.capturing = true
-		}
-		return out
-	}
-
-	if m.state > 0 {
-		// the withheld prefix is not the marker: release it and match the byte
-		// from the beginning of the pattern
-		out = append(out, m.pattern[:m.state]...)
-		m.state = 0
-		return m.feedByte(out, b)
-	}
-
-	return append(out, b)
-}
-
-// Flush ends the capture at the end of the stream and returns the withheld bytes
-func (m *markerLineCapture) Flush() []byte {
-	if m.done {
-		return nil
-	}
-
-	var out []byte
-	switch {
-	case m.capturing:
-		out = append(out, m.pattern...)
-		out = append(out, m.line...)
-	case m.state > 0:
-		out = append(out, m.pattern[:m.state]...)
-	}
-
-	m.giveUp()
-	return out
-}
-
-func (m *markerLineCapture) finish() {
-	m.done = true
-	m.capturing = false
-	m.line = nil
-	m.state = 0
-}
-
-func (m *markerLineCapture) giveUp() {
-	m.finish()
-	if m.onMissing != nil {
-		m.onMissing()
-	}
+func formatSeconds(d time.Duration) string {
+	return strings.TrimRight(strings.TrimRight(fmt.Sprintf("%.3f", d.Seconds()), "0"), ".")
 }

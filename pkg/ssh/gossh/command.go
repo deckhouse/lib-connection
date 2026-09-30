@@ -28,7 +28,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/deckhouse/lib-dhctl/pkg/retry"
 	gossh "github.com/deckhouse/lib-gossh"
 	"github.com/name212/govalue"
 
@@ -38,20 +37,6 @@ import (
 
 var (
 	_ connection.Command = &SSHCommand{}
-)
-
-var (
-	// sudoProcessInfoWaitTimeout bounds waiting for the sudo wrapper to report the
-	// process group of the command before a signal is sent to it
-	sudoProcessInfoWaitTimeout = 10 * time.Second
-	// remoteKillTimeout bounds the remote "kill" run for a sudo command
-	remoteKillTimeout = 20 * time.Second
-	// remoteKillSessionLoopParamsOps bound the session creation for the remote
-	// "kill": the connection may be already dead, the signal is best effort
-	remoteKillSessionLoopParamsOps = []retry.ParamsBuilderOpt{
-		retry.WithWait(time.Second),
-		retry.WithAttempts(3),
-	}
 )
 
 type SSHCommand struct {
@@ -93,11 +78,8 @@ type SSHCommand struct {
 	stop   atomic.Bool
 	waitCh chan struct{}
 	stopCh chan struct{}
-
-	// exited is set when the remote process has exited (or the session is gone),
-	// exitedCh is closed at the same time
-	exited   atomic.Bool
-	exitedCh chan struct{}
+	// exited is set when the session of the command has ended
+	exited atomic.Bool
 
 	lockWaitError sync.RWMutex
 	waitError     error
@@ -106,17 +88,12 @@ type SSHCommand struct {
 	cmd     string
 	timeout time.Duration
 
-	// sudo is set by Sudo: the command runs as root and cannot be signalled
-	// through the session, see sudo_process.go
+	// sudo is set by Sudo, the command is signalled through the wrapper (see sudo_process.go)
 	sudo bool
-	// remoteProcess is the process group of the sudo command reported by the wrapper
-	remoteProcess *remoteProcess
-	// signalViaSessionOnly forces the session signal request for a sudo command,
-	// it is set for the remote "kill" commands themselves
-	signalViaSessionOnly bool
-	// startHost is the host the command was started on, a remote "kill" is run
-	// only while the client is connected to the same host
-	startHost string
+	// sudoStarted is set when the wrapper has started, it reads signals from stdin since then
+	sudoStarted atomic.Bool
+	// logCmd is logged instead of cmd, the sudo wrapper is too noisy for the logs
+	logCmd string
 
 	ctx       context.Context
 	Cancel    func() error
@@ -129,16 +106,6 @@ func NewSSHCommand(client *Client, name string, arg ...string) *SSHCommand {
 }
 
 func newSSHCommand(client *Client, name string, allowStopped bool, arg ...string) *SSHCommand {
-	// todo move new session to Start()
-	session, err := client.newSSHSession(allowStopped)
-	if err != nil {
-		client.settings.Logger().DebugContext(context.Background(), fmt.Sprintf("Cannot create new SSH session for command '%s': %v", name, err))
-	}
-
-	return newSSHCommandWithSession(client, session, name, arg...)
-}
-
-func newSSHCommandWithSession(client *Client, session *gossh.Session, name string, arg ...string) *SSHCommand {
 	args := make([]string, len(arg))
 	copy(args, arg)
 	cmd := name + " "
@@ -150,6 +117,12 @@ func newSSHCommandWithSession(client *Client, session *gossh.Session, name strin
 		}
 	}
 
+	// todo move new session to Start()
+	session, err := client.newSSHSession(allowStopped)
+	if err != nil {
+		client.settings.Logger().DebugContext(context.Background(), fmt.Sprintf("Cannot create new SSH session for command '%s': %v", name, err))
+	}
+
 	return &SSHCommand{
 		// Executor: process.NewDefaultExecutor(sess.Run(cmd)),
 		sshClient: client,
@@ -158,7 +131,6 @@ func newSSHCommandWithSession(client *Client, session *gossh.Session, name strin
 		Args:      args,
 		Env:       os.Environ(),
 		cmd:       cmd,
-		exitedCh:  make(chan struct{}),
 	}
 }
 
@@ -227,13 +199,9 @@ func (c *SSHCommand) start() error {
 
 	command := c.cmd + " " + strings.Join(c.Args, " ")
 
-	c.startHost = c.sshClient.Session().Host()
-
 	if err := c.session.Start(command); err != nil {
-		return err
+		return fmt.Errorf("start command '%s': %w", c.Name, err)
 	}
-
-	c.sshClient.registerCommand(c)
 
 	return nil
 }
@@ -265,7 +233,7 @@ func (c *SSHCommand) wait() error {
 
 	go func() {
 		err := c.session.Wait()
-		c.markExited()
+		c.exited.Store(true)
 		waitCh <- err
 	}()
 
@@ -278,6 +246,12 @@ func (c *SSHCommand) wait() error {
 		// }
 		return err
 	case err := <-waitCh:
+		// the command killed by Cancel may exit before watchCtx reports, prefer its result
+		if err != nil && c.ctxResult != nil && c.ctx.Err() != nil {
+			if ctxErr := <-c.ctxResult; ctxErr != nil {
+				return ctxErr
+			}
+		}
 		if err != nil {
 			return err
 		}
@@ -439,22 +413,19 @@ func (c *SSHCommand) WithMatchHandler(fn func(pattern string) string) *SSHComman
 
 func (c *SSHCommand) Sudo(ctx context.Context) {
 	cmdLine := c.Name + " " + strings.Join(c.Args, " ")
-	// the wrapper reports the process group of the command first (see
-	// sudo_process.go), the marker line is stripped from the output
 	sudoCmdLine := fmt.Sprintf(
-		`sudo -p SudoPassword -H -S -i bash -c '%s; echo SUDO-SUCCESS && %s'`,
-		sudoWrapperPGIDSnippet,
-		cmdLine,
+		`sudo -p SudoPassword -H -S -i bash -c '%s'`,
+		sudoWrapperScript(cmdLine, sudoStopGracePeriod),
 	)
 
 	c.cmd = sudoCmdLine
+	c.logCmd = fmt.Sprintf(`sudo -p SudoPassword -H -S -i bash -c '<wrapper> %s'`, cmdLine)
 	c.sudo = true
-	c.remoteProcess = newRemoteProcess()
 	c.Cmd(ctx)
 
 	c.WithMatchers(
 		utils.NewByteSequenceMatcher("SudoPassword"),
-		utils.NewByteSequenceMatcher("SUDO-SUCCESS").WaitNonMatched(),
+		utils.NewByteSequenceMatcher(sudoSuccessPattern).WaitNonMatched(),
 	)
 	c.OpenStdinPipe()
 
@@ -478,11 +449,8 @@ func (c *SSHCommand) Sudo(ctx context.Context) {
 			}
 			return "reset"
 		}
-		if pattern == "SUDO-SUCCESS" {
+		if pattern == sudoSuccessPattern {
 			c.logDebugF(ctx, "Got SUCCESS for sudo password")
-			// the process group is reported before this marker: if it is not
-			// captured by now, it will never be
-			c.remoteProcess.markUnavailable()
 			if c.onCommandStart != nil {
 				c.onCommandStart()
 			}
@@ -794,28 +762,6 @@ func (c *SSHCommand) readFromStreams(stdoutReadPipe io.Reader, stdoutHandlerWrit
 
 	c.logDebugF(ctx, "Start read from streams")
 
-	// the sudo wrapper reports the process group of the command on stdout,
-	// the marker line is consumed here and never reaches the consumers
-	var processInfoCapture *markerLineCapture
-	if !isError && c.remoteProcess != nil {
-		processInfoCapture = newMarkerLineCapture(
-			sudoPGIDMarker,
-			sudoPGIDMarkerMaxLine,
-			func(line []byte) {
-				if err := c.remoteProcess.setFromMarkerLine(line); err != nil {
-					c.logDebugF(ctx, "Cannot parse sudo process info: %v", err)
-					return
-				}
-				info, _ := c.remoteProcess.get()
-				c.logDebugF(ctx, "Got sudo process info: %s", info.String())
-			},
-			func() {
-				c.logDebugF(ctx, "Sudo process info was not reported")
-				c.remoteProcess.markUnavailable()
-			},
-		)
-	}
-
 	buf := make([]byte, 16)
 	matchersDone := false
 	errorsCount := 0
@@ -830,22 +776,15 @@ func (c *SSHCommand) readFromStreams(stdoutReadPipe io.Reader, stdoutHandlerWrit
 			continue
 		}
 
-		chunk := buf[:n]
-		if processInfoCapture != nil {
-			chunk = processInfoCapture.Feed(chunk)
-			if err == io.EOF {
-				if withheld := processInfoCapture.Flush(); len(withheld) > 0 {
-					chunk = append(append([]byte{}, chunk...), withheld...)
-				}
-			}
-			n = len(chunk)
-		}
-
 		m := 0
 		if !matchersDone {
 			c.matchersMu.Lock()
 			for _, matcher := range c.Matchers {
-				m = matcher.Analyze(chunk)
+				m = matcher.Analyze(buf[:n])
+				if c.sudo && matcher.Pattern == sudoSuccessPattern && matcher.IsPatternFound() {
+					// the wrapper reads stdin from now on, the match itself waits for the next output
+					c.sudoStarted.Store(true)
+				}
 				if matcher.IsMatched() {
 					c.logDebugF(ctx, "Triggered match for '%s'", matcher.Pattern)
 					// matcher is triggered
@@ -870,21 +809,21 @@ func (c *SSHCommand) readFromStreams(stdoutReadPipe io.Reader, stdoutHandlerWrit
 		}
 		// TODO logboek
 		if c.sshClient.settings.IsDebug() {
-			_, _ = os.Stdout.Write(chunk[m:n])
+			_, _ = os.Stdout.Write(buf[m:n])
 		}
 		if c.out != nil && !isError {
-			_, _ = c.out.Write(chunk)
+			_, _ = c.out.Write(buf[:n])
 		}
 
 		if c.err != nil && isError {
-			_, _ = c.err.Write(chunk)
+			_, _ = c.err.Write(buf[:n])
 		}
 
 		if c.combined != nil {
-			_, _ = c.combined.Write(chunk)
+			_, _ = c.combined.Write(buf[:n])
 		}
 		if c.stdoutHandler != nil {
-			_, _ = stdoutHandlerWritePipe.Write(chunk[m:n])
+			_, _ = stdoutHandlerWritePipe.Write(buf[m:n])
 		}
 
 		if err == io.EOF {
@@ -938,137 +877,59 @@ func (c *SSHCommand) Stop() {
 		close(c.stopCh)
 	}
 	c.logDebugF(ctx, "Stopped")
-	c.logDebugF(ctx, "Sending SIGINT and SIGKILL...")
-	if err := c.signal(gossh.SIGINT, gossh.SIGKILL); err != nil && !errors.Is(err, os.ErrProcessDone) {
-		c.logDebugF(ctx, "Cannot signal: %v", err)
-		c.killError = err
+
+	if c.sudo && c.Stdin != nil {
+		// the wrapper sends SIGINT and then SIGKILL after sudoStopGracePeriod
+		c.logDebugF(ctx, "Closing stdin of sudo wrapper...")
+		if err := c.Stdin.Close(); err != nil && !errors.Is(err, io.EOF) {
+			c.logDebugF(ctx, "Cannot close stdin of sudo wrapper: %v", err)
+		}
+		return
 	}
-	c.logDebugF(ctx, "Signals SIGINT and SIGKILL sent")
+
+	c.logDebugF(ctx, "Sending SIGINT...")
+	_ = c.session.Signal(gossh.SIGINT)
+	c.logDebugF(ctx, "Signal SIGINT sent")
+	_ = c.session.Signal(gossh.SIGKILL)
 }
 
-// Signal sends sig to the remote process.
-//
-// A command started with Sudo runs as root, the signal request of the SSH
-// session reaches only the sudo process (see sudo_process.go), so such a
-// command is signalled with a remote "kill" of its process group run through
-// a separate sudo session. If the process group is unknown (the wrapper has
-// not reported it, the host has changed since the start) the session signal
-// request is sent instead. Returns os.ErrProcessDone if the process has exited.
+// Signal sends sig to the remote process. A started sudo command gets it from the wrapper
+// as root (see sudo_process.go). Returns os.ErrProcessDone if the process has exited.
 func (c *SSHCommand) Signal(sig gossh.Signal) error {
 	return c.signal(sig)
 }
 
-// signal sends sigs to the remote process in the given order, see Signal
-func (c *SSHCommand) signal(sigs ...gossh.Signal) error {
-	ctx := context.Background()
-
+func (c *SSHCommand) signal(sig gossh.Signal) error {
 	if c.session == nil {
 		return fmt.Errorf("ssh session not started")
 	}
 
-	if len(sigs) == 0 {
-		return nil
-	}
-
 	if c.exited.Load() {
-		c.logDebugF(ctx, "Process has exited. Skip sending %v", sigs)
 		return os.ErrProcessDone
 	}
 
-	if !c.sudo || c.signalViaSessionOnly {
-		return c.signalViaSession(sigs...)
-	}
-
-	proc, ok := c.remoteProcess.wait(sudoProcessInfoWaitTimeout, c.exitedCh)
-	if c.exited.Load() {
-		c.logDebugF(ctx, "Process has exited. Skip sending %v", sigs)
-		return os.ErrProcessDone
-	}
-
-	if !ok {
-		c.logDebugF(ctx, "Process group of sudo command is unknown. Send %v via session", sigs)
-		return c.signalViaSession(sigs...)
-	}
-
-	if host := c.sshClient.Session().Host(); host != c.startHost {
-		c.logDebugF(ctx, "Command was started on host '%s' but client connected to '%s'. Send %v via session", c.startHost, host, sigs)
-		return c.signalViaSession(sigs...)
-	}
-
-	if err := c.killRemoteProcessGroup(proc, sigs); err != nil {
-		c.logDebugF(ctx, "Remote kill failed: %v. Send %v via session", err, sigs)
-		if sessionErr := c.signalViaSession(sigs...); sessionErr != nil {
-			return errors.Join(err, sessionErr)
-		}
-		return err
-	}
-
-	return nil
-}
-
-func (c *SSHCommand) signalViaSession(sigs ...gossh.Signal) error {
-	for _, sig := range sigs {
+	if !c.sudo || !c.sudoStarted.Load() || c.Stdin == nil {
+		// the sudo wrapper has not started yet: only sudo can be signalled
 		if err := c.session.Signal(sig); err != nil {
 			return fmt.Errorf("send %s via session: %w", sig, err)
 		}
+		return nil
+	}
+
+	line, err := sudoControlLine(sig)
+	if err != nil {
+		return err
+	}
+
+	c.logDebugF(context.Background(), "Sending %s via sudo wrapper", sig)
+	if _, err := c.Stdin.Write([]byte(line)); err != nil {
+		if c.exited.Load() {
+			return os.ErrProcessDone
+		}
+		return fmt.Errorf("send %s via sudo wrapper: %w", sig, err)
 	}
 
 	return nil
-}
-
-// killRemoteProcessGroup delivers sigs to the process group proc on the remote
-// with a "kill" run as root through a new session, see remoteKillScript
-func (c *SSHCommand) killRemoteProcessGroup(proc remoteProcessInfo, sigs []gossh.Signal) error {
-	// the command may be killed because its context is done or the client is
-	// stopping, the kill must not depend on the canceled contexts
-	baseCtx := context.Background()
-	if c.ctx != nil {
-		baseCtx = context.WithoutCancel(c.ctx)
-	}
-	ctx, cancel := context.WithTimeout(baseCtx, remoteKillTimeout)
-	defer cancel()
-
-	c.logDebugF(ctx, "Sending %v to remote process group (%s)", sigs, proc.String())
-
-	// the kill is allowed on a stopping client: Stop kills the running commands
-	sess, err := c.sshClient.newSSHSessionWithParams(true, retry.NewEmptyParams(remoteKillSessionLoopParamsOps...))
-	if err != nil {
-		return fmt.Errorf("cannot open session for remote kill: %w", err)
-	}
-
-	killCmd := newSSHCommandWithSession(c.sshClient, sess, remoteKillScript(proc, sigs))
-	killCmd.signalViaSessionOnly = true
-	killCmd.Sudo(ctx)
-
-	out, err := killCmd.CombinedOutput(ctx)
-	outStr := string(out)
-
-	switch {
-	case strings.Contains(outStr, remoteKillDoneMarker):
-		c.logDebugF(ctx, "Remote process group %s got %v", proc.String(), sigs)
-		return nil
-	case strings.Contains(outStr, remoteKillMismatchMarker):
-		c.logDebugF(ctx, "Leader of remote process group %s was replaced by another process. Nothing to kill", proc.String())
-		return nil
-	case strings.Contains(outStr, remoteKillNoProcMarker):
-		c.logDebugF(ctx, "Remote process group %s does not exist. Nothing to kill", proc.String())
-		return nil
-	}
-
-	if err != nil {
-		return fmt.Errorf("remote kill failed: %w; output: %s", err, strings.TrimSpace(outStr))
-	}
-
-	return fmt.Errorf("remote kill returned unexpected output: %s", strings.TrimSpace(outStr))
-}
-
-func (c *SSHCommand) markExited() {
-	if !c.exited.CompareAndSwap(false, true) {
-		return
-	}
-
-	close(c.exitedCh)
-	c.sshClient.unregisterCommand(c)
 }
 
 func (c *SSHCommand) setWaitError(err error) {
@@ -1080,16 +941,16 @@ func (c *SSHCommand) setWaitError(err error) {
 func (c *SSHCommand) closeSession() {
 	c.session.Close()
 	c.sshClient.UnregisterSession(c.session)
-	c.sshClient.unregisterCommand(c)
 }
-
 func (c *SSHCommand) logDebugF(ctx context.Context, format string, v ...interface{}) {
 	msg := fmt.Sprintf(format, v...)
 	args := ""
 	if len(c.Args) > 0 {
 		args = strings.Join(c.Args, " ")
 	}
-	// the process group snippet of the sudo wrapper is too noisy for the logs
-	cmd := strings.Replace(c.cmd, sudoWrapperPGIDSnippet, "<report process group>", 1)
+	cmd := c.cmd
+	if c.logCmd != "" {
+		cmd = c.logCmd
+	}
 	c.sshClient.settings.Logger().DebugContext(ctx, fmt.Sprintf("'%s' for cmd '%s' with args '%s' with client '%s'\n", msg, cmd, args, c.clientString()))
 }

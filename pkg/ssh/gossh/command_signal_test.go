@@ -18,13 +18,14 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strconv"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	gossh "github.com/deckhouse/lib-gossh"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/deckhouse/lib-connection/pkg/tests"
@@ -53,27 +54,6 @@ func remoteProcessLines(t *testing.T, container *tests.TestContainerWrapper, mar
 	return lines
 }
 
-// remoteProcessPGID returns the process group of the process whose command line
-// starts with marker (the command itself, not its wrappers)
-func remoteProcessPGID(t *testing.T, container *tests.TestContainerWrapper, marker string) int {
-	t.Helper()
-
-	for _, line := range remoteProcessLines(t, container, marker) {
-		// pid pgid user args...
-		fields := strings.Fields(line)
-		if len(fields) < 4 || strings.Join(fields[3:], " ") != marker {
-			continue
-		}
-
-		pgid, err := strconv.Atoi(fields[1])
-		require.NoError(t, err, "cannot parse pgid from ps line %q", line)
-		return pgid
-	}
-
-	require.Failf(t, "process not found", "no process %q in container", marker)
-	return 0
-}
-
 func requireEventuallyRemoteProcess(t *testing.T, container *tests.TestContainerWrapper, marker string) {
 	t.Helper()
 
@@ -85,19 +65,10 @@ func requireEventuallyRemoteProcess(t *testing.T, container *tests.TestContainer
 func requireEventuallyNoRemoteProcess(t *testing.T, container *tests.TestContainerWrapper, marker string) {
 	t.Helper()
 
-	var last []string
-	require.Eventually(t, func() bool {
-		last = remoteProcessLines(t, container, marker)
-		return len(last) == 0
-	}, remoteProcessWait, remoteProcessTick, "processes %q should be killed in container, still running:\n%s", marker, strings.Join(last, "\n"))
-}
-
-func requireRemoteProcessStays(t *testing.T, container *tests.TestContainerWrapper, marker string, d time.Duration) {
-	t.Helper()
-
-	require.Never(t, func() bool {
-		return len(remoteProcessLines(t, container, marker)) == 0
-	}, d, remoteProcessTick, "process %q should stay running in container", marker)
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		lines := remoteProcessLines(t, container, marker)
+		assert.Empty(c, lines, "processes %q should be killed in container, still running:\n%s", marker, strings.Join(lines, "\n"))
+	}, remoteProcessWait, remoteProcessTick)
 }
 
 func TestCommandSudoSignals(t *testing.T) {
@@ -106,13 +77,12 @@ func TestCommandSudoSignals(t *testing.T) {
 	sshClient, container := startContainerAndClientWithContainer(t, test)
 	ctx := context.Background()
 
-	// startSleep starts "sleep <seconds>" (a unique duration identifies the process
-	// in the container) with a wait handler, so Start returns right away
-	startSleep := func(t *testing.T, sshClient *Client, seconds int, sudo bool) (*SSHCommand, string, <-chan error) {
+	// startCommand starts cmdLine with a wait handler, so Start returns right away,
+	// marker identifies the process in the container
+	startCommand := func(t *testing.T, sshClient *Client, cmdLine, marker string, sudo bool) (*SSHCommand, <-chan error) {
 		t.Helper()
 
-		marker := fmt.Sprintf("sleep %d", seconds)
-		cmd := NewSSHCommand(sshClient, marker)
+		cmd := NewSSHCommand(sshClient, cmdLine)
 		if sudo {
 			cmd.Sudo(ctx)
 		} else {
@@ -124,29 +94,39 @@ func TestCommandSudoSignals(t *testing.T) {
 
 		require.NoError(t, cmd.Start())
 		requireEventuallyRemoteProcess(t, container, marker)
+		if sudo {
+			require.Eventually(t, cmd.sudoStarted.Load, remoteProcessWait, 100*time.Millisecond, "sudo wrapper should start")
+		}
 
+		return cmd, waitErrCh
+	}
+
+	startSleep := func(t *testing.T, sshClient *Client, seconds int, sudo bool) (*SSHCommand, string, <-chan error) {
+		t.Helper()
+
+		marker := fmt.Sprintf("sleep %d", seconds)
+		cmd, waitErrCh := startCommand(t, sshClient, marker, marker, sudo)
 		return cmd, marker, waitErrCh
 	}
 
-	t.Run("wrapper reports the process group of the command", func(t *testing.T) {
+	t.Run("Stop kills the command", func(t *testing.T) {
 		cmd, marker, _ := startSleep(t, sshClient, 3001, true)
-		defer cmd.Stop()
-
-		info, ok := cmd.remoteProcess.wait(sudoProcessInfoWaitTimeout, nil)
-		require.True(t, ok, "process group should be reported")
-		require.Equal(t, remoteProcessPGID(t, container, marker), info.PGID, "reported pgid should be the pgid of the command")
-		require.NotEmpty(t, info.StartTime)
-	})
-
-	t.Run("Stop kills the process group", func(t *testing.T) {
-		cmd, marker, _ := startSleep(t, sshClient, 3002, true)
 
 		cmd.Stop()
 
 		requireEventuallyNoRemoteProcess(t, container, marker)
 	})
 
-	t.Run("Signal SIGABRT kills the process group", func(t *testing.T) {
+	t.Run("Stop kills a command which ignores SIGINT", func(t *testing.T) {
+		marker := "sleep 3002"
+		cmd, _ := startCommand(t, sshClient, `trap "" INT; `+marker, marker, true)
+
+		cmd.Stop()
+
+		requireEventuallyNoRemoteProcess(t, container, marker)
+	})
+
+	t.Run("Signal SIGABRT kills the command", func(t *testing.T) {
 		cmd, marker, waitErrCh := startSleep(t, sshClient, 3003, true)
 
 		require.NoError(t, cmd.Signal(gossh.SIGABRT))
@@ -163,23 +143,35 @@ func TestCommandSudoSignals(t *testing.T) {
 		require.ErrorIs(t, cmd.Signal(gossh.SIGKILL), os.ErrProcessDone, "signal to an exited command should report that")
 	})
 
-	t.Run("context deadline kills the process group", func(t *testing.T) {
+	t.Run("context deadline returns the context error", func(t *testing.T) {
+		for i := range 5 {
+			deadlineCtx, cancel := context.WithTimeout(ctx, time.Second)
+
+			cmd := NewSSHCommand(sshClient, fmt.Sprintf("sleep %d", 3010+i))
+			cmd.Sudo(deadlineCtx)
+
+			err := cmd.Run(deadlineCtx)
+			cancel()
+			require.ErrorIs(t, err, context.DeadlineExceeded, "run %d", i)
+		}
+	})
+
+	t.Run("context deadline kills a command which ignores SIGINT", func(t *testing.T) {
 		marker := "sleep 3004"
 
 		deadlineCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 
-		cmd := NewSSHCommand(sshClient, marker)
+		cmd := NewSSHCommand(sshClient, `trap "" INT; `+marker)
 		cmd.Sudo(deadlineCtx)
 
 		err := cmd.Run(deadlineCtx)
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "context deadline exceeded")
+		require.ErrorIs(t, err, context.DeadlineExceeded)
 
 		requireEventuallyNoRemoteProcess(t, container, marker)
 	})
 
-	t.Run("timeout kills the process group", func(t *testing.T) {
+	t.Run("timeout kills the command", func(t *testing.T) {
 		marker := "sleep 3005"
 
 		cmd := NewSSHCommand(sshClient, marker)
@@ -191,18 +183,13 @@ func TestCommandSudoSignals(t *testing.T) {
 		requireEventuallyNoRemoteProcess(t, container, marker)
 	})
 
-	t.Run("stale process group is not killed", func(t *testing.T) {
+	t.Run("closed session kills the command after sudo is killed", func(t *testing.T) {
 		cmd, marker, _ := startSleep(t, sshClient, 3006, true)
 
-		info, ok := cmd.remoteProcess.wait(sudoProcessInfoWaitTimeout, nil)
-		require.True(t, ok, "process group should be reported")
+		// sshd signals as the SSH user: only sudo is killed
+		require.NoError(t, cmd.session.Signal(gossh.SIGKILL))
+		cmd.closeSession()
 
-		// the same pgid started at another time: another process after pid reuse
-		stale := remoteProcessInfo{PGID: info.PGID, StartTime: info.StartTime + "1"}
-		require.NoError(t, cmd.killRemoteProcessGroup(stale, []gossh.Signal{gossh.SIGKILL}))
-		requireRemoteProcessStays(t, container, marker, 3*time.Second)
-
-		require.NoError(t, cmd.killRemoteProcessGroup(info, []gossh.Signal{gossh.SIGKILL}))
 		requireEventuallyNoRemoteProcess(t, container, marker)
 	})
 
@@ -217,31 +204,51 @@ func TestCommandSudoSignals(t *testing.T) {
 		requireEventuallyNoRemoteProcess(t, container, marker)
 	})
 
+	t.Run("client restart kills the running command", func(t *testing.T) {
+		restartTest := tests.ShouldNewIntegrationTest(t, "TestCommandSudoSignalsClientRestart")
+		restartClient := startClient(t, restartTest, container)
+
+		_, marker, _ := startSleep(t, restartClient, 3008, true)
+
+		require.NoError(t, restartClient.Start(ctx))
+
+		requireEventuallyNoRemoteProcess(t, container, marker)
+	})
+
 	t.Run("Stop kills a command started without sudo", func(t *testing.T) {
-		cmd, marker, _ := startSleep(t, sshClient, 3008, false)
+		cmd, marker, _ := startSleep(t, sshClient, 3009, false)
 
 		cmd.Stop()
 
 		requireEventuallyNoRemoteProcess(t, container, marker)
 	})
 
-	t.Run("output of a sudo command does not contain the process group", func(t *testing.T) {
+	t.Run("Stop of a command which was not started returns immediately", func(t *testing.T) {
+		cmd := NewSSHCommand(sshClient, "sleep 3020")
+		cmd.Sudo(ctx)
+		defer cmd.closeSession()
+
+		start := time.Now()
+		cmd.Stop()
+		require.Less(t, time.Since(start), 2*time.Second)
+	})
+
+	t.Run("output of a sudo command is not changed by the wrapper", func(t *testing.T) {
 		cmd := NewSSHCommand(sshClient, "echo hi; echo err >&2")
 		cmd.Sudo(ctx)
 		out, errOut, err := cmd.Output(ctx)
 		require.NoError(t, err)
 		require.Equal(t, "SUDO-SUCCESS\nhi\n", string(out))
-		require.NotContains(t, string(errOut), sudoPGIDMarker)
 		require.Contains(t, string(errOut), "err\n")
 
-		cmd = NewSSHCommand(sshClient, "echo hi; echo err >&2")
+		cmd = NewSSHCommand(sshClient, "echo hi; exit 3")
 		cmd.Sudo(ctx)
-		combined, err := cmd.CombinedOutput(ctx)
-		require.NoError(t, err)
-		require.NotContains(t, string(combined), sudoPGIDMarker)
-		require.Contains(t, string(combined), "SUDO-SUCCESS\nhi\n")
+		_, _, err = cmd.Output(ctx)
+		var exitErr *gossh.ExitError
+		require.ErrorAs(t, err, &exitErr)
+		require.Equal(t, 3, exitErr.ExitStatus())
 
-		// the stdout handler is fed by its own goroutine which may lag behind Run
+		// the stdout handler gets stderr too once sudo has started, in any order
 		var (
 			linesMu sync.Mutex
 			lines   []string
@@ -257,10 +264,12 @@ func TestCommandSudoSignals(t *testing.T) {
 		require.Eventually(t, func() bool {
 			linesMu.Lock()
 			defer linesMu.Unlock()
-			return len(lines) > 0
+			return slices.Contains(lines, "hi")
 		}, 10*time.Second, 100*time.Millisecond, "stdout handler should get the output")
 		linesMu.Lock()
-		require.Equal(t, []string{"hi"}, lines, "stdout handler must not get the process group line")
-		linesMu.Unlock()
+		defer linesMu.Unlock()
+		for _, line := range lines {
+			require.Contains(t, []string{"hi", "err"}, line, "stdout handler got unexpected line")
+		}
 	})
 }

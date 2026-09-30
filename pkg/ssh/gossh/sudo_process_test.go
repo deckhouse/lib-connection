@@ -15,7 +15,12 @@
 package gossh
 
 import (
-	"fmt"
+	"bytes"
+	"errors"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -25,218 +30,177 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// bareDollarRe matches "$name", "$N" and "$$": the login shell started by
+// bareDollarRe matches "$name", "$N", "$$" and "$-": the login shell started by
 // "sudo -i" expands them before bash gets the command
-var bareDollarRe = regexp.MustCompile(`\$[A-Za-z0-9_$]`)
+var bareDollarRe = regexp.MustCompile(`\$[A-Za-z0-9_$-]`)
 
-func TestSudoWrapperSnippetsAreSafeForSudoLoginShell(t *testing.T) {
-	scripts := map[string]string{
-		"pgid snippet": sudoWrapperPGIDSnippet,
-		"kill script":  remoteKillScript(remoteProcessInfo{PGID: 4242, StartTime: "123456"}, []gossh.Signal{gossh.SIGINT, gossh.SIGKILL}),
-	}
+const testWrapperGrace = time.Second
 
-	for name, script := range scripts {
-		t.Run(name, func(t *testing.T) {
-			require.NotContains(t, script, "'", "script is embedded into a single-quoted bash -c argument")
-			require.Empty(t, bareDollarRe.FindAllString(script, -1), "only ${name} and $(...) survive the sudo -i login shell")
-		})
-	}
+func TestSudoWrapperScriptIsSafeForSudoLoginShell(t *testing.T) {
+	script := sudoWrapperScript("sleep 1", sudoStopGracePeriod)
+
+	require.NotContains(t, script, "'", "script is embedded into a single-quoted bash -c argument")
+	require.Empty(t, bareDollarRe.FindAllString(script, -1), "only ${name} and $(...) survive the sudo -i login shell")
+	require.Contains(t, script, "while [ ${__i} -lt 50 ]", "grace period is 50 ticks of 0.1s")
 }
 
-func TestRemoteKillScript(t *testing.T) {
-	script := remoteKillScript(remoteProcessInfo{PGID: 4242, StartTime: "123456"}, []gossh.Signal{gossh.SIGINT, gossh.SIGKILL})
+func TestSudoControlLine(t *testing.T) {
+	line, err := sudoControlLine(gossh.SIGKILL)
+	require.NoError(t, err)
+	require.Equal(t, "KILL\n", line)
 
-	require.Contains(t, script, "/proc/4242/stat")
-	require.Contains(t, script, `[ "${20}" = "123456" ]`)
-	require.Contains(t, script, "kill -s INT -- -4242; kill -s KILL -- -4242")
-	require.Contains(t, script, remoteKillDoneMarker)
-	require.Contains(t, script, remoteKillMismatchMarker)
-	require.Contains(t, script, remoteKillNoProcMarker)
+	_, err = sudoControlLine(gossh.Signal("KILL; echo"))
+	require.Error(t, err)
 }
 
-func TestParseSudoPGIDLine(t *testing.T) {
-	cases := []struct {
-		line    string
-		want    remoteProcessInfo
-		wantErr bool
-	}{
-		{line: "4242:123456", want: remoteProcessInfo{PGID: 4242, StartTime: "123456"}},
-		{line: "  4242:123456 \r", want: remoteProcessInfo{PGID: 4242, StartTime: "123456"}},
-		{line: ":", wantErr: true},
-		{line: "", wantErr: true},
-		{line: "4242", wantErr: true},
-		{line: "abc:123", wantErr: true},
-		{line: "4242:", wantErr: true},
-		{line: "4242:abc", wantErr: true},
-		{line: "1:123", wantErr: true},
-		{line: "-5:123", wantErr: true},
-	}
-
-	for _, c := range cases {
-		t.Run(fmt.Sprintf("%q", c.line), func(t *testing.T) {
-			got, err := parseSudoPGIDLine([]byte(c.line))
-			if c.wantErr {
-				require.Error(t, err)
-				return
-			}
-			require.NoError(t, err)
-			require.Equal(t, c.want, got)
-		})
-	}
-}
-
-func feedInChunks(capture *markerLineCapture, stream string, chunkSize int) string {
-	var out strings.Builder
-	data := []byte(stream)
-	for start := 0; start < len(data); start += chunkSize {
-		end := min(start+chunkSize, len(data))
-		out.Write(capture.Feed(data[start:end]))
-	}
-	out.Write(capture.Flush())
-	return out.String()
-}
-
-func TestMarkerLineCapture(t *testing.T) {
-	cases := []struct {
-		title       string
-		stream      string
-		wantOut     string
-		wantLine    string
-		wantMissing bool
-	}{
-		{
-			title:    "marker first",
-			stream:   "SUDO-PGID=4242:123456\nSUDO-SUCCESS\nhi\n",
-			wantOut:  "SUDO-SUCCESS\nhi\n",
-			wantLine: "4242:123456",
-		},
-		{
-			title:    "marker after login shell noise",
-			stream:   "Welcome!\nSUDO-PGID=4242:123456\nSUDO-SUCCESS\nhi\n",
-			wantOut:  "Welcome!\nSUDO-SUCCESS\nhi\n",
-			wantLine: "4242:123456",
-		},
-		{
-			title:    "marker with CRLF",
-			stream:   "SUDO-PGID=4242:123456\r\nSUDO-SUCCESS\r\n",
-			wantOut:  "SUDO-SUCCESS\r\n",
-			wantLine: "4242:123456",
-		},
-		{
-			title:    "partial pattern before the marker is released",
-			stream:   "SUDO-PSUDO-PGID=4242:123456\nhi\n",
-			wantOut:  "SUDO-Phi\n",
-			wantLine: "4242:123456",
-		},
-		{
-			title:    "only the first marker is captured",
-			stream:   "SUDO-PGID=1:2\nSUDO-PGID=3:4\n",
-			wantOut:  "SUDO-PGID=3:4\n",
-			wantLine: "1:2",
-		},
-		{
-			title:       "no marker",
-			stream:      "SUDO-SUCCESS\nhi\nSUDO-PG",
-			wantOut:     "SUDO-SUCCESS\nhi\nSUDO-PG",
-			wantMissing: true,
-		},
-		{
-			title:       "stream ends inside the marker line",
-			stream:      "hi\nSUDO-PGID=4242:12",
-			wantOut:     "hi\nSUDO-PGID=4242:12",
-			wantMissing: true,
-		},
-		{
-			title:       "too long marker line is given back",
-			stream:      "SUDO-PGID=" + strings.Repeat("x", sudoPGIDMarkerMaxLine+1) + "\nhi\n",
-			wantOut:     "SUDO-PGID=" + strings.Repeat("x", sudoPGIDMarkerMaxLine+1) + "\nhi\n",
-			wantMissing: true,
-		},
-		{
-			title:       "empty stream",
-			stream:      "",
-			wantOut:     "",
-			wantMissing: true,
-		},
-	}
-
-	for _, c := range cases {
-		for _, chunkSize := range []int{1, 2, 3, 7, 16, 1024} {
-			t.Run(fmt.Sprintf("%s/chunk=%d", c.title, chunkSize), func(t *testing.T) {
-				var (
-					line    string
-					lines   int
-					missing int
-				)
-				capture := newMarkerLineCapture(
-					sudoPGIDMarker,
-					sudoPGIDMarkerMaxLine,
-					func(l []byte) { line = string(l); lines++ },
-					func() { missing++ },
-				)
-
-				out := feedInChunks(capture, c.stream, chunkSize)
-
-				require.Equal(t, c.wantOut, out)
-				if c.wantMissing {
-					require.Equal(t, 0, lines, "line must not be reported")
-					require.Equal(t, 1, missing, "missing must be reported once")
-					return
-				}
-				require.Equal(t, 1, lines, "line must be reported once")
-				require.Equal(t, c.wantLine, line)
-				require.Equal(t, 0, missing, "missing must not be reported")
-			})
+// sudoLoginShellEscape escapes the command the way "sudo -i" passes it to the login shell
+func sudoLoginShellEscape(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		isAlnum := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
+		if !isAlnum && r != '_' && r != '-' && r != '$' {
+			b.WriteByte('\\')
 		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+type localWrapper struct {
+	cmd    *exec.Cmd
+	stdin  io.WriteCloser
+	stdout *bytes.Buffer
+	stderr *bytes.Buffer
+	done   chan error
+}
+
+// startLocalWrapper runs the wrapper for cmdLine with the local bash as "sudo -i" does it
+func startLocalWrapper(t *testing.T, cmdLine string) *localWrapper {
+	t.Helper()
+
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash is not installed")
+	}
+
+	script := sudoWrapperScript(cmdLine, testWrapperGrace)
+	w := &localWrapper{
+		cmd:    exec.Command("sh", "-c", "bash -c "+sudoLoginShellEscape(script)),
+		stdout: new(bytes.Buffer),
+		stderr: new(bytes.Buffer),
+		done:   make(chan error, 1),
+	}
+	w.cmd.Stdout = w.stdout
+	w.cmd.Stderr = w.stderr
+
+	var err error
+	w.stdin, err = w.cmd.StdinPipe()
+	require.NoError(t, err)
+	require.NoError(t, w.cmd.Start())
+
+	go func() { w.done <- w.cmd.Wait() }()
+	t.Cleanup(func() {
+		_ = w.stdin.Close()
+		select {
+		case <-w.done:
+		case <-time.After(10 * time.Second):
+			_ = w.cmd.Process.Kill()
+		}
+	})
+
+	return w
+}
+
+// exitCode waits for the wrapper and returns its exit code
+func (w *localWrapper) exitCode(t *testing.T, timeout time.Duration) int {
+	t.Helper()
+
+	select {
+	case err := <-w.done:
+		w.done <- err
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return exitErr.ExitCode()
+		}
+		require.NoError(t, err)
+		return 0
+	case <-time.After(timeout):
+		require.FailNow(t, "wrapper did not exit", "in %s", timeout)
+		return -1
 	}
 }
 
-func TestRemoteProcessWait(t *testing.T) {
-	t.Run("published info", func(t *testing.T) {
-		p := newRemoteProcess()
-		go func() {
-			time.Sleep(50 * time.Millisecond)
-			require.NoError(t, p.setFromMarkerLine([]byte("4242:123456")))
-		}()
+func TestSudoWrapperScript(t *testing.T) {
+	t.Run("output and exit code of the command are kept", func(t *testing.T) {
+		w := startLocalWrapper(t, `echo hi; echo err >&2; exit 3`)
 
-		info, ok := p.wait(5*time.Second, nil)
-		require.True(t, ok)
-		require.Equal(t, remoteProcessInfo{PGID: 4242, StartTime: "123456"}, info)
+		require.Equal(t, 3, w.exitCode(t, 5*time.Second))
+		require.Equal(t, "SUDO-SUCCESS\nhi\n", w.stdout.String())
+		require.Equal(t, "err\n", w.stderr.String())
 	})
 
-	t.Run("unavailable", func(t *testing.T) {
-		p := newRemoteProcess()
-		p.markUnavailable()
-
-		_, ok := p.wait(5*time.Second, nil)
-		require.False(t, ok)
-	})
-
-	t.Run("invalid line marks unavailable", func(t *testing.T) {
-		p := newRemoteProcess()
-		require.Error(t, p.setFromMarkerLine([]byte(":")))
-
-		_, ok := p.wait(5*time.Second, nil)
-		require.False(t, ok)
-	})
-
-	t.Run("stop channel", func(t *testing.T) {
-		p := newRemoteProcess()
-		stop := make(chan struct{})
-		close(stop)
+	t.Run("closed stdin kills a command which ignores SIGINT", func(t *testing.T) {
+		w := startLocalWrapper(t, `trap "" INT; while :; do sleep 0.1; done`)
+		time.Sleep(300 * time.Millisecond)
 
 		start := time.Now()
-		_, ok := p.wait(5*time.Second, stop)
-		require.False(t, ok)
-		require.Less(t, time.Since(start), time.Second)
+		require.NoError(t, w.stdin.Close())
+
+		require.Equal(t, 137, w.exitCode(t, 5*time.Second))
+		require.GreaterOrEqual(t, time.Since(start), testWrapperGrace/2, "SIGKILL is sent after the grace period")
+		require.Equal(t, "SUDO-SUCCESS\n", w.stdout.String())
+		require.Empty(t, w.stderr.String(), "wrapper must not report the killed job")
 	})
 
-	t.Run("timeout", func(t *testing.T) {
-		p := newRemoteProcess()
+	t.Run("closed stdin stops a command with SIGINT first", func(t *testing.T) {
+		w := startLocalWrapper(t, `trap "echo got-int; exit 5" INT; while :; do sleep 0.1; done`)
+		time.Sleep(300 * time.Millisecond)
 
-		start := time.Now()
-		_, ok := p.wait(50*time.Millisecond, nil)
-		require.False(t, ok)
-		require.Less(t, time.Since(start), time.Second)
+		require.NoError(t, w.stdin.Close())
+
+		require.Equal(t, 5, w.exitCode(t, 5*time.Second))
+		require.Equal(t, "SUDO-SUCCESS\ngot-int\n", w.stdout.String())
+	})
+
+	t.Run("signal from stdin is sent to the command", func(t *testing.T) {
+		w := startLocalWrapper(t, `sleep 30`)
+		time.Sleep(300 * time.Millisecond)
+
+		line, err := sudoControlLine(gossh.SIGKILL)
+		require.NoError(t, err)
+		_, err = io.WriteString(w.stdin, line)
+		require.NoError(t, err)
+
+		require.Equal(t, 137, w.exitCode(t, 5*time.Second))
+	})
+
+	t.Run("unknown lines on stdin are ignored", func(t *testing.T) {
+		w := startLocalWrapper(t, `sleep 0.5; echo done`)
+
+		_, err := io.WriteString(w.stdin, "PING\nNOSUCHSIG\n")
+		require.NoError(t, err)
+
+		require.Equal(t, 0, w.exitCode(t, 5*time.Second))
+		require.Equal(t, "SUDO-SUCCESS\ndone\n", w.stdout.String())
+	})
+
+	t.Run("command does not read stdin of the session", func(t *testing.T) {
+		w := startLocalWrapper(t, `cat; echo cat-done`)
+
+		require.Equal(t, 0, w.exitCode(t, 5*time.Second))
+		require.Equal(t, "SUDO-SUCCESS\ncat-done\n", w.stdout.String())
+	})
+
+	t.Run("background process of a finished command is not killed", func(t *testing.T) {
+		marker := filepath.Join(t.TempDir(), "survived")
+		w := startLocalWrapper(t, `(sleep 1; touch `+marker+`) >/dev/null 2>&1 & echo started`)
+
+		require.Equal(t, 0, w.exitCode(t, 5*time.Second))
+		// the session ends after the command, Wait has closed stdin already
+		_ = w.stdin.Close()
+
+		require.Eventually(t, func() bool {
+			_, err := os.Stat(marker)
+			return err == nil
+		}, 5*time.Second, 100*time.Millisecond, "background process should finish its work")
 	})
 }

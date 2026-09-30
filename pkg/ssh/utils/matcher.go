@@ -94,3 +94,9 @@ func (m *ByteSequenceMatcher) Reset() {
 func (m *ByteSequenceMatcher) IsMatched() bool {
 	return m.matchFound
 }
+
+// IsPatternFound reports that the pattern was seen, a WaitNonMatched matcher
+// is matched only on the next byte after it
+func (m *ByteSequenceMatcher) IsPatternFound() bool {
+	return m.patternFound
+}
