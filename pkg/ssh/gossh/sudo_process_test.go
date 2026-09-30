@@ -34,7 +34,10 @@ import (
 // "sudo -i" expands them before bash gets the command
 var bareDollarRe = regexp.MustCompile(`\$[A-Za-z0-9_$-]`)
 
-const testWrapperGrace = time.Second
+const (
+	testWrapperGrace = time.Second
+	testWrapperWait  = 5 * time.Second
+)
 
 func TestSudoWrapperScriptIsSafeForSudoLoginShell(t *testing.T) {
 	script := sudoWrapperScript("sleep 1", sudoStopGracePeriod)
@@ -111,7 +114,7 @@ func startLocalWrapper(t *testing.T, cmdLine string) *localWrapper {
 }
 
 // exitCode waits for the wrapper and returns its exit code
-func (w *localWrapper) exitCode(t *testing.T, timeout time.Duration) int {
+func (w *localWrapper) exitCode(t *testing.T) int {
 	t.Helper()
 
 	select {
@@ -123,8 +126,8 @@ func (w *localWrapper) exitCode(t *testing.T, timeout time.Duration) int {
 		}
 		require.NoError(t, err)
 		return 0
-	case <-time.After(timeout):
-		require.FailNow(t, "wrapper did not exit", "in %s", timeout)
+	case <-time.After(testWrapperWait):
+		require.FailNow(t, "wrapper did not exit", "in %s", testWrapperWait)
 		return -1
 	}
 }
@@ -133,7 +136,7 @@ func TestSudoWrapperScript(t *testing.T) {
 	t.Run("output and exit code of the command are kept", func(t *testing.T) {
 		w := startLocalWrapper(t, `echo hi; echo err >&2; exit 3`)
 
-		require.Equal(t, 3, w.exitCode(t, 5*time.Second))
+		require.Equal(t, 3, w.exitCode(t))
 		require.Equal(t, "SUDO-SUCCESS\nhi\n", w.stdout.String())
 		require.Equal(t, "err\n", w.stderr.String())
 	})
@@ -145,7 +148,7 @@ func TestSudoWrapperScript(t *testing.T) {
 		start := time.Now()
 		require.NoError(t, w.stdin.Close())
 
-		require.Equal(t, 137, w.exitCode(t, 5*time.Second))
+		require.Equal(t, 137, w.exitCode(t))
 		require.GreaterOrEqual(t, time.Since(start), testWrapperGrace/2, "SIGKILL is sent after the grace period")
 		require.Equal(t, "SUDO-SUCCESS\n", w.stdout.String())
 		require.Empty(t, w.stderr.String(), "wrapper must not report the killed job")
@@ -157,7 +160,7 @@ func TestSudoWrapperScript(t *testing.T) {
 
 		require.NoError(t, w.stdin.Close())
 
-		require.Equal(t, 5, w.exitCode(t, 5*time.Second))
+		require.Equal(t, 5, w.exitCode(t))
 		require.Equal(t, "SUDO-SUCCESS\ngot-int\n", w.stdout.String())
 	})
 
@@ -170,7 +173,7 @@ func TestSudoWrapperScript(t *testing.T) {
 		_, err = io.WriteString(w.stdin, line)
 		require.NoError(t, err)
 
-		require.Equal(t, 137, w.exitCode(t, 5*time.Second))
+		require.Equal(t, 137, w.exitCode(t))
 	})
 
 	t.Run("unknown lines on stdin are ignored", func(t *testing.T) {
@@ -179,14 +182,14 @@ func TestSudoWrapperScript(t *testing.T) {
 		_, err := io.WriteString(w.stdin, "PING\nNOSUCHSIG\n")
 		require.NoError(t, err)
 
-		require.Equal(t, 0, w.exitCode(t, 5*time.Second))
+		require.Equal(t, 0, w.exitCode(t))
 		require.Equal(t, "SUDO-SUCCESS\ndone\n", w.stdout.String())
 	})
 
 	t.Run("command does not read stdin of the session", func(t *testing.T) {
 		w := startLocalWrapper(t, `cat; echo cat-done`)
 
-		require.Equal(t, 0, w.exitCode(t, 5*time.Second))
+		require.Equal(t, 0, w.exitCode(t))
 		require.Equal(t, "SUDO-SUCCESS\ncat-done\n", w.stdout.String())
 	})
 
@@ -194,7 +197,7 @@ func TestSudoWrapperScript(t *testing.T) {
 		marker := filepath.Join(t.TempDir(), "survived")
 		w := startLocalWrapper(t, `(sleep 1; touch `+marker+`) >/dev/null 2>&1 & echo started`)
 
-		require.Equal(t, 0, w.exitCode(t, 5*time.Second))
+		require.Equal(t, 0, w.exitCode(t))
 		// the session ends after the command, Wait has closed stdin already
 		_ = w.stdin.Close()
 
