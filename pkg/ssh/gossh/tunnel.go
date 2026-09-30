@@ -246,7 +246,8 @@ func (t *Tunnel) sendError(err error) {
 }
 
 func (t *Tunnel) HealthMonitor(errorOutCh chan<- error) {
-	if _, err := t.getListener(); err != nil || !t.started {
+	stopCh, ok := t.prepareHealthMonitor()
+	if !ok {
 		t.debug("Call HealthMonitor. Tunnel stopped")
 		errorOutCh <- fmt.Errorf("tunnel stopped")
 		return
@@ -255,16 +256,34 @@ func (t *Tunnel) HealthMonitor(errorOutCh chan<- error) {
 	defer t.debug("Tunnel health monitor stopped")
 	t.debug("Tunnel health monitor started")
 
-	t.stopCh = make(chan struct{}, 1)
-
 	for {
 		select {
 		case err := <-t.errorCh:
-			errorOutCh <- err
-		case <-t.stopCh:
+			select {
+			case errorOutCh <- err:
+			case <-stopCh:
+				return
+			}
+		case <-stopCh:
 			return
 		}
 	}
+}
+
+// prepareHealthMonitor checks that the tunnel is up and creates the channel Stop signals through.
+// Both steps run under the lock Stop holds: otherwise a Stop landing between them finds no channel,
+// the tunnel is stopped, and the monitor waits for a signal that never comes.
+func (t *Tunnel) prepareHealthMonitor() (chan struct{}, bool) {
+	t.globalMu.Lock()
+	defer t.globalMu.Unlock()
+
+	if _, err := t.getListener(); err != nil || !t.started {
+		return nil, false
+	}
+
+	t.stopCh = make(chan struct{}, 1)
+
+	return t.stopCh, true
 }
 
 func (t *Tunnel) Stop() {
