@@ -255,6 +255,22 @@ func (e *Executor) SetupStreamHandlers() error {
 	var stdoutReadPipe *os.File
 	var stdoutHandlerWritePipe *os.File
 	var stdoutHandlerReadPipe *os.File
+	var stderrReadPipe *os.File
+	var stderrHandlerWritePipe *os.File
+	var stderrHandlerReadPipe *os.File
+
+	// nothing is handed over to the goroutines below until this function succeeds:
+	// on an early return release every pipe created so far
+	succeeded := false
+	defer func() {
+		if succeeded {
+			return
+		}
+		_ = stdoutHandlerWritePipe.Close()
+		_ = stderrHandlerWritePipe.Close()
+		e.forceClosePipes()
+	}()
+
 	if e.StdoutBuffer != nil || e.StdoutHandler != nil || len(e.Matchers) > 0 {
 		// create pipe for stdout
 		var stdoutWritePipe *os.File
@@ -282,9 +298,6 @@ func (e *Executor) SetupStreamHandlers() error {
 		}
 	}
 
-	var stderrReadPipe *os.File
-	var stderrHandlerWritePipe *os.File
-	var stderrHandlerReadPipe *os.File
 	if e.StderrBuffer != nil || e.StderrHandler != nil {
 		// create pipe for stderr
 		var stderrWritePipe *os.File
@@ -397,6 +410,8 @@ func (e *Executor) SetupStreamHandlers() error {
 		logger.DebugContext(context.Background(), fmt.Sprintf("stop sdterr line consumer for '%s'", e.cmd.Args[0]))
 	}()
 
+	succeeded = true
+
 	return nil
 }
 
@@ -503,6 +518,8 @@ func (e *Executor) Start() error {
 
 	err = e.cmd.Start()
 	if err != nil {
+		// the stream goroutines are already running and wait on pipes nobody will feed
+		e.forceClosePipes()
 		return err
 	}
 
