@@ -230,6 +230,10 @@ func TestUploadScriptExecuteBundle(t *testing.T) {
 					c.loggerOutAssert(t, loggerBuf)
 				}
 
+				// the bundle runs under sudo: a failing one is killed by the bundler
+				// and must not stay running on the remote
+				requireEventuallyNoRemoteProcess(t, container, "bashible/"+entrypoint)
+
 				if c.wantErr {
 					require.Error(t, err)
 					require.Contains(t, err.Error(), c.err)

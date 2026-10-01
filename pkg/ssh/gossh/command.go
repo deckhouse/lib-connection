@@ -25,6 +25,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	gossh "github.com/deckhouse/lib-gossh"
@@ -55,8 +56,11 @@ type SSHCommand struct {
 	StdinPipe bool
 	Stdin     io.WriteCloser
 
+	// Matchers are shared by the stdout and stderr readers (the sudo password
+	// prompt comes on stderr), matchersMu serializes their use
 	Matchers     []*utils.ByteSequenceMatcher
 	MatchHandler func(pattern string) string
+	matchersMu   sync.Mutex
 
 	onCommandStart func()
 	stderrHandler  func(string)
@@ -71,9 +75,11 @@ type SSHCommand struct {
 	OutBytes bytes.Buffer
 	ErrBytes bytes.Buffer
 
-	stop   bool
+	stop   atomic.Bool
 	waitCh chan struct{}
 	stopCh chan struct{}
+	// exited is set when the session of the command has ended
+	exited atomic.Bool
 
 	lockWaitError sync.RWMutex
 	waitError     error
@@ -81,6 +87,13 @@ type SSHCommand struct {
 
 	cmd     string
 	timeout time.Duration
+
+	// sudo is set by Sudo, the command is signalled through the wrapper (see sudo_process.go)
+	sudo bool
+	// sudoStarted is set when the wrapper has started, it reads signals from stdin since then
+	sudoStarted atomic.Bool
+	// logCmd is logged instead of cmd, the sudo wrapper is too noisy for the logs
+	logCmd string
 
 	ctx       context.Context
 	Cancel    func() error
@@ -106,7 +119,9 @@ func newSSHCommand(client *Client, name string, allowStopped bool, arg ...string
 
 	// todo move new session to Start()
 	session, err := client.newSSHSession(allowStopped)
-	client.settings.Logger().DebugContext(context.Background(), fmt.Sprintf("Cannot create new SSH session for command '%s': %v", name, err))
+	if err != nil {
+		client.settings.Logger().DebugContext(context.Background(), fmt.Sprintf("Cannot create new SSH session for command '%s': %v", name, err))
+	}
 
 	return &SSHCommand{
 		// Executor: process.NewDefaultExecutor(sess.Run(cmd)),
@@ -184,7 +199,11 @@ func (c *SSHCommand) start() error {
 
 	command := c.cmd + " " + strings.Join(c.Args, " ")
 
-	return c.session.Start(command)
+	if err := c.session.Start(command); err != nil {
+		return fmt.Errorf("start command '%s': %w", c.Name, err)
+	}
+
+	return nil
 }
 
 func (c *SSHCommand) watchCtx(resultc chan<- error) {
@@ -210,10 +229,12 @@ func (c *SSHCommand) watchCtx(resultc chan<- error) {
 }
 
 func (c *SSHCommand) wait() error {
-	waitCh := make(chan (error))
+	waitCh := make(chan error, 1)
 
 	go func() {
-		waitCh <- c.session.Wait()
+		err := c.session.Wait()
+		c.exited.Store(true)
+		waitCh <- err
 	}()
 
 	select {
@@ -225,6 +246,12 @@ func (c *SSHCommand) wait() error {
 		// }
 		return err
 	case err := <-waitCh:
+		// the command killed by Cancel may exit before watchCtx reports, prefer its result
+		if err != nil && c.ctxResult != nil && c.ctx.Err() != nil {
+			if ctxErr := <-c.ctxResult; ctxErr != nil {
+				return ctxErr
+			}
+		}
 		if err != nil {
 			return err
 		}
@@ -250,7 +277,7 @@ func (c *SSHCommand) ProcessWait() {
 	go func() {
 		if c.timeout > 0 {
 			time.Sleep(c.timeout)
-			if !c.stop && c.stopCh != nil {
+			if !c.stop.Load() && c.stopCh != nil {
 				// todo ugly solution
 				// here we check that channel is closed it is not correct
 				select {
@@ -278,7 +305,7 @@ func (c *SSHCommand) ProcessWait() {
 		for {
 			select {
 			case err := <-waitErrCh:
-				if c.stop {
+				if c.stop.Load() {
 					// Ignore error if Stop() was called.
 					return
 				}
@@ -288,14 +315,14 @@ func (c *SSHCommand) ProcessWait() {
 				}
 				return
 			case <-c.stopCh:
-				c.stop = true
 				// Prevent next readings from the closed channel.
 				c.stopCh = nil
-				// The usual e.cmd.Process.Kill() is not working for the process
-				// started with the new process group (Setpgid: true).
-				// Negative pid number is used to send a signal to all processes in the group.
-				err := c.session.Signal(gossh.SIGKILL)
-				if err != nil {
+				// Stop() sends the signals itself, only the timeout has to kill here
+				if !c.stop.CompareAndSwap(false, true) {
+					continue
+				}
+				c.logDebugF(ctx, "Timeout exceeded. Killing")
+				if err := c.signal(gossh.SIGKILL); err != nil && !errors.Is(err, os.ErrProcessDone) {
 					c.killError = err
 				}
 			}
@@ -387,16 +414,18 @@ func (c *SSHCommand) WithMatchHandler(fn func(pattern string) string) *SSHComman
 func (c *SSHCommand) Sudo(ctx context.Context) {
 	cmdLine := c.Name + " " + strings.Join(c.Args, " ")
 	sudoCmdLine := fmt.Sprintf(
-		`sudo -p SudoPassword -H -S -i bash -c 'echo SUDO-SUCCESS && %s'`,
-		cmdLine,
+		`sudo -p SudoPassword -H -S -i bash -c '%s'`,
+		sudoWrapperScript(cmdLine, sudoStopGracePeriod),
 	)
 
 	c.cmd = sudoCmdLine
+	c.logCmd = fmt.Sprintf(`sudo -p SudoPassword -H -S -i bash -c '<wrapper> %s'`, cmdLine)
+	c.sudo = true
 	c.Cmd(ctx)
 
 	c.WithMatchers(
 		utils.NewByteSequenceMatcher("SudoPassword"),
-		utils.NewByteSequenceMatcher("SUDO-SUCCESS").WaitNonMatched(),
+		utils.NewByteSequenceMatcher(sudoSuccessPattern).WaitNonMatched(),
 	)
 	c.OpenStdinPipe()
 
@@ -420,7 +449,7 @@ func (c *SSHCommand) Sudo(ctx context.Context) {
 			}
 			return "reset"
 		}
-		if pattern == "SUDO-SUCCESS" {
+		if pattern == sudoSuccessPattern {
 			c.logDebugF(ctx, "Got SUCCESS for sudo password")
 			if c.onCommandStart != nil {
 				c.onCommandStart()
@@ -444,7 +473,7 @@ func (c *SSHCommand) Cmd(ctx context.Context) {
 		c.ctx = ctx
 	}
 	c.Cancel = func() error {
-		return c.session.Signal(gossh.SIGINT)
+		return c.signal(gossh.SIGINT)
 	}
 }
 
@@ -732,8 +761,13 @@ func (c *SSHCommand) readFromStreams(stdoutReadPipe io.Reader, stdoutHandlerWrit
 
 		m := 0
 		if !matchersDone {
+			c.matchersMu.Lock()
 			for _, matcher := range c.Matchers {
 				m = matcher.Analyze(buf[:n])
+				if c.sudo && matcher.Pattern == sudoSuccessPattern && matcher.IsPatternFound() {
+					// the wrapper reads stdin from now on, the match itself waits for the next output
+					c.sudoStarted.Store(true)
+				}
 				if matcher.IsMatched() {
 					c.logDebugF(ctx, "Triggered match for '%s'", matcher.Pattern)
 					// matcher is triggered
@@ -749,6 +783,7 @@ func (c *SSHCommand) readFromStreams(stdoutReadPipe io.Reader, stdoutHandlerWrit
 					}
 				}
 			}
+			c.matchersMu.Unlock()
 
 			// stdout for internal use, no copying to pipes until all Matchers are matched
 			if !matchersDone {
@@ -813,7 +848,7 @@ func (c *SSHCommand) Stop() {
 	ctx := context.Background()
 	c.logDebugF(ctx, "Running stop")
 
-	if c.stop {
+	if c.stop.Load() {
 		c.logDebugF(ctx, "Already stopped")
 		return
 	}
@@ -826,16 +861,68 @@ func (c *SSHCommand) Stop() {
 		return
 	}
 
-	c.stop = true
+	if !c.stop.CompareAndSwap(false, true) {
+		c.logDebugF(ctx, "Already stopped")
+		return
+	}
 	if c.stopCh != nil {
 		c.logDebugF(ctx, "Send stop signal")
 		close(c.stopCh)
 	}
 	c.logDebugF(ctx, "Stopped")
+
+	if c.sudo && c.Stdin != nil {
+		// the wrapper sends SIGINT and then SIGKILL after sudoStopGracePeriod
+		c.logDebugF(ctx, "Closing stdin of sudo wrapper...")
+		if err := c.Stdin.Close(); err != nil && !errors.Is(err, io.EOF) {
+			c.logDebugF(ctx, "Cannot close stdin of sudo wrapper: %v", err)
+		}
+		return
+	}
+
 	c.logDebugF(ctx, "Sending SIGINT...")
 	_ = c.session.Signal(gossh.SIGINT)
 	c.logDebugF(ctx, "Signal SIGINT sent")
 	_ = c.session.Signal(gossh.SIGKILL)
+}
+
+// Signal sends sig to the remote process. A started sudo command gets it from the wrapper
+// as root (see sudo_process.go). Returns os.ErrProcessDone if the process has exited.
+func (c *SSHCommand) Signal(sig gossh.Signal) error {
+	return c.signal(sig)
+}
+
+func (c *SSHCommand) signal(sig gossh.Signal) error {
+	if c.session == nil {
+		return fmt.Errorf("ssh session not started")
+	}
+
+	if c.exited.Load() {
+		return os.ErrProcessDone
+	}
+
+	if !c.sudo || !c.sudoStarted.Load() || c.Stdin == nil {
+		// the sudo wrapper has not started yet: only sudo can be signalled
+		if err := c.session.Signal(sig); err != nil {
+			return fmt.Errorf("send %s via session: %w", sig, err)
+		}
+		return nil
+	}
+
+	line, err := sudoControlLine(sig)
+	if err != nil {
+		return err
+	}
+
+	c.logDebugF(context.Background(), "Sending %s via sudo wrapper", sig)
+	if _, err := c.Stdin.Write([]byte(line)); err != nil {
+		if c.exited.Load() {
+			return os.ErrProcessDone
+		}
+		return fmt.Errorf("send %s via sudo wrapper: %w", sig, err)
+	}
+
+	return nil
 }
 
 func (c *SSHCommand) setWaitError(err error) {
@@ -862,5 +949,9 @@ func (c *SSHCommand) logDebugF(ctx context.Context, format string, v ...interfac
 	if len(c.Args) > 0 {
 		args = strings.Join(c.Args, " ")
 	}
-	c.sshClient.settings.Logger().DebugContext(ctx, fmt.Sprintf("'%s' for cmd '%s' with args '%s' with client '%s'\n", msg, c.cmd, args, c.clientString()))
+	cmd := c.cmd
+	if c.logCmd != "" {
+		cmd = c.logCmd
+	}
+	c.sshClient.settings.Logger().DebugContext(ctx, fmt.Sprintf("'%s' for cmd '%s' with args '%s' with client '%s'\n", msg, cmd, args, c.clientString()))
 }

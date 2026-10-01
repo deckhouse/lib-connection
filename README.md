@@ -43,6 +43,13 @@ library. We added additional logging.
 All implementations provide connection monitoring and reconnect automatically to SSH, tunnels, and kube-proxy if the connection
 fails.
 
+Commands run with `Sudo` (including kube-proxy and bundles) run as root on the remote, so `sshd` cannot deliver
+signals to them on behalf of the SSH user. In the `go` client the sudo wrapper runs such a command in its own process
+group next to a root watchdog ([see details here](./pkg/ssh/gossh/sudo_process.go)). `Signal`, context cancellation and
+`WithTimeout` pass the signal to the watchdog through stdin of the session. When the session ends (`Stop`, `Client.Stop`,
+reconnect, or `sshd` closing a lost connection), the watchdog sends `SIGINT` to the command and `SIGKILL` 5 seconds later. The command gets
+`/dev/null` as stdin.
+
 `Script` implementations contain the method `ExecuteBundle` for running a script that runs a list of scripts
 named as `bundle` as output progress of running ([see implementation here](./pkg/ssh/utils/bundle.go)).
 By default, it runs the `bashible` bundle from [deckhouse](https://github.com/deckhouse/deckhouse/blob/main/candi/bashible/bashible.sh.tpl).

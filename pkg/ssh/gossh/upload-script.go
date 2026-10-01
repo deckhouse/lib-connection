@@ -211,8 +211,9 @@ func commandKiller(command connection.Command) {
 	if !ok {
 		return
 	}
-	// Force kill bashible and close session/streams to unblock Wait/readers
-	_ = goCommand.session.Signal(gossh.SIGABRT)
+	// Force kill bashible and close session/streams to unblock Wait/readers.
+	// Bashible runs under sudo, Signal kills its whole process group as root
+	_ = goCommand.Signal(gossh.SIGABRT)
 	if goCommand.Stdin != nil {
 		_ = goCommand.Stdin.Close()
 	}

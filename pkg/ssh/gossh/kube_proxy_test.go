@@ -119,6 +119,8 @@ func TestKubeProxy(t *testing.T) {
 		kp.StopAll()
 
 		waitRestart("stop all")
+
+		requireEventuallyNoRemoteProcess(t, container, "kubectl proxy")
 	})
 
 	t.Run("Stop kube proxy", func(t *testing.T) {
@@ -138,6 +140,8 @@ func TestKubeProxy(t *testing.T) {
 		waitRestart("stop kube proxy")
 
 		tests.AssertKubeProxy(t, stopProxyTest, port, true)
+		// the proxy runs under sudo on the remote and must be killed there too
+		requireEventuallyNoRemoteProcess(t, container, "kubectl proxy")
 
 		stopAll := func() {
 			kp.StopAll()
@@ -170,6 +174,8 @@ func TestKubeProxy(t *testing.T) {
 		waitRestart("stop client")
 
 		tests.AssertKubeProxy(t, stopClientTest, port, true)
+		// the proxy runs under sudo on the remote and must be killed there too
+		requireEventuallyNoRemoteProcess(t, container, "kubectl proxy")
 
 		assertProxyStoppedAndNotRestarted(t, stopClientTest)
 
